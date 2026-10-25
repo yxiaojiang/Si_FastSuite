@@ -47,6 +47,40 @@ RobotModel RobotModel::createFanucM10iA(const std::string& workspaceRoot) {
         m.visualMeshFiles[i] = baseDir + "/visual/" + linkFiles[i];
         m.collisionMeshFiles[i] = baseDir + "/collision/" + linkFiles[i];
     }
+
+    const std::string root = workspaceRoot.empty() ? std::string(OLP_SOURCE_DIR) : workspaceRoot;
+    const std::string jsonPath = root + "/resources/robots/fanuc_m10ia.json";
+    std::ifstream jin(jsonPath);
+    if (jin) {
+        std::stringstream buffer;
+        buffer << jin.rdbuf();
+        const std::string text = buffer.str();
+        auto readSix = [&](const std::string& key, std::array<double, 6>& out, bool asDegrees) -> bool {
+            const std::regex re("\"" + key + "\"\\s*:\\s*\\[([^\\]]+)\\]");
+            std::smatch match;
+            if (!std::regex_search(text, match, re)) return false;
+            std::stringstream values(match[1].str());
+            for (int i = 0; i < 6; ++i) {
+                double number = 0.0;
+                values >> number;
+                if (values.fail()) return false;
+                char separator = 0;
+                values >> separator;
+                out[static_cast<size_t>(i)] = asDegrees ? core::deg2rad(number) : number;
+            }
+            return true;
+        };
+        std::array<double, 6> offsets{};
+        std::array<double, 6> signs{};
+        if (readSix("joint_offsets_deg", offsets, true)) {
+            m.opw.offsetsRad = offsets;
+        }
+        if (readSix("joint_sign_corrections", signs, false)) {
+            for (int i = 0; i < 6; ++i) {
+                m.opw.signCorrections[static_cast<size_t>(i)] = (signs[static_cast<size_t>(i)] < 0.0) ? -1 : 1;
+            }
+        }
+    }
     return m;
 }
 

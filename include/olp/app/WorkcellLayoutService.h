@@ -29,13 +29,73 @@ public:
         const device::RobotModel& libraryRobotModel);
 
     // M04: Define or update UFRAME by 3 picked points (Origin, +X direction point, XY plane point)
-    static core::SceneNode& defineUFrameByThreePoints(
+    static std::string defineUFrameByThreePoints(
         ProjectDocument& doc,
         int uframeNumber,
         const std::string& frameName,
         const core::Vec3& originWorld,
         const core::Vec3& ptXWorld,
         const core::Vec3& ptXYWorld);
+};
+
+class ImportSceneAndReplaceRobotCommand final : public ICommand {
+public:
+    ImportSceneAndReplaceRobotCommand(
+        ProjectDocument& doc,
+        cad::ICadKernel& cadKernel,
+        std::string stepFilePath,
+        device::RobotModel libraryRobotModel,
+        SceneRobotReplaceResult* resultOut = nullptr);
+
+    void execute() override;
+    void undo() override;
+    std::string description() const override { return "Import scene and replace static robot"; }
+    bool didMutate() const noexcept override { return mutated_; }
+
+private:
+    ProjectDocument& doc_;
+    cad::ICadKernel& cadKernel_;
+    std::string stepFilePath_;
+    device::RobotModel libraryRobotModel_;
+    SceneRobotReplaceResult* resultOut_{nullptr};
+    SceneRobotReplaceResult result_{};
+    std::vector<core::SceneNode> beforeNodes_{};
+    std::vector<core::SceneNode> afterNodes_{};
+    bool beforeDirty_{false};
+    bool applied_{false};
+    bool mutated_{false};
+};
+
+class DefineUFrameCommand final : public ICommand {
+public:
+    DefineUFrameCommand(
+        ProjectDocument& doc,
+        int uframeNumber,
+        std::string frameName,
+        core::Vec3 originWorld,
+        core::Vec3 ptXWorld,
+        core::Vec3 ptXYWorld,
+        std::string* nodeIdOut = nullptr);
+
+    void execute() override;
+    void undo() override;
+    std::string description() const override { return "Define UFRAME"; }
+    bool didMutate() const noexcept override { return mutated_; }
+
+private:
+    ProjectDocument& doc_;
+    int uframeNumber_{1};
+    std::string frameName_;
+    core::Vec3 originWorld_{};
+    core::Vec3 ptXWorld_{};
+    core::Vec3 ptXYWorld_{};
+    std::string* nodeIdOut_{nullptr};
+    std::string nodeId_{};
+    std::vector<core::SceneNode> beforeNodes_{};
+    std::vector<core::SceneNode> afterNodes_{};
+    bool beforeDirty_{false};
+    bool applied_{false};
+    bool mutated_{false};
 };
 
 } // namespace olp::app

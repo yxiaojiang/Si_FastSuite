@@ -6,16 +6,16 @@
 
 1. **真实场景核验与 3.4 节拍板结论**：
    - `SampleScenes/Scene1_TJoint_And_FANUC_M10iA/`：提供 `FANUC M-10iA / ARC Mate 100iC` 标准 URDF（含精确 OPW 参数 `a1=150, a2=-150, b=0, c1=450, c2=600, c3=640, c4=100` mm）与视觉/碰撞 STL 网格，以及 3 个待焊工件 STEP（含跨零件 T 型角焊带夹具总装 `Workpiece_TJoint_With_Clamps.step`）。
-   - `SampleScenes/Scene2_Full_Workcell_STEP/`：提供 11 实体完整焊接工位 STEP `Full_Welding_Cell_With_Robot.step`（含静态机器人外形 `FANUC_M10iA_Static_*`、底座、工装台、箱体角焊工件与夹具）。
+   - `SampleScenes/Scene2_Full_Workcell_STEP/`：提供 12 个 `MANIFOLD_SOLID_BREP` 的焊接工位 STEP `Full_Welding_Cell_With_Robot.step`（底座 `Robot_Pedestal_Base`、5 个静态机器人外形、工装台、3 个箱体工件、2 个压块）。没有单独的「安装法兰过渡台」。
    - **拍板结论**：3.4 节正式采用 **方案 A（整场景 STEP 导入 + 用机器人库中同型号可动机器人替换静态机器人外形，P0，1 周）**，并将 `FANUC M-10iA` 作为 M05 内置机器人库首款标准型号。
 2. **CMake + Qt6 + OpenCASCADE 五层 C++20 工程骨架结构**：
    - `src/core` (`olp_core`): 核心数据模型（`Types.h` 4x4 矩阵/四元数/WPR、变换树 `SceneNode`、`ControllerUnit`、`Program`、`Operation`、`Target`、`SeamDefinition`、持久化几何签名）。
-   - `src/cad` (`olp_cad`): M02 `ICadKernel` 纯虚接口 + `OcctCadKernel`（支持 OCCT `STEPCAFControl_Reader` / `TopExp` / `BRepAdaptor_Curve` / `BRepLProp_SLProps` 及无 OCCT 环境下的原生 STEP/STL 解析实现）。
-   - `src/device` (`olp_device`): M05 机器人运动学模型 `RobotModel`、工具 `ToolModel`、内置 `FANUC M-10iA` 库加载器与 URDF 解析器。
-   - `src/algo` (`olp_algo`): 纯 C++ 算法层——M06 `OpwKinematics`（OPW 正逆解、配置字、J2/J3 耦合、WPR、奇异点）、M07/M08 焊缝标架与路径生成器、M10 碰撞检测（含焊丝尖端豁免与自转角扫描）、M11 轨迹插补与仿真帧烘焙。
-   - `src/io` (`olp_io`): M12 `FanucLsPostProcessor`（生成标准 `.ls` 程序）、M13 单文件离线 HTML 3D 动画导出器、M14 工程文件序列化器。
-   - `src/app` (`olp_app`): M01 `ProjectDocument`、`CommandManager`（Undo/Redo 栈及拖拽命令合并）、`SelectionManager`、`EventBus`、M04 `RobotReplacementService`（方案 A 整场景机器人替换）。
-   - `src/ui` (`olp_ui` / `SiFastSuiteOLP`): M01/M03 Qt6 主窗口、布局/编程双工作台切换、停靠面板、`OcctViewport` 三维视口、自研不挂接对象的 `TcpGizmo` 操纵器层。
+   - `src/cad` (`olp_cad`): `ICadKernel` 与 `OcctCadKernel`。装有 OpenCASCADE 时走 `STEPCAFControl_Reader`；无 OCCT 时只接受本仓库的平面方盒 STEP，遇到曲面或跨行实体会失败，不能当成 B-Rep 内核。
+   - `src/device` (`olp_device`): `RobotModel`、内置 `FANUC M-10iA` 与 URDF 限位读取。偏置和符号从 `resources/robots/fanuc_m10ia.json` 加载。
+   - `src/algo` (`olp_algo`): `OpwKinematics`、焊缝与路径、碰撞和仿真。法兰位姿与 URDF `tool0` 对过；ROBOGUIDE 对拍未做。
+   - `src/io` (`olp_io`): `.ls` 后处理（无效 IK 缓存和圆弧运动会拒绝写出）以及 2D TCP HTML 预览。没有 M14 工程序列化器，也没有 3D PDF。
+   - `src/app` (`olp_app`): `ProjectDocument`、`CommandManager`、`WorkcellLayoutService`（方案 A）。没有 `SelectionManager`、`EventBus` 或独立的 `RobotReplacementService`。
+   - `src/ui` (`olp_ui`): `TcpGizmo` 与窗口骨架。本机未接上 Qt6 主窗口和 OCCT 视口。
 
 ---
 

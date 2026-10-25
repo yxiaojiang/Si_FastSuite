@@ -252,7 +252,8 @@ struct Operation {
     std::string id{};
     std::string name{};
     std::string seamId{};           // Empty for non-welding air-move operations
-    std::string targetWorkpieceId{}; // Used for M10 wire-tip collision exemption
+    std::string targetWorkpieceId{}; // Legacy single id. Exemption uses exemptionPartIds when set.
+    std::vector<std::string> exemptionPartIds{}; // Weld base metals. Wire tip is exempt only against these, and only inside the tip radius.
     ToolpathGenParams genParams{};
     bool enabled{true};
     std::vector<Target> targets{};

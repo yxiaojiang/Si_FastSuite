@@ -47,7 +47,7 @@
 ### 2.2 场景二：`SampleScenes/Scene2_Full_Workcell_STEP/`
 1. **带机器人的完整焊接工位总装（`Full_Welding_Cell_With_Robot.step`）**：
    - AP214 工业标准 STEP，内部单位为 `mm`、`rad`，包含 **12 个命名 `MANIFOLD_SOLID_BREP` 实体**：
-     - 机器人底座基台（2 个实体）：`Robot_Pedestal_Base`（顶面 `Robot_Pedestal_Base_Top` 位于 `Z = 500 mm`）及安装法兰过渡台
+     - 机器人底座基台（1 个实体）：`Robot_Pedestal_Base`（顶面 `Robot_Pedestal_Base_Top` 位于 `Z = 500 mm`）
      - 静态机器人外形（5 个实体）：`FANUC_M10iA_Static_Base`、`FANUC_M10iA_Static_Link1_Turret`、`FANUC_M10iA_Static_Link2_LowerArm`、`FANUC_M10iA_Static_Link3_UpperArm`、`FANUC_M10iA_Static_Wrist_And_Torch`
      - 焊接工装台（1 个实体）：`Welding_Fixture_Table`
      - 待焊箱体角焊工件（3 个实体）：`Workpiece_Base_Plate`、`Workpiece_BoxWall_Front`、`Workpiece_BoxWall_Side`
@@ -59,7 +59,7 @@
 ### 2.3 第 3.4 节“导入带机器人的场景”正式拍板结论
 - **拍板方案**：**方案 A（整场景 STEP 导入 + 用机器人库中同型号可动机器人替换静态机器人外形）作为 P0 默认实现（工期 1 周）**，同时吸收 Scene 1 的 `FANUC M-10iA` URDF + STL 资产直接构建 M05 内置标准机器人库包。
 - **技术执行路径**：
-  1. 用 OCCT 导入 `Full_Welding_Cell_With_Robot.step` 整场景，解析出 11 个实体节点；
+  1. 用 OCCT 导入 `Full_Welding_Cell_With_Robot.step` 整场景，解析出 12 个实体节点；
   2. 自动按名称前缀 `FANUC_M10iA_Static_*`（或由用户在场景树中框选标记）识别静态机器人外形部件；
   3. 拾取 `Robot_Pedestal_Base_Top` 安装面（或读取 `FANUC_M10iA_Static_Base` 底面坐标 `(0, 0, 500)`），从内置库加载可动的 `FANUC M-10iA` 机器人并精确对齐基座（误差 `< 0.01 mm`）；
   4. 自动隐藏或移除静态机器人外形实体，保留底座、工装台、箱体工件与夹具参与后续选边编程和碰撞检测。
@@ -374,13 +374,13 @@ flowchart LR
 
 1. **运动学精度**：在 ROBOGUIDE 中随机取 100 组关节角，软件 FK 计算的 TCP 位置误差 `< 0.01 mm`、姿态误差 `< 0.001°`；IK 在同配置字下能 100% 还原原关节角（误差 `< 0.001°`）。
 2. **`.ls` 程序正确性**：回归场景库中所有生成的 `.ls` 程序均能被 ROBOGUIDE 加载（或 MakeTP 编译为 `.tp`）且零语法错误；运行后每个路径点的 TCP 位姿与软件内一致（误差同第 1 条）。
-3. **焊缝自动姿态精度**：在 T 型角焊（`Workpiece_TJoint_With_Clamps`）、管法兰（`Workpiece_PipeFlange_DN15`）、箱体内角（`Full_Welding_Cell_With_Robot`）三类工件上，选边后自动生成的焊枪姿态与标准工艺姿态偏差 `< 5°`。
+3. **焊缝自动姿态精度**：在 T 型角焊、搭接焊、箱体内角三类工件上，选边后自动生成的焊枪姿态与焊接顾问认可姿态偏差 `< 5°`。
 4. **碰撞检测准确率**：人为构造的 10 个干涉碰撞场景（如焊枪碰左右压块 `Fixture_Clamp_Left/Right`）100% 检出；无碰撞的标准焊接路径零误报（焊丝尖端豁免正常生效）。
 5. **交互性能指标**：在 100 万三角面规模的工位中拖动 `TcpGizmo`，三维视图帧率 `≥ 30 FPS`，机器人逆解跟随延迟 `< 100 ms`；一次完整拖拽（按下到释放）仅产生 1 条撤销记录，途中按 `Esc` 可无损取消。
 6. **预览与报告输出**：
    - **2D PDF 报告**：含完整焊缝表、点位表、节拍统计、问题清单与多视角截图，任意 PDF 阅读器正常打开；
    - **单文件离线 HTML 动画包**：单个 `.html` 文件（典型工位 `< 50 MB`），在断网 Windows 电脑上用 Chrome/Edge 双击即可旋转、播放、倍速、拖动进度条，动画与软件内仿真完全一致；
    - **条件项 3D PDF**：若进入 P0，在开启 3D 的 Adobe Acrobat Reader 中可旋转、可播放且文件 `< 50 MB`。
-7. **整场景导入与机器人替换**：导入 `Full_Welding_Cell_With_Robot.step` 等带静态机器人外形的整场景 STEP，完成可动机器人替换后，基座对齐位置偏差 `< 1 mm`（实测目标 `< 0.01 mm`）。
+7. **整场景导入与机器人替换**：至少 2 份带机器人外形的真实整场景，完成可动机器人替换后，基座对齐位置偏差 `< 1 mm`。仓库里的 `Full_Welding_Cell_With_Robot.step` 是自生成方盒场景，不能单独充当这项验收。
 8. **系统工程稳定性**：连续编辑操作 2 小时无崩溃；执行 Undo/Redo 连续 100 步状态完全一致；工程保存（`.fsproj`）后重新打开，所有场景、焊缝、路径点及 `userModified` 状态 100% 一致。
 9. **真机验证**：至少 2 个典型工件在 FANUC 真机上空走验证通过，至少 1 个工件实焊成功。

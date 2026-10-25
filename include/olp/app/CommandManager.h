@@ -31,6 +31,8 @@ public:
     virtual std::string description() const = 0;
     virtual int commandTypeId() const noexcept { return 0; }
     virtual bool mergeWith(const ICommand* /*other*/) { return false; }
+    // False when execute changed nothing (missing target, empty drag). Such commands are not stacked.
+    virtual bool didMutate() const noexcept { return true; }
 };
 
 // M01 & M03: MacroCommand for multi-selection Gizmo drag
@@ -62,6 +64,8 @@ public:
     int commandTypeId() const noexcept override { return 1001; }
     bool mergeWith(const ICommand* other) override;
 
+    bool didMutate() const noexcept override { return mutated_; }
+
 private:
     ProjectDocument& doc_;
     std::string targetId_;
@@ -71,6 +75,7 @@ private:
     bool oldUserModified_{false};
     bool allowMerge_{false};
     bool initialized_{false};
+    bool mutated_{false};
 };
 
 // M08: Reverse Operation Welding Path Command (automatically swaps Arc Start[n] and Arc End[n])
@@ -80,11 +85,17 @@ public:
     void execute() override;
     void undo() override;
     std::string description() const override { return "Reverse Welding Path (" + operationId_ + ")"; }
+    bool didMutate() const noexcept override { return mutated_; }
 
 private:
     ProjectDocument& doc_;
     std::string operationId_;
-    void toggleReverse();
+    std::vector<core::Target> before_{};
+    std::vector<core::Target> after_{};
+    bool snapshotTaken_{false};
+    bool mutated_{false};
+
+    static void applyReversed(std::vector<core::Target>& targets);
 };
 
 // M01: Undo / Redo Command Stack Manager
@@ -98,6 +109,7 @@ public:
     bool undo();
     bool redo();
     void clear();
+    void setMergeSession(bool enabled) noexcept { mergeSession_ = enabled; }
 
     size_t undoCount() const noexcept { return undoStack_.size(); }
     size_t redoCount() const noexcept { return redoStack_.size(); }
@@ -109,6 +121,7 @@ private:
     std::vector<std::unique_ptr<ICommand>> undoStack_{};
     std::vector<std::unique_ptr<ICommand>> redoStack_{};
     std::function<void()> onChanged_{};
+    bool mergeSession_{false};
 };
 
 } // namespace olp::app

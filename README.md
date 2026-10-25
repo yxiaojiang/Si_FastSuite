@@ -27,7 +27,7 @@ flowchart LR
    - 自动求取两侧母材外法向角平分线 $b = \frac{n_1 + n_2}{\|n_1 + n_2\|}$，构造焊缝局部正交坐标系（$X = t$, $Z_0 = -b$ 指向焊根, $Y = Z_0 \times X$），叠加工作角、行走角（推/拉）、自转角生成目标 TCP 位姿。
 3. **FANUC OPW 正逆运动学求解（Section 6.2）**：
    - 基于 7 参数（$a_1, a_2, b, c_1, c_2, c_3, c_4$）实现 OPW 闭式 8 组解析逆解，支持 $\pm 360^\circ$ 圈数展开。
-   - 包含 **FANUC J2/J3 轴机械耦合双向换算**（$J_{3,\text{display}} = q_{3,\text{model}} - k_{23} J_{2,\text{display}}$），与真机示教器显示角 100% 对齐。
+   - 包含 FANUC J2/J3 耦合。换算顺序是示教器角、URDF 几何角、再进入 OPW。耦合系数符号尚未与 ROBOGUIDE 对拍。
    - 自动计算并锁定 FANUC 8 态配置字（`'N U T, 0, 0, 0'` / `'F U T, 0, 0, 0'`），保证焊接段内配置不发生跳变。
 4. **可达性、碰撞检测与自转角可行性扫描（Section 6.5 & M10）**：
    - **焊丝尖端碰撞豁免**：焊接段内焊丝尖端球域与当前焊接工件豁免干涉，杜绝焊缝根部全红误报，同时严格检测焊枪本体对夹具（`Fixture_Clamp_Left/Right`）的干涉碰撞。
@@ -36,7 +36,7 @@ flowchart LR
    - 严格遵循 5 条交互铁律：不调用 `AIS_Manipulator::Attach` 污染文档；支持世界/工具/用户/焊缝四参考系与步进吸附（1mm / 1°）；拖动中后台线程仅预览最新帧；松开鼠标才提交 1 条 `ModifyTargetPoseCommand`（多选提交 `MacroCommand`）；按 `Esc` 键无损取消。
 6. **FANUC `.ls` 后处理与离线 3D 动画包导出（M12 / M13）**：
    - 输出符合 FANUC 规范的 ASCII `.ls` 源程序（`/PROG`, `/ATTR`, `/APPL`, `/MN`, `/POS`, `/END`），可在 ROBOGUIDE 中加载运行。
-   - 导出单文件离线 HTML5 3D 动画预览包（内嵌播放器、时间轴与烘焙帧），断网双击浏览器即可交互查看。
+   - 导出单文件 HTML，内容是 TCP 折线的 2D 预览。Three.js 和 GLB 尚未接入。
 
 ---
 
@@ -75,7 +75,7 @@ Tools\Compile.bat
 1. 检查 CMake 与 Visual Studio 2022 编译环境；
 2. 自动配置 64 位 Release 工程（`build/` 目录）；
 3. 并行编译全部动态/静态库以及主程序和测试套件；
-4. 运行 `CTest` 自动化单元测试（验证 20/20 项核心算法全部通过）；
+4. 运行 `ctest`。通过只说明本仓库的回归通过，不是 ROBOGUIDE 签核。
 5. 执行 `SiFastSuiteOLP.exe` 端到端验证流程并生成示例 FANUC `.ls` 与 3D HTML 离线包。
 
 ### 3.2 手动 CMake 构建
@@ -96,17 +96,18 @@ ctest --test-dir build -C Release --output-on-failure
 
 ---
 
-## 4. 自动化测试验证矩阵 (20/20 全部通过)
+## 4. 自动化测试覆盖什么
 
-| 测试用例 | 验证领域 | 判定标准与实测指标 | 结果 |
-| :--- | :--- | :--- | :---: |
-| **Test 1** | WPR 欧拉角转换与万向锁 | $P = \pm 90^\circ$ 万向锁矩阵往返误差 $< 10^{-7\circ}$ | **PASS** |
-| **Test 2** | URDF 与二进制 STL 加载 | 成功加载 `fanuc_m10ia_standalone.urdf` 与 `base_link.stl` | **PASS** |
-| **Test 3** | OPW 正逆运动学 100 组对拍 | 位置误差 $< 0.01\text{ mm}$ (实测 $0.000000\text{ mm}$), 姿态误差 $< 0.001^\circ$ | **PASS** |
-| **Test 4** | 方案 A 整工位 STEP 导入与替换 | 导入 12 实体，隐藏 5 个静态机器人部件，基座对齐偏差 $< 1\text{ mm}$ (实测 $0\text{ mm}$) | **PASS** |
-| **Test 5** | T 型角焊跨零件识别与碰撞豁免 | 立板与底板贴合面匹配，焊枪角平分线姿态偏差 $< 5^\circ$；焊丝尖端豁免零误报；检出夹具碰撞 | **PASS** |
-| **Test 6** | TcpGizmo 操纵器与 Undo/Redo | 拖拽过程 20 帧 0 次污染撤销栈；松手提交 1 条命令；连续 100 步撤销重做状态完全一致 | **PASS** |
-| **Test 7** | FANUC `.ls` 后处理器金样本结构 | 校验生成完整 `/PROG`, `/ATTR`, `/APPL`, `/MN`, `Arc Start/End`, `/POS`, `/END` | **PASS** |
+测试可执行文件是 `olp_tests`。它证明的是本仓库里的闭环和回归，不是 ROBOGUIDE 签核，也不是「20/20 全部通过」的对外口径。
+
+- WPR 往返和万向锁。
+- URDF 软限位从文件读入；机器人 STL 由米制显式换成毫米。
+- OPW 正逆解闭环，以及法兰位置 / `tool0` 轴向与独立 URDF 链的对拍（0.01 mm）。
+- 本仓库生成的平面方盒整场景可导入（12 个实体）。四件带曲面的 FreeCAD STEP 在无 OpenCASCADE 时必须失败。
+- 焊缝终点会被采到；单点焊缝同时有 Arc Start 和 Arc End；approach 的手工修改不会写到 `WELD_START`；路径反向后焊接速度仍留在焊接点上。
+- 零位移拖拽和找不到目标的命令不会入栈。`.ls` 在 IK 缓存无效或遇到圆弧运动时拒绝导出。
+
+产品构建需要 Qt6 和 OpenCASCADE（`OLP_HEADLESS=OFF`，这是默认值）。`-DOLP_HEADLESS=ON` 只用于算法回归，内置 STEP 读取器只覆盖本仓库的平面方盒文件。
 
 ---
 
@@ -115,5 +116,5 @@ ctest --test-dir build -C Release --output-on-failure
 - **C++ 语言标准**：C++20
 - **构建系统**：CMake 3.20+
 - **编译器支持**：MSVC 2022 (v143) / Clang / GCC
-- **可选集成库**：OpenCASCADE 7.8+ (B-Rep 几何), Qt 6 (Widgets / GUI), Eigen3, FCL (碰撞检测)
-- **开箱即用设计**：未检测到外部 OCCT 或 Qt6 库时，内置轻量级 ISO-10303-21 STEP/STL B-Rep 解析器，保证纯源码零依赖下即刻编译通过并运行全套测试。
+- **产品依赖**：OpenCASCADE（B-Rep）和 Qt 6 是产品配置的必选项。Eigen3 与 FCL 仍是可选加速库。
+- **算法回归**：设置 `-DOLP_HEADLESS=ON` 后可以不装 Qt6 / OpenCASCADE 编译并运行 `olp_tests`。这条路径不会把内置平面解析器说成 OpenCASCADE。

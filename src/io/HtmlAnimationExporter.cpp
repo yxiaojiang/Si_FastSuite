@@ -21,7 +21,7 @@ bool HtmlAnimationExporter::exportSingleFileHtml(
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>SiFastSuite OLP - 离线 3D 焊接仿真预览 (Program: )" << program.name << R"()</title>
+<title>SiFastSuite OLP - TCP trajectory 2D preview (Program: )" << program.name << R"()</title>
 <style>
   body { margin: 0; background: #111827; color: #f3f4f6; font-family: "Microsoft YaHei", sans-serif; overflow: hidden; }
   #hud { position: absolute; top: 16px; left: 16px; background: rgba(17,24,39,0.88); padding: 14px 18px; border-radius: 8px; border: 1px solid #374151; }
@@ -32,7 +32,7 @@ bool HtmlAnimationExporter::exportSingleFileHtml(
 </head>
 <body>
 <div id="hud">
-  <h3 style="margin:0 0 8px 0;">SiFastSuite OLP 离线仿真包 — )" << program.name << R"(</h3>
+  <h3 style="margin:0 0 8px 0;">SiFastSuite OLP TCP 2D preview — )" << program.name << R"(</h3>
   <div>总节拍估算: <b>)" << simResult.totalCycleTimeSec << R"( s</b> (焊接: )" << simResult.arcWeldTimeSec
         << R"( s / 空走: )" << simResult.airCutTimeSec << R"( s)</div>
   <div id="frameInfo" style="margin-top:6px; font-family:monospace;">Frame: 0</div>

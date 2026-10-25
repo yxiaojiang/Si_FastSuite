@@ -21,7 +21,8 @@ public:
     // Generate complete FANUC .ls text content from Program
     static std::string generateLsString(
         const core::Program& program,
-        const LsPostConfig& config = {});
+        const LsPostConfig& config = {},
+        std::string* errorOut = nullptr);
 
     // Export .ls file to disk
     static bool exportToFile(

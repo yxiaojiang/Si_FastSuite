@@ -34,7 +34,8 @@ bool CollisionAndSimEngine::checkTorchPoseCollision(
     const std::string& activeWorkpieceId,
     bool isWeldingRole,
     double& outMinClearanceMm,
-    std::string& outCollidingPartName) const noexcept {
+    std::string& outCollidingPartName,
+    const std::vector<std::string>& exemptionPartIds) const noexcept {
     outMinClearanceMm = 10000.0;
     outCollidingPartName.clear();
 
@@ -65,18 +66,26 @@ bool CollisionAndSimEngine::checkTorchPoseCollision(
             continue;
         }
 
-        const bool isActiveWeldedWorkpiece =
-            (node.id == activeWorkpieceId || node.collisionRole == core::CollisionRole::Workpiece);
+        const bool isExemptBaseMetal = [&]() {
+            if (node.id == activeWorkpieceId) return true;
+            for (const auto& id : exemptionPartIds) {
+                if (node.id == id) return true;
+            }
+            return false;
+        }();
 
         for (const auto& sph : torchSpheres) {
-            // Wire-tip exemption rule (M10): During welding, TCP tip touches the welded workpiece
-            if (sph.isWireTip && isWeldingRole && isActiveWeldedWorkpiece) {
+            const core::Vec3 center = tcpWorldPose.pos + retreatDir * sph.offsetAlongNegZMm;
+            const double rawDist = pointToAabbSignedDistance(
+                center, node.collisionMesh.bboxMin, node.collisionMesh.bboxMax);
+            // Wire tip may touch the weld's own base metals inside a small radius.
+            // Other workpieces, clamps, and a tip buried deeper than that radius still collide.
+            if (sph.isWireTip && isWeldingRole && isExemptBaseMetal &&
+                rawDist >= -settings_.wireTipExemptionRadiusMm) {
                 continue;
             }
 
-            const core::Vec3 center = tcpWorldPose.pos + retreatDir * sph.offsetAlongNegZMm;
-            const double dist = pointToAabbSignedDistance(
-                center, node.collisionMesh.bboxMin, node.collisionMesh.bboxMax) - sph.radiusMm;
+            const double dist = rawDist - sph.radiusMm;
 
             if (dist < outMinClearanceMm) {
                 outMinClearanceMm = dist;
@@ -98,11 +107,12 @@ std::vector<TwistScanSample> CollisionAndSimEngine::scanTwistAngles(
     const core::FanucConfig& requiredConfig,
     const std::vector<core::SceneNode>& sceneNodes,
     const std::string& activeWorkpieceId,
-    double stepDeg) const {
+    double stepDeg,
+    const std::vector<std::string>& exemptionPartIds) const {
     std::vector<TwistScanSample> samples;
     const core::Transform4d worldToBase = robotBaseInWorld.inverse();
 
-    for (double deg = -180.0; deg <= 180.0 + 1e-6; deg += stepDeg) {
+    for (double deg = -180.0; deg < 180.0 - 1e-9; deg += stepDeg) {
         TwistScanSample s;
         s.twistAngleDeg = deg;
 
@@ -125,7 +135,7 @@ std::vector<TwistScanSample> CollisionAndSimEngine::scanTwistAngles(
         double minClearance = 0.0;
         std::string hitPart;
         const bool collided = checkTorchPoseCollision(
-            twistedWorld, sceneNodes, activeWorkpieceId, true, minClearance, hitPart);
+            twistedWorld, sceneNodes, activeWorkpieceId, true, minClearance, hitPart, exemptionPartIds);
         s.collisionFree = !collided;
         s.minClearanceMm = minClearance;
         samples.push_back(s);
@@ -155,10 +165,6 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
         std::optional<core::FanucConfig> weldSegmentLockedConfig;
 
         for (auto& target : op.targets) {
-            for (const auto& ev : target.events) {
-                if (ev.type == core::ProcessEventType::ArcStart) arcOn = true;
-            }
-
             const core::Transform4d targetWorld = uframeInWorld * target.poseInUFrame;
             const core::Transform4d targetInBase = worldToBase * targetWorld;
 
@@ -168,18 +174,31 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
                  target.role == core::TargetRole::WELD_END);
 
             const auto ikCandidates = kinematics_.inverseKinematics(targetInBase, utoolOffset, false);
+            const bool userLocked = target.lockConfig;
             const auto chosen = kinematics_.selectBestSolution(
                 ikCandidates,
                 currentJoints,
-                isWeldRole ? weldSegmentLockedConfig : (target.lockConfig ? std::optional(target.config) : std::nullopt),
-                isWeldRole);
+                isWeldRole
+                    ? weldSegmentLockedConfig
+                    : (userLocked ? std::optional(target.config) : std::nullopt),
+                true);
 
             if (!chosen.has_value()) {
                 target.cache.valid = false;
-                target.cache.status = weldSegmentLockedConfig.has_value()
-                    ? core::TargetValidationState::ConfigJump
-                    : core::TargetValidationState::Unreachable;
-                target.cache.issueMessage = "Target unreachable or configuration jump in weld segment";
+                bool anyInside = false;
+                for (const auto& cand : ikCandidates) {
+                    if (cand.withinLimits) anyInside = true;
+                }
+                if (!ikCandidates.empty() && !anyInside) {
+                    target.cache.status = core::TargetValidationState::JointLimitExceeded;
+                    target.cache.issueMessage = "All inverse solutions exceed a joint limit";
+                } else if ((isWeldRole && weldSegmentLockedConfig.has_value()) || userLocked) {
+                    target.cache.status = core::TargetValidationState::ConfigJump;
+                    target.cache.issueMessage = "No solution keeps the locked configuration";
+                } else {
+                    target.cache.status = core::TargetValidationState::Unreachable;
+                    target.cache.issueMessage = "Target unreachable";
+                }
                 sim.issues.push_back({
                     inOutProgram.id, op.id, target.id, target.name,
                     target.cache.status, target.cache.issueMessage
@@ -194,30 +213,36 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
             double minClearance = 1000.0;
             std::string hitName;
             const bool collided = checkTorchPoseCollision(
-                targetWorld, sceneNodes, op.targetWorkpieceId, isWeldRole, minClearance, hitName);
+                targetWorld, sceneNodes, op.targetWorkpieceId, isWeldRole,
+                minClearance, hitName, op.exemptionPartIds);
 
             target.cache.valid = true;
             target.cache.jointsRad = chosen->jointsRad;
             target.cache.solvedConfig = chosen->config;
-            target.config = chosen->config;
             target.cache.minClearanceMm = minClearance;
             target.cache.manipulabilityIndex = chosen->manipulability;
 
             if (collided) {
                 target.cache.status = core::TargetValidationState::Collision;
                 target.cache.issueMessage = "Collision with " + hitName;
+            } else if (minClearance < settings_.collisionSafeClearanceMm) {
+                target.cache.status = core::TargetValidationState::NearCollision;
+                target.cache.issueMessage = "Clearance below safe distance (" + hitName + ")";
+            } else if (chosen->isSingular) {
+                target.cache.status = core::TargetValidationState::Singularity;
+                target.cache.issueMessage = "Near a wrist, elbow, or shoulder singularity";
+            } else if (chosen->nearLimits) {
+                target.cache.status = core::TargetValidationState::NearJointLimit;
+                target.cache.issueMessage = "A joint is inside the 5 degree warning margin";
+            } else {
+                target.cache.status = core::TargetValidationState::Valid;
+                target.cache.issueMessage.clear();
+            }
+            if (target.cache.status != core::TargetValidationState::Valid) {
                 sim.issues.push_back({
                     inOutProgram.id, op.id, target.id, target.name,
                     target.cache.status, target.cache.issueMessage
                 });
-            } else if (minClearance < settings_.collisionSafeClearanceMm) {
-                target.cache.status = core::TargetValidationState::NearCollision;
-            } else if (chosen->isSingular) {
-                target.cache.status = core::TargetValidationState::Singularity;
-            } else if (chosen->nearLimits) {
-                target.cache.status = core::TargetValidationState::NearJointLimit;
-            } else {
-                target.cache.status = core::TargetValidationState::Valid;
             }
 
             // Segment duration & interpolation (M11)
@@ -233,6 +258,7 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
 
             const int numSteps = std::max(2, static_cast<int>( std::ceil(segDuration / sampleStepSec) ));
             std::array<double, 6> prevStepJoints = currentJoints;
+            bool postedSegmentIssue = false;
 
             for (int step = 1; step <= numSteps; ++step) {
                 const double alpha = static_cast<double>(step) / static_cast<double>(numSteps);
@@ -254,10 +280,31 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
                     if (!stepChosen.has_value()) {
                         sim.hasConfigJumpInLinear = true;
                         interpJoints = chosen->jointsRad;
+                        if (!postedSegmentIssue) {
+                            postedSegmentIssue = true;
+                            sim.issues.push_back({
+                                inOutProgram.id, op.id, target.id, target.name,
+                                core::TargetValidationState::Unreachable,
+                                "Linear segment has no inverse solution; motion was not interpolated"
+                            });
+                        }
                     } else {
-                        const double stepJump = OpwKinematics::weightedJointDistance(prevStepJoints, stepChosen->jointsRad);
-                        if (stepJump > core::deg2rad(25.0)) {
+                        double maxStep = 0.0;
+                        for (size_t k = 0; k < 6; ++k) {
+                            maxStep = std::max(
+                                maxStep,
+                                std::abs(core::normalizeAngleRad(stepChosen->jointsRad[k] - prevStepJoints[k])));
+                        }
+                        if (maxStep > core::deg2rad(15.0)) {
                             sim.hasConfigJumpInLinear = true;
+                            if (!postedSegmentIssue) {
+                                postedSegmentIssue = true;
+                                sim.issues.push_back({
+                                    inOutProgram.id, op.id, target.id, target.name,
+                                    core::TargetValidationState::ConfigJump,
+                                    "Linear segment joint step exceeds 15 degrees"
+                                });
+                            }
                         }
                         interpJoints = stepChosen->jointsRad;
                     }
@@ -288,7 +335,9 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
             currentTcpWorld = targetWorld;
 
             for (const auto& ev : target.events) {
-                if (ev.type == core::ProcessEventType::ArcEnd) {
+                if (ev.type == core::ProcessEventType::ArcStart) {
+                    arcOn = true;
+                } else if (ev.type == core::ProcessEventType::ArcEnd) {
                     arcOn = false;
                     weldSegmentLockedConfig.reset();
                 }

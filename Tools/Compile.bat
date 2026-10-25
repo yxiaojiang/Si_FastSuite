@@ -34,10 +34,14 @@ if not exist "%BUILD_DIR%" (
 REM Configure project with CMake if CMakeCache.txt does not exist
 if not exist "%BUILD_DIR%\CMakeCache.txt" (
     echo [SiFastSuite Build] Generating build files with CMake...
-    cmake -B "%BUILD_DIR%" -S "%ROOT_DIR%" -G "Visual Studio 17 2022" -A x64
-    if %ERRORLEVEL% neq 0 (
+    if "%OLP_HEADLESS%"=="1" (
+        cmake -B "%BUILD_DIR%" -S "%ROOT_DIR%" -G "Visual Studio 17 2022" -A x64 -DOLP_HEADLESS=ON
+    ) else (
+        cmake -B "%BUILD_DIR%" -S "%ROOT_DIR%" -G "Visual Studio 17 2022" -A x64 -DOLP_HEADLESS=OFF
+    )
+    if !ERRORLEVEL! neq 0 (
         echo [ERROR] CMake configuration failed.
-        exit /b %ERRORLEVEL%
+        exit /b 1
     )
 ) else (
     echo [SiFastSuite Build] Existing CMake configuration detected.
@@ -46,9 +50,9 @@ if not exist "%BUILD_DIR%\CMakeCache.txt" (
 REM Build all targets
 echo [SiFastSuite Build] Building project targets (%CONFIG%)...
 cmake --build "%BUILD_DIR%" --config %CONFIG% --parallel
-if %ERRORLEVEL% neq 0 (
+if !ERRORLEVEL! neq 0 (
     echo [ERROR] Compilation failed.
-    exit /b %ERRORLEVEL%
+    exit /b 1
 )
 
 REM Run automated test suite
@@ -56,21 +60,27 @@ echo ===========================================================================
 echo [SiFastSuite Build] Running verification tests...
 echo ==============================================================================
 ctest --test-dir "%BUILD_DIR%" -C %CONFIG% --output-on-failure
-if %ERRORLEVEL% neq 0 (
-    echo [WARNING] Some verification tests failed.
-) else (
-    echo [SiFastSuite Build] All verification tests passed.
+if !ERRORLEVEL! neq 0 (
+    echo [ERROR] Verification tests failed.
+    exit /b 1
 )
 
 REM Run main CLI executable verification
-if exist "%BUILD_DIR%\%CONFIG%\SiFastSuiteOLP.exe" (
-    echo ==============================================================================
-    echo [SiFastSuite Build] Executing SiFastSuiteOLP verification run...
-    echo ==============================================================================
-    "%BUILD_DIR%\%CONFIG%\SiFastSuiteOLP.exe"
+if not exist "%BUILD_DIR%\%CONFIG%\SiFastSuiteOLP.exe" (
+    echo [ERROR] SiFastSuiteOLP.exe was not produced.
+    exit /b 1
+)
+echo ==============================================================================
+echo [SiFastSuite Build] Executing SiFastSuiteOLP verification run...
+echo ==============================================================================
+"%BUILD_DIR%\%CONFIG%\SiFastSuiteOLP.exe"
+set APP_EXIT=!ERRORLEVEL!
+if !APP_EXIT! neq 0 (
+    echo [ERROR] SiFastSuiteOLP exited with code !APP_EXIT!.
+    exit /b !APP_EXIT!
 )
 
 echo ==============================================================================
-echo [SiFastSuite Build] Build and verification finished successfully!
+echo [SiFastSuite Build] Build and verification finished.
 echo ==============================================================================
 exit /b 0

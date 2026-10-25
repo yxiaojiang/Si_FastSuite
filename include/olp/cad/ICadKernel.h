@@ -67,7 +67,7 @@ public:
         int sourceCadHandleId,
         int edgeIndex,
         const std::vector<int>& candidateCadHandles,
-        double maxDistanceTolMm = 2.0) const = 0;
+        double maxDistanceTolMm = 1.0) const = 0;
 
     // Curve evaluation at arc length s in [0, length]
     virtual bool evaluateEdgeAtArcLength(

@@ -8,14 +8,14 @@
 | `Plan.md` | 仅当前 1~3 个活跃事项（含当前待交接给 Opus 或 Gemini 的任务） | **是** |
 | `ProjectMemory.md` | 稳定架构、全局契约、历史演进脉络、硬约束；保持精简 | 否，涉及全局设计或跨阶段对比时读 |
 | `contexts/*.md` | 模块当前态与入口；按任务读取 | 否，按需 |
-| `*-archive.md` | 历史快照和已完成项（如第一阶段离线编程 OLP 方案归档） | 仅追溯历史 |
+| `*-archive.md` | 历史快照和已完成项（如视觉沿边涂抹方案归档） | 仅追溯历史 |
 
 ## 会话开始与按需加载
 
 1. 每个项目任务先读取 `.claude/SessionBrief.md` 与 `.claude/Plan.md`。
 2. 再按任务选择上下文：
-   - **当前主线（基于 3D 视觉的免示教机器人边缘动态涂抹/作业系统）**：读 `.claude/contexts/VisionEdgeSystem.md` 及 `Docs/Vision_Guided_Robot_Edge_System_Gemini.md`。
-   - **历史第一阶段（对标 FASTSUITE 的 CAD 离线编程 OLP 系统）**：读 `.claude/contexts/OLP-archive.md`（对应详档 `Docs/FASTSUITE_OLP_System_Architecture.md` 与 `Docs/OLP_System_Design_Claude.md`）。
+   - **当前主线（对标 FASTSUITE 的机器人焊接离线编程 OLP 系统）**：读 `.claude/contexts/OLP-archive.md`、`Docs/OLP_System_Design_Claude.md` 与 `Docs/FASTSUITE_OLP_System_Architecture.md`。
+   - **历史归档（基于 3D 视觉的免示教沿边涂抹方案）**：读 `.claude/contexts/VisionEdgeSystem.md` 及 `Docs/Vision_Edge_System_Baseline.md`。
 3. 涉及全局架构、双模型（Gemini 与 Claude Opus）协作历史、跨模块契约或无法由模块上下文判断的问题，才读 `.claude/ProjectMemory.md`。
 4. 用户说“读取记忆”时，执行第 1~3 步；不要全文加载 archive 或无关大文件。
 

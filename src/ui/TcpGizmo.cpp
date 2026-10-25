@@ -53,11 +53,19 @@ void TcpGizmo::updateDragDelta(
         core::Mat3::rotX(core::deg2rad(snappedRotDeg.x));
 
     for (auto& snap : snapshots_) {
-        if (refFrame_ == GizmoRefFrame::Tool || refFrame_ == GizmoRefFrame::Seam) {
-            // Post-multiply delta in local Tool/Seam frame
+        if (refFrame_ == GizmoRefFrame::Tool) {
             snap.currentPreviewPoseInUFrame = snap.initialPoseInUFrame * deltaT;
+        } else if (refFrame_ == GizmoRefFrame::Seam && hasSeamFrame_) {
+            const core::Transform4d seam = seamFrameInUFrame_;
+            snap.currentPreviewPoseInUFrame = seam * deltaT * seam.inverse() * snap.initialPoseInUFrame;
+        } else if (refFrame_ == GizmoRefFrame::World) {
+            const core::Transform4d worldToUFrame = uframeInWorld_.inverse();
+            snap.currentPreviewPoseInUFrame.pos =
+                snap.initialPoseInUFrame.pos + worldToUFrame.rot * deltaT.pos;
+            snap.currentPreviewPoseInUFrame.rot =
+                (worldToUFrame.rot * deltaT.rot * uframeInWorld_.rot) * snap.initialPoseInUFrame.rot;
         } else {
-            // Pre-multiply delta in UFrame/World frame
+            // UFrame, and Seam before a seam frame has been supplied.
             snap.currentPreviewPoseInUFrame.pos = snap.initialPoseInUFrame.pos + deltaT.pos;
             snap.currentPreviewPoseInUFrame.rot = deltaT.rot * snap.initialPoseInUFrame.rot;
         }
@@ -74,6 +82,20 @@ void TcpGizmo::updateDragDelta(
 
 bool TcpGizmo::commitDrag() {
     if (!isDragging_ || snapshots_.empty()) {
+        return false;
+    }
+
+    bool moved = false;
+    for (const auto& s : snapshots_) {
+        const double pos = (s.currentPreviewPoseInUFrame.pos - s.initialPoseInUFrame.pos).norm();
+        const double ang = s.currentPreviewPoseInUFrame.rot.angularDistanceRad(s.initialPoseInUFrame.rot);
+        if (pos > 1e-9 || ang > 1e-9) {
+            moved = true;
+            break;
+        }
+    }
+    if (!moved) {
+        cancelDrag();
         return false;
     }
 

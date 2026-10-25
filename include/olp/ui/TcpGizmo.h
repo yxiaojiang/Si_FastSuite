@@ -37,6 +37,16 @@ public:
 
     void setSnapSteps(bool enabled, double linearStepMm = 1.0, double angularStepDeg = 1.0) noexcept;
 
+    // UFRAME pose in the world frame. World-mode drags are converted with this.
+    // Identity leaves World and UFrame translations equal.
+    void setUFrameInWorld(const core::Transform4d& uframeInWorld) noexcept { uframeInWorld_ = uframeInWorld; }
+
+    // Seam frame expressed in the same coordinates as poseInUFrame.
+    void setSeamFrameInUFrame(const core::Transform4d& seamInUFrame) noexcept {
+        seamFrameInUFrame_ = seamInUFrame;
+        hasSeamFrame_ = true;
+    }
+
     // Begin dragging one or more selected targets
     bool beginDrag(const std::vector<std::string>& selectedTargetIds);
 
@@ -67,6 +77,9 @@ private:
     app::ProjectDocument& doc_;
     app::CommandManager& cmdMgr_;
     GizmoRefFrame refFrame_{GizmoRefFrame::Tool};
+    core::Transform4d uframeInWorld_{};
+    core::Transform4d seamFrameInUFrame_{};
+    bool hasSeamFrame_{false};
     bool snapEnabled_{true};
     double linearSnapMm_{1.0};
     double angularSnapDeg_{1.0};

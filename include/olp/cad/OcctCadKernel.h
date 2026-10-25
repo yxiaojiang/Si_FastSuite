@@ -14,6 +14,9 @@ public:
     bool importStep(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) override;
     bool importStl(const std::string& filePath, core::TriMesh& outMesh) override;
 
+    // ROS-Industrial visual/collision STL files are meters. This loads one and scales to mm.
+    bool importRobotStlMillimeters(const std::string& filePath, core::TriMesh& outMesh);
+
     std::vector<CadEdgeInfo> getEdges(int cadHandleId) const override;
     std::vector<CadFaceInfo> getFaces(int cadHandleId) const override;
     std::vector<int> getAdjacentFaces(int cadHandleId, int edgeIndex) const override;
@@ -22,7 +25,7 @@ public:
         int sourceCadHandleId,
         int edgeIndex,
         const std::vector<int>& candidateCadHandles,
-        double maxDistanceTolMm = 2.0) const override;
+        double maxDistanceTolMm = 1.0) const override;
 
     bool evaluateEdgeAtArcLength(
         int cadHandleId,
@@ -57,12 +60,17 @@ private:
         core::Vec3 bboxMax{0.0, 0.0, 0.0};
         std::vector<CadEdgeInfo> edges{};
         std::vector<CadFaceInfo> faces{};
+        std::string contentHash{};
     };
 
     int nextHandleId_{1};
     std::unordered_map<int, SolidRecord> solids_{};
 
     static double pointToFaceBoxDistance(const core::Vec3& pt, const CadFaceInfo& face) noexcept;
+    bool importStepBuiltin(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes);
+#ifdef OLP_HAS_OCCT
+    bool importStepWithOcct(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes);
+#endif
 };
 
 } // namespace olp::cad

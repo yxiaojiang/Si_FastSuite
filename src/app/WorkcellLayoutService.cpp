@@ -62,20 +62,26 @@ SceneRobotReplaceResult WorkcellLayoutService::importFullSceneAndReplaceRobot(
     return res;
 }
 
-core::SceneNode& WorkcellLayoutService::defineUFrameByThreePoints(
+std::string WorkcellLayoutService::defineUFrameByThreePoints(
     ProjectDocument& doc,
     int uframeNumber,
     const std::string& frameName,
     const core::Vec3& originWorld,
     const core::Vec3& ptXWorld,
     const core::Vec3& ptXYWorld) {
+    const core::Vec3 xDir = ptXWorld - originWorld;
+    const core::Vec3 yDir = ptXYWorld - originWorld;
+    if (xDir.norm() < 1e-6 || xDir.cross(yDir).norm() < 1e-6) {
+        return {};
+    }
+
     const std::string nodeId = "uframe_" + std::to_string(uframeNumber);
     for (auto& n : doc.sceneNodes) {
         if (n.id == nodeId) {
             n.name = frameName;
             n.localTransform = core::Transform4d::fromThreePoints(originWorld, ptXWorld, ptXYWorld);
             doc.isDirty = true;
-            return n;
+            return n.id;
         }
     }
 
@@ -88,7 +94,91 @@ core::SceneNode& WorkcellLayoutService::defineUFrameByThreePoints(
     frameNode.localTransform = core::Transform4d::fromThreePoints(originWorld, ptXWorld, ptXYWorld);
     doc.sceneNodes.push_back(std::move(frameNode));
     doc.isDirty = true;
-    return doc.sceneNodes.back();
+    return nodeId;
+}
+
+ImportSceneAndReplaceRobotCommand::ImportSceneAndReplaceRobotCommand(
+    ProjectDocument& doc,
+    cad::ICadKernel& cadKernel,
+    std::string stepFilePath,
+    device::RobotModel libraryRobotModel,
+    SceneRobotReplaceResult* resultOut)
+    : doc_(doc),
+      cadKernel_(cadKernel),
+      stepFilePath_(std::move(stepFilePath)),
+      libraryRobotModel_(std::move(libraryRobotModel)),
+      resultOut_(resultOut) {}
+
+void ImportSceneAndReplaceRobotCommand::execute() {
+    if (!applied_) {
+        beforeNodes_ = doc_.sceneNodes;
+        beforeDirty_ = doc_.isDirty;
+        result_ = WorkcellLayoutService::importFullSceneAndReplaceRobot(
+            doc_, cadKernel_, stepFilePath_, libraryRobotModel_);
+        afterNodes_ = doc_.sceneNodes;
+        applied_ = true;
+        mutated_ = result_.success;
+        if (!mutated_) {
+            doc_.sceneNodes = beforeNodes_;
+            doc_.isDirty = beforeDirty_;
+        }
+        if (resultOut_ != nullptr) *resultOut_ = result_;
+        return;
+    }
+    if (!mutated_) return;
+    doc_.sceneNodes = afterNodes_;
+    doc_.isDirty = true;
+    if (resultOut_ != nullptr) *resultOut_ = result_;
+}
+
+void ImportSceneAndReplaceRobotCommand::undo() {
+    if (!mutated_) return;
+    doc_.sceneNodes = beforeNodes_;
+    doc_.isDirty = beforeDirty_;
+}
+
+DefineUFrameCommand::DefineUFrameCommand(
+    ProjectDocument& doc,
+    int uframeNumber,
+    std::string frameName,
+    core::Vec3 originWorld,
+    core::Vec3 ptXWorld,
+    core::Vec3 ptXYWorld,
+    std::string* nodeIdOut)
+    : doc_(doc),
+      uframeNumber_(uframeNumber),
+      frameName_(std::move(frameName)),
+      originWorld_(originWorld),
+      ptXWorld_(ptXWorld),
+      ptXYWorld_(ptXYWorld),
+      nodeIdOut_(nodeIdOut) {}
+
+void DefineUFrameCommand::execute() {
+    if (!applied_) {
+        beforeNodes_ = doc_.sceneNodes;
+        beforeDirty_ = doc_.isDirty;
+        nodeId_ = WorkcellLayoutService::defineUFrameByThreePoints(
+            doc_, uframeNumber_, frameName_, originWorld_, ptXWorld_, ptXYWorld_);
+        afterNodes_ = doc_.sceneNodes;
+        applied_ = true;
+        mutated_ = !nodeId_.empty();
+        if (!mutated_) {
+            doc_.sceneNodes = beforeNodes_;
+            doc_.isDirty = beforeDirty_;
+        }
+        if (nodeIdOut_ != nullptr) *nodeIdOut_ = nodeId_;
+        return;
+    }
+    if (!mutated_) return;
+    doc_.sceneNodes = afterNodes_;
+    doc_.isDirty = true;
+    if (nodeIdOut_ != nullptr) *nodeIdOut_ = nodeId_;
+}
+
+void DefineUFrameCommand::undo() {
+    if (!mutated_) return;
+    doc_.sceneNodes = beforeNodes_;
+    doc_.isDirty = beforeDirty_;
 }
 
 } // namespace olp::app

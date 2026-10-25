@@ -6,24 +6,72 @@
 
 namespace olp::algo {
 
+namespace {
+
+double axisSign(int sign) noexcept {
+    return (sign < 0) ? -1.0 : 1.0;
+}
+
+// Teach-pendant / display angles -> URDF geometric joint angles.
+// Coupling lives here, not inside the OPW +Y/+Y chain. On this URDF J3 is -Y,
+// so adding +J2 cancels a pure J2 motion and the forearm stays put.
+// The coefficient sign is NOT confirmed on ROBOGUIDE (phase-0 item S0-4).
+std::array<double, 6> displayToUrdfJoints(const device::RobotModel& model, const std::array<double, 6>& displayJ) noexcept {
+    std::array<double, 6> urdf = displayJ;
+    if (model.hasJ2J3Coupling) {
+        urdf[2] = displayJ[2] + model.j2J3CouplingCoeff * displayJ[1];
+    }
+    return urdf;
+}
+
+std::array<double, 6> urdfToOpwJoints(const device::RobotModel& model, const std::array<double, 6>& urdf) noexcept {
+    // Stored convention (matches the M-10iA URDF flange at the zero pose):
+    //   q = sign * J_urdf - offset
+    // This is the same map as ROS-Industrial's `J = sign * q + offset_ros`
+    // when offset_ros = sign * offset_stored. Do not drop the sign onto the offset.
+    std::array<double, 6> q{};
+    for (size_t i = 0; i < 6; ++i) {
+        q[i] = axisSign(model.opw.signCorrections[i]) * urdf[i] - model.opw.offsetsRad[i];
+    }
+    return q;
+}
+
+std::array<double, 6> opwToUrdfJoints(const device::RobotModel& model, const std::array<double, 6>& q) noexcept {
+    std::array<double, 6> urdf{};
+    for (size_t i = 0; i < 6; ++i) {
+        const double s = axisSign(model.opw.signCorrections[i]);
+        urdf[i] = s * (q[i] + model.opw.offsetsRad[i]);
+    }
+    return urdf;
+}
+
+std::array<double, 6> urdfToDisplayJoints(const device::RobotModel& model, const std::array<double, 6>& urdf) noexcept {
+    std::array<double, 6> display = urdf;
+    if (model.hasJ2J3Coupling) {
+        display[2] = urdf[2] - model.j2J3CouplingCoeff * urdf[1];
+    }
+    return display;
+}
+
+} // namespace
+
 OpwKinematics::OpwKinematics(const device::RobotModel& model)
     : model_(model) {}
 
 std::array<double, 6> OpwKinematics::modelToDisplayJoints(const std::array<double, 6>& modelQ) const noexcept {
-    std::array<double, 6> disp = modelQ;
-    if (model_.hasJ2J3Coupling) {
-        // FANUC J2/J3 interaction: J3_display = q3_model - coeff * J2_display
-        disp[2] = modelQ[2] - model_.j2J3CouplingCoeff * modelQ[1];
+    auto display = urdfToDisplayJoints(model_, opwToUrdfJoints(model_, modelQ));
+    // OPW angles are folded into (-pi, pi]. J6's stored offset is +pi, so the
+    // raw display angle lands in (-2pi, 0] and would be reported as turn -1
+    // for a teach-pendant angle that is still inside (-pi, pi]. Fold once here.
+    // ±360° turns stay the job of inverseKinematics(expandTurns=true).
+    for (double& joint : display) {
+        joint = core::normalizeAngleRad(joint);
     }
-    return disp;
+    return display;
 }
 
 std::array<double, 6> OpwKinematics::displayToModelJoints(const std::array<double, 6>& displayJ) const noexcept {
-    std::array<double, 6> modelQ = displayJ;
-    if (model_.hasJ2J3Coupling) {
-        modelQ[2] = displayJ[2] + model_.j2J3CouplingCoeff * displayJ[1];
-    }
-    return modelQ;
+    return urdfToOpwJoints(model_, displayToUrdfJoints(model_, displayJ));
 }
 
 FkResult OpwKinematics::forwardKinematics(
@@ -185,14 +233,27 @@ std::vector<IkSolution> OpwKinematics::inverseKinematics(
                 addCandidate(dispJ);
 
                 if (expandTurns) {
-                    // Expand J4 & J6 by +/- 2*pi if within joint limits
-                    for (int t6 : {-1, 0, +1}) {
-                        if (t6 == 0) continue;
-                        auto extJ = dispJ;
-                        extJ[5] += t6 * 2.0 * core::kPi;
-                        if (extJ[5] >= model_.jointLimits[5].lowerRad &&
-                            extJ[5] <= model_.jointLimits[5].upperRad) {
-                            addCandidate(extJ);
+                    // Plan §6.2: unfold J1, J4 and J6 by ±360°. Which FANUC turn
+                    // registers these map to ($TURN_AXIS, often J4/J5/J6) is unverified.
+                    for (int t1 : {-1, 0, +1}) {
+                        for (int t4 : {-1, 0, +1}) {
+                            for (int t6 : {-1, 0, +1}) {
+                                if (t1 == 0 && t4 == 0 && t6 == 0) continue;
+                                auto extJ = dispJ;
+                                extJ[0] += t1 * 2.0 * core::kPi;
+                                extJ[3] += t4 * 2.0 * core::kPi;
+                                extJ[5] += t6 * 2.0 * core::kPi;
+                                bool inside = true;
+                                for (int axis : {0, 3, 5}) {
+                                    const auto& lim = model_.jointLimits[static_cast<size_t>(axis)];
+                                    const double urdfAxis = displayToUrdfJoints(model_, extJ)[static_cast<size_t>(axis)];
+                                    if (urdfAxis < lim.lowerRad - 1e-5 || urdfAxis > lim.upperRad + 1e-5) {
+                                        inside = false;
+                                        break;
+                                    }
+                                }
+                                if (inside) addCandidate(extJ);
+                            }
                         }
                     }
                 }
@@ -219,16 +280,14 @@ std::optional<IkSolution> OpwKinematics::selectBestSolution(
         if (!sol.withinLimits) {
             continue;
         }
+        // A supplied config is a hard lock. The previous +100 penalty let simulation
+        // replace a user-locked posture and then write that posture back.
+        (void)forbidConfigChangeInWeld;
         if (lockedConfig.has_value() && !sol.config.samePosture(*lockedConfig)) {
-            if (forbidConfigChangeInWeld) {
-                continue;
-            }
+            continue;
         }
 
         double cost = weightedJointDistance(sol.jointsRad, prevDisplayJointsRad);
-        if (lockedConfig.has_value() && !sol.config.samePosture(*lockedConfig)) {
-            cost += 100.0; // Heavy penalty if config differs when not strictly forbidden
-        }
         if (sol.nearLimits) {
             cost += 2.0;
         }
@@ -267,6 +326,8 @@ core::FanucConfig OpwKinematics::computeConfig(const std::array<double, 6>& disp
     auto calcTurn = [](double angleRad) -> int {
         return static_cast<int>(std::floor((angleRad + core::kPi) / (2.0 * core::kPi)));
     };
+    // Turn registers below are J1 / J4 / J6, matching Plan §6.2.
+    // FANUC's default $TURN_AXIS set is often J4 / J5 / J6. Unverified until S0-4.
     cfg.turns[0] = calcTurn(displayJointsRad[0]);
     cfg.turns[1] = calcTurn(displayJointsRad[3]);
     cfg.turns[2] = calcTurn(displayJointsRad[5]);
@@ -279,8 +340,11 @@ void OpwKinematics::checkJointLimits(
     bool& outNear) const noexcept {
     outWithin = true;
     outNear = false;
+    // jointLimits were copied from the URDF, so they bound URDF geometric angles.
+    // Whether the teach pendant uses that same number for coupled J3 is unverified.
+    const auto urdf = displayToUrdfJoints(model_, displayJointsRad);
     for (size_t i = 0; i < 6; ++i) {
-        const double val = displayJointsRad[i];
+        const double val = urdf[i];
         const auto& lim = model_.jointLimits[i];
         if (val < lim.lowerRad - 1e-5 || val > lim.upperRad + 1e-5) {
             outWithin = false;
@@ -295,12 +359,20 @@ bool OpwKinematics::checkSingularity(
     const std::array<double, 6>& displayJointsRad,
     double& outManipulability) const noexcept {
     const auto q = displayToModelJoints(displayJointsRad);
-    // Wrist singularity when |sin(q5)| -> 0; elbow singularity when |cos(q3 + psi)| -> 1
+    // Geometric proxies, not the Jacobian minimum singular value.
+    // Wrist: |sin(q5)| -> 0. Elbow: arm fully stretched. Shoulder: wrist on the J1 axis.
     const double wristFactor = std::abs(std::sin(q[4]));
     const double psi = std::atan2(model_.opw.a2, model_.opw.c3);
     const double elbowFactor = std::abs(std::sin(q[2] + psi));
-    outManipulability = wristFactor * elbowFactor;
-    return (wristFactor < core::deg2rad(3.0)) || (elbowFactor < core::deg2rad(3.0));
+    const double rPlanar =
+        model_.opw.a1 + model_.opw.c2 * std::sin(q[1]) +
+        model_.opw.a2 * std::cos(q[1] + q[2]) +
+        model_.opw.c3 * std::sin(q[1] + q[2]);
+    const double shoulderFactor = std::min(1.0, std::abs(rPlanar) / 50.0);
+    outManipulability = wristFactor * elbowFactor * shoulderFactor;
+    return (wristFactor < core::deg2rad(3.0)) ||
+           (elbowFactor < core::deg2rad(3.0)) ||
+           (std::abs(rPlanar) < 5.0);
 }
 
 double OpwKinematics::weightedJointDistance(

@@ -14,7 +14,7 @@
     "c4": 100.0
   },
   "joint_sign_corrections": [1, 1, -1, -1, -1, -1],
-  "joint_offsets_deg": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+  "joint_offsets_deg": [0.0, 0.0, -90.0, 0.0, 0.0, 180.0],
   "j2_j3_coupling": true,
   "j2_j3_coupling_coeff": 1.0,
   "home_joints_deg": [0.0, 0.0, 0.0, 0.0, -90.0, 0.0],

@@ -77,23 +77,28 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromPickedEdge
     std::string face2PartName;
 
     auto crossMatch = cadKernel.findClosestMatingFaceAcrossParts(
-        sourceCadHandleId, edgeIndex, allWorkpieceCadHandles, 2.0);
+        sourceCadHandleId, edgeIndex, allWorkpieceCadHandles, 1.0);
 
-    if (crossMatch.has_value()) {
+        if (crossMatch.has_value()) {
         // Cross-part T-joint detected! Pick the adjacent face on source solid that is NOT parallel to crossMatch normal
         normal2 = crossMatch->outwardNormal;
         face2Idx = crossMatch->faceIndex;
         face2PartName = crossMatch->partName;
 
+        bool foundFlank = false;
         for (int adjIdx : pickedEdge.adjacentFaceIndices) {
             if (adjIdx >= 0 && adjIdx < static_cast<int>(faces.size())) {
                 const core::Vec3 candN = faces[adjIdx].outwardNormal;
                 if (std::abs(candN.dot(normal2)) < 0.85) {
                     normal1 = candN;
                     face1Idx = adjIdx;
+                    foundFlank = true;
                     break;
                 }
             }
+        }
+        if (!foundFlank) {
+            return std::nullopt;
         }
     } else if (pickedEdge.adjacentFaceIndices.size() >= 2) {
         face1Idx = pickedEdge.adjacentFaceIndices[0];
@@ -121,21 +126,20 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromPickedEdge
     const double sEnd = std::max(sStart, totalLen - std::min(seam.endTrimMm, totalLen * 0.25));
     const double step = std::max(5.0, sampleStepMm);
 
-    for (double s = sStart; s <= sEnd + 1e-6; s += step) {
-        const double clampedS = std::min(s, sEnd);
+    auto appendSample = [&](double s) -> bool {
         core::Vec3 pt{}, tan{};
-        if (!cadKernel.evaluateEdgeAtArcLength(sourceCadHandleId, edgeIndex, clampedS, pt, tan)) {
-            continue;
+        if (!cadKernel.evaluateEdgeAtArcLength(sourceCadHandleId, edgeIndex, s, pt, tan)) {
+            return false;
         }
         if (seam.reversed) {
             tan = -tan;
         }
         auto frameOpt = computeSeamFrame(pt, tan, normal1, normal2);
         if (!frameOpt.has_value()) {
-            return std::nullopt;
+            return false;
         }
         core::SeamSampleFrame sf;
-        sf.arcLengthMm = clampedS;
+        sf.arcLengthMm = s;
         sf.position = pt;
         sf.tangentX = tan;
         sf.normalFace1 = normal1;
@@ -143,9 +147,16 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromPickedEdge
         sf.bisector = (normal1 + normal2).normalized();
         sf.frame = *frameOpt;
         seam.sampledFrames.push_back(sf);
-        if ( std::abs(clampedS - sEnd) < 1e-6 ) {
-            break;
+        return true;
+    };
+
+    for (double s = sStart; s < sEnd - 1e-6; s += step) {
+        if (!appendSample(s)) {
+            return std::nullopt;
         }
+    }
+    if (!appendSample(sEnd)) {
+        return std::nullopt;
     }
 
     return seam;
@@ -159,18 +170,51 @@ void SeamAndToolpathAlgo::generateOperationTargets(
         return;
     }
 
-    // Rule 2: Record any existing userModified targets by their arcLengthRatio
+    // Keep manual edits on the point they belong to. Approach/retract are matched
+    // by role. Weld points are matched by arc-length ratio and each edit is consumed once.
     struct SavedUserModification {
+        core::TargetRole role{core::TargetRole::VIA};
         double ratio{0.0};
         core::Transform4d deltaOffset{};
-        core::Transform4d absolutePoseInUFrame{};
+        bool consumed{false};
     };
     std::vector<SavedUserModification> savedMods;
     for (const auto& oldT : inOutOperation.targets) {
-        if (oldT.userModified) {
-            savedMods.push_back({oldT.arcLengthRatio, oldT.userDeltaOffset, oldT.poseInUFrame});
+        if (!oldT.userModified) continue;
+        const bool weldRole =
+            oldT.role == core::TargetRole::WELD_START ||
+            oldT.role == core::TargetRole::WELD_VIA ||
+            oldT.role == core::TargetRole::WELD_END;
+        const bool endRole =
+            oldT.role == core::TargetRole::APPROACH ||
+            oldT.role == core::TargetRole::RETRACT;
+        if (weldRole || endRole) {
+            savedMods.push_back({oldT.role, oldT.arcLengthRatio, oldT.userDeltaOffset, false});
         }
     }
+
+    auto takeEndEdit = [&](core::TargetRole role) -> const SavedUserModification* {
+        for (auto& mod : savedMods) {
+            if (!mod.consumed && mod.role == role) {
+                mod.consumed = true;
+                return &mod;
+            }
+        }
+        return nullptr;
+    };
+    auto takeWeldEdit = [&](double ratio) -> const SavedUserModification* {
+        for (auto& mod : savedMods) {
+            const bool weldRole =
+                mod.role == core::TargetRole::WELD_START ||
+                mod.role == core::TargetRole::WELD_VIA ||
+                mod.role == core::TargetRole::WELD_END;
+            if (!mod.consumed && weldRole && std::abs(mod.ratio - ratio) < 0.05) {
+                mod.consumed = true;
+                return &mod;
+            }
+        }
+        return nullptr;
+    };
 
     const core::Transform4d worldToUFrame = uframeInWorld.inverse();
     const auto& params = inOutOperation.genParams;
@@ -186,7 +230,6 @@ void SeamAndToolpathAlgo::generateOperationTargets(
 
     const double sMin = activeFrames.front().arcLengthMm;
     const double sMax = activeFrames.back().arcLengthMm;
-    const double sSpan = std::max(1e-6, sMax - sMin);
 
     std::vector<core::Target> newTargets;
 
@@ -195,6 +238,12 @@ void SeamAndToolpathAlgo::generateOperationTargets(
             sf.frame, params.workAngleDeg, params.travelAngleDeg, params.twistAngleDeg);
         return worldToUFrame * worldPose;
     };
+
+    if (activeFrames.size() == 1) {
+        // A single sample is both the arc-start point and the arc-end point.
+        // One target would keep the arc on through retract.
+        activeFrames.push_back(activeFrames.front());
+    }
 
     const core::Transform4d startWeldPoseUF = makeWeldPoseInUFrame(activeFrames.front());
     const core::Transform4d endWeldPoseUF = makeWeldPoseInUFrame(activeFrames.back());
@@ -211,6 +260,11 @@ void SeamAndToolpathAlgo::generateOperationTargets(
         tApp.cntValue = 50;
         tApp.poseInUFrame = startWeldPoseUF;
         tApp.poseInUFrame.pos = startWeldPoseUF.pos - (startWeldPoseUF.rot.colZ() * params.approachDistMm);
+        if (const auto* mod = takeEndEdit(core::TargetRole::APPROACH)) {
+            tApp.userModified = true;
+            tApp.userDeltaOffset = mod->deltaOffset;
+            tApp.poseInUFrame = tApp.poseInUFrame * mod->deltaOffset;
+        }
         newTargets.push_back(std::move(tApp));
     }
 
@@ -218,7 +272,12 @@ void SeamAndToolpathAlgo::generateOperationTargets(
     for (size_t i = 0; i < activeFrames.size(); ++i) {
         const bool isFirst = (i == 0);
         const bool isLast = (i + 1 == activeFrames.size());
-        const double ratio = (activeFrames[i].arcLengthMm - sMin) / sSpan;
+        double ratio = 0.0;
+        if (std::abs(sMax - sMin) < 1e-6) {
+            ratio = isFirst ? 0.0 : 1.0;
+        } else {
+            ratio = (activeFrames[i].arcLengthMm - sMin) / (sMax - sMin);
+        }
 
         core::Target tWeld;
         tWeld.id = inOutOperation.id + "_T_WELD_" + std::to_string(i + 1);
@@ -249,14 +308,10 @@ void SeamAndToolpathAlgo::generateOperationTargets(
             tWeld.cntValue = 100;
         }
 
-        // Restore user manual modifications if matched by arc-length ratio
-        for (const auto& mod : savedMods) {
-            if (std::abs(mod.ratio - ratio) < 0.05) {
-                tWeld.userModified = true;
-                tWeld.userDeltaOffset = mod.deltaOffset;
-                tWeld.poseInUFrame = tWeld.poseInUFrame * mod.deltaOffset;
-                break;
-            }
+        if (const auto* mod = takeWeldEdit(ratio)) {
+            tWeld.userModified = true;
+            tWeld.userDeltaOffset = mod->deltaOffset;
+            tWeld.poseInUFrame = tWeld.poseInUFrame * mod->deltaOffset;
         }
 
         newTargets.push_back(std::move(tWeld));
@@ -274,6 +329,11 @@ void SeamAndToolpathAlgo::generateOperationTargets(
         tRet.cntValue = 50;
         tRet.poseInUFrame = endWeldPoseUF;
         tRet.poseInUFrame.pos = endWeldPoseUF.pos - (endWeldPoseUF.rot.colZ() * params.retractDistMm);
+        if (const auto* mod = takeEndEdit(core::TargetRole::RETRACT)) {
+            tRet.userModified = true;
+            tRet.userDeltaOffset = mod->deltaOffset;
+            tRet.poseInUFrame = tRet.poseInUFrame * mod->deltaOffset;
+        }
         newTargets.push_back(std::move(tRet));
     }
 

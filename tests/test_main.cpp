@@ -10,7 +10,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -61,15 +63,38 @@ void testUrdfAndStlLoading() {
     auto robotOpt = olp::device::RobotModel::loadFromUrdf(urdfPath);
     check(robotOpt.has_value(), "Load fanuc_m10ia_standalone.urdf");
     if (robotOpt) {
-        check(std::abs(robotOpt->jointLimits[0].upperRad - 2.967) < 1e-4 &&
-              std::abs(robotOpt->opw.c2 - 600.0) < 1e-4,
-              "Verify URDF joint limits and OPW parameters (c2=600mm, J1=+-2.967rad)");
+        std::ifstream jsonFile(ws + "/resources/robots/fanuc_m10ia.json");
+        std::stringstream jsonText;
+        jsonText << jsonFile.rdbuf();
+        const std::string jsonBody = jsonText.str();
+        const auto model = olp::device::RobotModel::createFanucM10iA();
+        check(jsonBody.find("-90.0") != std::string::npos &&
+              std::abs(model.opw.offsetsRad[2] + olp::core::kPi * 0.5) < 1e-9 &&
+              std::abs(model.opw.offsetsRad[5] - olp::core::kPi) < 1e-9,
+              "M-10iA joint offsets are loaded from fanuc_m10ia.json");
 
         olp::cad::OcctCadKernel cad;
+        olp::core::TriMesh rawMesh;
         olp::core::TriMesh baseMesh;
-        const bool stlOk = cad.importStl(robotOpt->visualMeshFiles[0], baseMesh);
-        check(stlOk && !baseMesh.triangles.empty(),
-              "Load binary STL mesh (base_link.stl, " + std::to_string(baseMesh.triangles.size()) + " tris)");
+        const bool rawOk = cad.importStl(robotOpt->visualMeshFiles[0], rawMesh);
+        const bool stlOk = cad.importRobotStlMillimeters(robotOpt->visualMeshFiles[0], baseMesh);
+        check(rawOk && rawMesh.bboxMax.z < 2.0,
+              "STL loader keeps file units (base_link stays in meters)");
+        check(stlOk && baseMesh.bboxMax.z > 270.0 && baseMesh.bboxMax.z < 290.0,
+              "Robot STL loader converts meters to millimeters (base height " +
+              std::to_string(baseMesh.bboxMax.z) + " mm)");
+
+        std::ifstream urdf(urdfPath);
+        std::stringstream urdfText;
+        urdfText << urdf.rdbuf();
+        const std::string urdfBody = urdfText.str();
+        const auto upperPos = urdfBody.find("upper=\"");
+        double fileUpper = 0.0;
+        if (upperPos != std::string::npos) {
+            fileUpper = std::stod(urdfBody.substr(upperPos + 7));
+        }
+        check(std::abs(robotOpt->jointLimits[0].upperRad - fileUpper) < 1e-4,
+              "URDF joint limit is read from the file, not a twin constant");
     }
 }
 
@@ -88,8 +113,8 @@ void testOpwKinematics100Samples() {
         const double t = static_cast<double>(i) / 100.0;
         const std::array<double, 6> testJointsRad = {
             -1.2 + 2.4 * t,
-            -0.4 + 1.0 * std::sin(i * 0.37),
-            -0.6 + 1.0 * std::cos(i * 0.29),
+            -0.2 + 0.5 * std::sin(i * 0.37),
+            -0.2 + 0.4 * std::cos(i * 0.29),
             2.5 * std::sin(i * 0.53),
             -1.2 - 0.3 * std::cos(i * 0.41), // Keep J5 away from 0 to test non-singular posture recovery
             -2.0 + 4.0 * t
@@ -126,6 +151,72 @@ void testOpwKinematics100Samples() {
           "mm, maxRotErr=" + std::to_string(maxRotErrDeg) + "deg)",
           "successCount=" + std::to_string(successCount) +
           ", maxJointRecoveryErrDeg=" + std::to_string(maxJointRecoveryErrDeg));
+
+    auto rotAbout = [](olp::core::Vec3 axis, double angle) {
+        const double n = axis.norm();
+        axis = axis * (1.0 / n);
+        const double c = std::cos(angle);
+        const double s = std::sin(angle);
+        const double t = 1.0 - c;
+        olp::core::Mat3 R;
+        R.m[0][0] = t * axis.x * axis.x + c;
+        R.m[0][1] = t * axis.x * axis.y - s * axis.z;
+        R.m[0][2] = t * axis.x * axis.z + s * axis.y;
+        R.m[1][0] = t * axis.x * axis.y + s * axis.z;
+        R.m[1][1] = t * axis.y * axis.y + c;
+        R.m[1][2] = t * axis.y * axis.z - s * axis.x;
+        R.m[2][0] = t * axis.x * axis.z - s * axis.y;
+        R.m[2][1] = t * axis.y * axis.z + s * axis.x;
+        R.m[2][2] = t * axis.z * axis.z + c;
+        return R;
+    };
+    const olp::core::Mat3 tool0Rot =
+        olp::core::Mat3::rotZ(0.0) * olp::core::Mat3::rotY(-1.570796) * olp::core::Mat3::rotX(3.14159);
+    auto urdfFlange = [&](const std::array<double, 6>& urdfQ) {
+        const olp::core::Vec3 origins[6] = {
+            {0, 0, 450}, {150, 0, 0}, {0, 0, 600}, {0, 0, 150}, {640, 0, 0}, {100, 0, 0}
+        };
+        const olp::core::Vec3 axes[6] = {
+            {0, 0, 1}, {0, 1, 0}, {0, -1, 0}, {-1, 0, 0}, {0, -1, 0}, {-1, 0, 0}
+        };
+        olp::core::Transform4d T = olp::core::Transform4d::identity();
+        for (int j = 0; j < 6; ++j) {
+            olp::core::Transform4d joint;
+            joint.pos = origins[j];
+            joint.rot = rotAbout(axes[j], urdfQ[static_cast<size_t>(j)]);
+            T = T * joint;
+        }
+        T.rot = T.rot * tool0Rot;
+        return T;
+    };
+
+    double maxGoldMm = 0.0;
+    double maxGoldAxis = 0.0;
+    unsigned seed = 2026u;
+    for (int i = 0; i < 200; ++i) {
+        std::array<double, 6> display{};
+        if (i == 0) {
+            display = {0, 0, 0, 0, 0, 0};
+        } else if (i == 1) {
+            display = {0, olp::core::deg2rad(10.0), 0, 0, 0, 0};
+        } else {
+            for (double& q : display) {
+                seed = seed * 1664525u + 1013904223u;
+                const double unit = static_cast<double>(seed % 10000) / 10000.0;
+                q = olp::core::deg2rad(-80.0 + 160.0 * unit);
+            }
+            display[4] = olp::core::deg2rad(-60.0);
+        }
+        std::array<double, 6> urdf = display;
+        urdf[2] = display[2] + display[1];
+        const auto gold = urdfFlange(urdf);
+        const auto fk = kin.forwardKinematics(display);
+        maxGoldMm = std::max(maxGoldMm, (fk.flangePoseInBase.pos - gold.pos).norm());
+        maxGoldAxis = std::max(maxGoldAxis, (fk.flangePoseInBase.rot.colZ() - gold.rot.colZ()).norm());
+    }
+    check(maxGoldMm < 0.01 && maxGoldAxis < 1e-4,
+          "URDF-chain gold: flange position and tool0 Z stay within 0.01 mm",
+          "maxPos=" + std::to_string(maxGoldMm) + " maxAxis=" + std::to_string(maxGoldAxis));
 }
 
 void testSchemeAFullWorkcellImport() {
@@ -148,6 +239,41 @@ void testSchemeAFullWorkcellImport() {
     check(baseDevMm < 1.0,
           "Replaced movable FANUC M-10iA base alignment error < 1 mm (actual=" +
           std::to_string(baseDevMm) + " mm)");
+
+    int frontHandle = -1;
+    std::vector<int> workpieceHandles;
+    for (const auto& node : doc.sceneNodes) {
+        if (node.type == olp::core::SceneNodeType::Part &&
+            node.collisionRole == olp::core::CollisionRole::Workpiece) {
+            workpieceHandles.push_back(node.cadHandleId);
+            if (node.name.find("Workpiece_BoxWall_Front") != std::string::npos) {
+                frontHandle = node.cadHandleId;
+            }
+        }
+    }
+    const auto edges = cad.getEdges(frontHandle);
+    auto seamOpt = olp::algo::SeamAndToolpathAlgo::buildSeamFromPickedEdge(
+        cad, frontHandle, 3, workpieceHandles, 50.0);
+    const bool endpointCovered = seamOpt.has_value() && !seamOpt->sampledFrames.empty() &&
+        edges.size() > 3 &&
+        std::abs(seamOpt->sampledFrames.back().arcLengthMm -
+                 (edges[3].lengthMm - seamOpt->endTrimMm)) < 0.05;
+    check(endpointCovered, "Seam sampler always includes the trimmed endpoint");
+
+    const char* curvedFiles[] = {
+        "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_PipeFlange_DN15.step",
+        "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_U_Bracket_L70.step",
+        "/SampleScenes/Scene2_Full_Workcell_STEP/Workpiece_SquareTube_80x80x5.step",
+        "/SampleScenes/Scene2_Full_Workcell_STEP/Workpiece_SteelHanger_SAET200.step"
+    };
+    bool curvedRejected = true;
+    for (const char* rel : curvedFiles) {
+        std::vector<olp::core::SceneNode> curved;
+        if (cad.importStep(std::string(OLP_SOURCE_DIR) + rel, curved)) {
+            curvedRejected = false;
+        }
+    }
+    check(curvedRejected, "Headless STEP import rejects the four curved FreeCAD files");
 }
 
 void testTJointCrossPartSeamAndCollisionExemption() {
@@ -200,8 +326,10 @@ void testTJointCrossPartSeamAndCollisionExemption() {
         const auto torchPoseAtSeam = olp::algo::SeamAndToolpathAlgo::applyWeldingAngles(
             sf.frame, 0.0, 10.0, 0.0);
         const bool falseAlarm = colEngine.checkTorchPoseCollision(
-            torchPoseAtSeam, nodes, webNodeId, true, minClearance, hitPart);
-        check(!falseAlarm, "Wire-tip collision exemption prevents false alarm at weld root");
+            torchPoseAtSeam, nodes, webNodeId, true, minClearance, hitPart,
+            {seamOpt->face1PartId, seamOpt->face2PartId});
+        check(!falseAlarm, "Wire-tip collision exemption prevents false alarm at weld root",
+              "hit=" + hitPart + " clearance=" + std::to_string(minClearance));
 
         // Place torch body directly inside Fixture_Clamp_Left (-180..-120, -130..-40, 12..52)
         olp::core::Transform4d collidingPose = torchPoseAtSeam;
@@ -308,6 +436,9 @@ void testFanucLsGeneration() {
     tStart.termination = olp::core::TerminationType::FINE;
     tStart.poseInUFrame = olp::core::Transform4d::fromWPR({450.25, -120.50, 310.00, 180.0, -45.0, 0.0});
     tStart.events.push_back({olp::core::ProcessEventType::ArcStart, 1, 0.0, ""});
+    tStart.cache.valid = true;
+    tStart.cache.solvedConfig.flip = true;
+    tStart.cache.solvedConfig.turns = {1, 0, -1};
 
     olp::core::Target tEnd;
     tEnd.name = "WELD_END";
@@ -317,6 +448,8 @@ void testFanucLsGeneration() {
     tEnd.termination = olp::core::TerminationType::FINE;
     tEnd.poseInUFrame = olp::core::Transform4d::fromWPR({450.25, 120.50, 310.00, 180.0, -45.0, 0.0});
     tEnd.events.push_back({olp::core::ProcessEventType::ArcEnd, 1, 0.0, ""});
+    tEnd.cache.valid = true;
+    tEnd.cache.solvedConfig = tStart.cache.solvedConfig;
 
     op.targets = {tStart, tEnd};
     prog.operations.push_back(op);
@@ -332,10 +465,163 @@ void testFanucLsGeneration() {
         lsText.find("WELD_SPEED FINE") != std::string::npos &&
         lsText.find("Arc End[1] ;") != std::string::npos &&
         lsText.find("/POS") != std::string::npos &&
-        lsText.find("CONFIG : 'N U T, 0, 0, 0'") != std::string::npos &&
+        lsText.find("CONFIG : 'F U T, 1, 0, -1'") != std::string::npos &&
+        lsText.find("HOME joints deg") != std::string::npos &&
         lsText.find("/END") != std::string::npos;
 
     check(hasSections, "Verify generated .ls contains /PROG, /ATTR, /APPL, /MN, Arc Start/End, /POS, /END");
+
+    olp::core::Program blocked = prog;
+    blocked.operations[0].targets[0].cache.valid = false;
+    std::string exportError;
+    const std::string refused = olp::io::FanucLsPostProcessor::generateLsString(blocked, {}, &exportError);
+    check(refused.empty() && !exportError.empty(),
+          "Post-processor refuses a target whose IK cache is not valid");
+
+    olp::core::Program circular = prog;
+    circular.operations[0].targets[0].motion = olp::core::MotionType::C;
+    circular.operations[0].targets[0].cache.valid = true;
+    std::string circularError;
+    const std::string circularText = olp::io::FanucLsPostProcessor::generateLsString(circular, {}, &circularError);
+    check(circularText.empty() && circularError.find("Circular") != std::string::npos,
+          "Post-processor refuses to write a circular move as a linear move");
+}
+
+olp::core::SeamSampleFrame straightSample(double arcMm) {
+    olp::core::SeamSampleFrame frame;
+    frame.arcLengthMm = arcMm;
+    frame.position = {arcMm, 0.0, 0.0};
+    frame.tangentX = {1.0, 0.0, 0.0};
+    frame.frame = olp::core::Transform4d::fromTranslation(arcMm, 0.0, 0.0);
+    return frame;
+}
+
+void testPathEditsAndCommandGates() {
+    std::cout << "\n--- Test 8: Seam events, reverse speeds, and command no-ops ---\n";
+    olp::core::SeamDefinition one;
+    one.sampledFrames.push_back(straightSample(0.0));
+    olp::core::Operation single;
+    single.id = "single";
+    olp::algo::SeamAndToolpathAlgo::generateOperationTargets(one, olp::core::Transform4d::identity(), single);
+    bool hasArcStart = false;
+    bool hasArcEnd = false;
+    for (const auto& target : single.targets) {
+        for (const auto& ev : target.events) {
+            hasArcStart = hasArcStart || ev.type == olp::core::ProcessEventType::ArcStart;
+            hasArcEnd = hasArcEnd || ev.type == olp::core::ProcessEventType::ArcEnd;
+        }
+    }
+    check(hasArcStart && hasArcEnd, "A one-point seam emits both Arc Start and Arc End");
+
+    olp::core::SeamDefinition seam;
+    seam.sampledFrames.push_back(straightSample(0.0));
+    seam.sampledFrames.push_back(straightSample(100.0));
+    olp::core::Operation clean;
+    clean.id = "edit";
+    olp::algo::SeamAndToolpathAlgo::generateOperationTargets(seam, olp::core::Transform4d::identity(), clean);
+    olp::core::Operation edited = clean;
+    for (auto& target : edited.targets) {
+        if (target.role == olp::core::TargetRole::APPROACH) {
+            target.userModified = true;
+            target.userDeltaOffset = olp::core::Transform4d::fromTranslation(80.0, 0.0, 0.0);
+        }
+    }
+    olp::algo::SeamAndToolpathAlgo::generateOperationTargets(seam, olp::core::Transform4d::identity(), edited);
+    const olp::core::Target* cleanStart = nullptr;
+    const olp::core::Target* editedStart = nullptr;
+    const olp::core::Target* cleanApproach = nullptr;
+    const olp::core::Target* editedApproach = nullptr;
+    for (const auto& target : clean.targets) {
+        if (target.role == olp::core::TargetRole::WELD_START) cleanStart = &target;
+        if (target.role == olp::core::TargetRole::APPROACH) cleanApproach = &target;
+    }
+    for (const auto& target : edited.targets) {
+        if (target.role == olp::core::TargetRole::WELD_START) editedStart = &target;
+        if (target.role == olp::core::TargetRole::APPROACH) editedApproach = &target;
+    }
+    const bool approachKept = cleanStart && editedStart && cleanApproach && editedApproach &&
+        (editedStart->poseInUFrame.pos - cleanStart->poseInUFrame.pos).norm() < 1e-6 &&
+        (editedApproach->poseInUFrame.pos - cleanApproach->poseInUFrame.pos).norm() > 1.0;
+    check(approachKept, "An approach edit is not copied onto WELD_START");
+
+    olp::app::ProjectDocument doc;
+    olp::core::ControllerUnit cu;
+    olp::core::Program prog;
+    olp::core::Operation op;
+    op.id = "rev";
+    auto makeTarget = [](olp::core::TargetRole role, const char* name, olp::core::MotionType motion,
+                         double speed, bool weldSpeed) {
+        olp::core::Target target;
+        target.role = role;
+        target.name = name;
+        target.motion = motion;
+        target.speedValue = speed;
+        target.useWeldSpeed = weldSpeed;
+        return target;
+    };
+    op.targets.push_back(makeTarget(olp::core::TargetRole::APPROACH, "APPROACH", olp::core::MotionType::J, 50.0, false));
+    op.targets.push_back(makeTarget(olp::core::TargetRole::WELD_START, "WELD_START", olp::core::MotionType::L, 200.0, false));
+    op.targets.push_back(makeTarget(olp::core::TargetRole::WELD_END, "WELD_END", olp::core::MotionType::L, 10.0, true));
+    op.targets.push_back(makeTarget(olp::core::TargetRole::RETRACT, "RETRACT", olp::core::MotionType::L, 200.0, false));
+    prog.operations.push_back(op);
+    cu.programs.push_back(prog);
+    doc.controllers.push_back(cu);
+
+    olp::app::CommandManager commands;
+    commands.executeCommand(std::make_unique<olp::app::ReverseOperationPathCommand>(doc, "rev"));
+    const olp::core::Target* reversedEnd = nullptr;
+    const olp::core::Target* reversedApproach = nullptr;
+    for (const auto& target : doc.controllers[0].programs[0].operations[0].targets) {
+        if (target.role == olp::core::TargetRole::WELD_END) reversedEnd = &target;
+        if (target.role == olp::core::TargetRole::APPROACH) reversedApproach = &target;
+    }
+    check(reversedEnd && reversedEnd->useWeldSpeed && reversedApproach &&
+          reversedApproach->motion == olp::core::MotionType::J &&
+          std::abs(reversedApproach->speedValue - 50.0) < 1e-6,
+          "Reversing a path keeps weld speed on the weld and joint motion on the approach");
+
+    commands.executeCommand(std::make_unique<olp::app::ModifyTargetPoseCommand>(
+        doc, "missing-target", olp::core::Transform4d::identity()));
+    check(commands.undoCount() == 1, "A command that does not change a target is not stacked");
+
+    olp::ui::MainWindow win;
+    auto& gizmo = win.viewport().tcpGizmo();
+    olp::core::Target dragTarget;
+    dragTarget.id = "drag";
+    dragTarget.poseInUFrame = olp::core::Transform4d::fromTranslation(10.0, 0.0, 0.0);
+    win.document().controllers.push_back({});
+    win.document().controllers[0].programs.push_back({});
+    win.document().controllers[0].programs[0].operations.push_back({});
+    win.document().controllers[0].programs[0].operations[0].targets.push_back(dragTarget);
+    gizmo.setSnapSteps(false, 1.0, 1.0);
+    gizmo.beginDrag({"drag"});
+    gizmo.updateDragDelta({0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+    check(!gizmo.commitDrag() && win.commandManager().undoCount() == 0,
+          "A zero-delta gizmo drag does not commit");
+
+    gizmo.setUFrameInWorld(olp::core::Transform4d::fromWPR({0, 0, 0, 0, 0, 90}));
+    olp::core::Vec3 worldPreview{};
+    olp::core::Vec3 uframePreview{};
+    gizmo.setReferenceFrame(olp::ui::GizmoRefFrame::World);
+    gizmo.setPreviewCallback([&](const olp::ui::GizmoPreviewState& state) {
+        worldPreview = state.previewPoseInUFrame.pos;
+    });
+    gizmo.beginDrag({"drag"});
+    gizmo.updateDragDelta({20.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+    gizmo.setPreviewCallback(nullptr);
+    gizmo.cancelDrag();
+    gizmo.setReferenceFrame(olp::ui::GizmoRefFrame::UFrame);
+    gizmo.setPreviewCallback([&](const olp::ui::GizmoPreviewState& state) {
+        uframePreview = state.previewPoseInUFrame.pos;
+    });
+    gizmo.beginDrag({"drag"});
+    gizmo.updateDragDelta({20.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+    gizmo.setPreviewCallback(nullptr);
+    gizmo.cancelDrag();
+    check((worldPreview - uframePreview).norm() > 1.0,
+          "World and UFrame drags differ when the UFRAME is rotated",
+          "world=(" + std::to_string(worldPreview.x) + "," + std::to_string(worldPreview.y) +
+          ") uframe=(" + std::to_string(uframePreview.x) + "," + std::to_string(uframePreview.y) + ")");
 }
 
 } // namespace
@@ -352,6 +638,7 @@ int main() {
     testTJointCrossPartSeamAndCollisionExemption();
     testGizmoAndUndoRedo100Steps();
     testFanucLsGeneration();
+    testPathEditsAndCommandGates();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

@@ -78,7 +78,10 @@ ModifyTargetPoseCommand::ModifyTargetPoseCommand(
 
 void ModifyTargetPoseCommand::execute() {
     core::Target* t = doc_.findTarget(targetId_);
-    if (!t) return;
+    if (!t) {
+        mutated_ = false;
+        return;
+    }
 
     if (!initialized_) {
         oldPose_ = t->poseInUFrame;
@@ -93,6 +96,7 @@ void ModifyTargetPoseCommand::execute() {
     t->userDeltaOffset = oldDelta_ * stepDelta;
     t->cache.valid = false;
     doc_.isDirty = true;
+    mutated_ = true;
 }
 
 void ModifyTargetPoseCommand::undo() {
@@ -126,17 +130,65 @@ ReverseOperationPathCommand::ReverseOperationPathCommand(
     std::string operationId)
     : doc_(doc), operationId_(std::move(operationId)) {}
 
-void ReverseOperationPathCommand::execute() { toggleReverse(); }
-void ReverseOperationPathCommand::undo() { toggleReverse(); }
+void ReverseOperationPathCommand::execute() {
+    if (!snapshotTaken_) {
+        core::Operation* op = doc_.findOperation(operationId_);
+        if (!op || op->targets.size() < 2) {
+            mutated_ = false;
+            snapshotTaken_ = true;
+            return;
+        }
+        before_ = op->targets;
+        mutated_ = true;
+        snapshotTaken_ = true;
+        applyReversed(op->targets);
+        after_ = op->targets;
+        doc_.isDirty = true;
+        return;
+    }
+    if (!mutated_) return;
+    if (core::Operation* op = doc_.findOperation(operationId_)) {
+        op->targets = after_;
+        doc_.isDirty = true;
+    }
+}
 
-void ReverseOperationPathCommand::toggleReverse() {
-    core::Operation* op = doc_.findOperation(operationId_);
-    if (!op || op->targets.size() < 2) return;
+void ReverseOperationPathCommand::undo() {
+    if (!mutated_) return;
+    if (core::Operation* op = doc_.findOperation(operationId_)) {
+        op->targets = before_;
+        doc_.isDirty = true;
+    }
+}
 
-    std::reverse(op->targets.begin(), op->targets.end());
+void ReverseOperationPathCommand::applyReversed(std::vector<core::Target>& targets) {
+    std::reverse(targets.begin(), targets.end());
 
-    // Swap APPROACH <-> RETRACT and WELD_START (ArcStart) <-> WELD_END (ArcEnd)
-    for (auto& t : op->targets) {
+    auto swapMotion = [](core::Target& a, core::Target& b) {
+        std::swap(a.motion, b.motion);
+        std::swap(a.speedValue, b.speedValue);
+        std::swap(a.useWeldSpeed, b.useWeldSpeed);
+        std::swap(a.termination, b.termination);
+        std::swap(a.cntValue, b.cntValue);
+    };
+
+    core::Target* approach = nullptr;
+    core::Target* retract = nullptr;
+    core::Target* weldStart = nullptr;
+    core::Target* weldEnd = nullptr;
+    for (auto& t : targets) {
+        if (t.role == core::TargetRole::APPROACH) approach = &t;
+        else if (t.role == core::TargetRole::RETRACT) retract = &t;
+        else if (t.role == core::TargetRole::WELD_START) weldStart = &t;
+        else if (t.role == core::TargetRole::WELD_END) weldEnd = &t;
+    }
+    // After the geometric reverse, the old retract point is now first but still
+    // carries retract motion. Swap motion with the point that now has the other role
+    // so each role keeps the speeds the process table assigns to it.
+    if (approach && retract) swapMotion(*approach, *retract);
+    if (weldStart && weldEnd) swapMotion(*weldStart, *weldEnd);
+
+    for (auto& t : targets) {
         if (t.role == core::TargetRole::APPROACH) {
             t.role = core::TargetRole::RETRACT;
             t.name = "RETRACT";
@@ -161,8 +213,10 @@ void ReverseOperationPathCommand::toggleReverse() {
             }
         }
         t.arcLengthRatio = 1.0 - t.arcLengthRatio;
+        // Travel direction flipped: yaw the stored pose 180° about tool Z so a
+        // push angle does not silently become a drag angle of the opposite sign.
+        t.poseInUFrame.rot = t.poseInUFrame.rot * core::Mat3::rotZ(core::kPi);
     }
-    doc_.isDirty = true;
 }
 
 // ------------------------------------------------------------------------------
@@ -174,8 +228,11 @@ CommandManager::CommandManager(size_t maxHistoryDepth)
 void CommandManager::executeCommand(std::unique_ptr<ICommand> cmd) {
     if (!cmd) return;
     cmd->execute();
+    if (!cmd->didMutate()) {
+        return;
+    }
 
-    if (!undoStack_.empty() && undoStack_.back()->mergeWith(cmd.get())) {
+    if (mergeSession_ && !undoStack_.empty() && undoStack_.back()->mergeWith(cmd.get())) {
         redoStack_.clear();
         if (onChanged_) onChanged_();
         return;

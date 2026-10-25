@@ -28,8 +28,10 @@ int main(int argc, char* argv[]) {
         wsRoot + "/SampleScenes/Scene2_Full_Workcell_STEP/Full_Welding_Cell_With_Robot.step";
 
     std::cout << "[1/5] Importing Full Workcell STEP & Executing 3.4 Scheme A Robot Replacement...\n";
-    const auto repRes = olp::app::WorkcellLayoutService::importFullSceneAndReplaceRobot(
-        doc, cad, fullCellStep, robotModel);
+    olp::app::SceneRobotReplaceResult repRes;
+    mainWin.commandManager().executeCommand(
+        std::make_unique<olp::app::ImportSceneAndReplaceRobotCommand>(
+            doc, cad, fullCellStep, robotModel, &repRes));
 
     if (!repRes.success) {
         std::cerr << "Failed to import workcell STEP: " << fullCellStep << "\n";
@@ -48,11 +50,20 @@ int main(int argc, char* argv[]) {
     mainWin.switchWorkbench(olp::ui::ActiveWorkbench::OlpWorkbench);
 
     // Define UFRAME[1] on the welding fixture table top (Z = 600 mm)
-    const auto& uframeNode = olp::app::WorkcellLayoutService::defineUFrameByThreePoints(
-        doc, 1, "UFRAME_1_Table",
-        {500.0, -300.0, 600.0},
-        {900.0, -300.0, 600.0},
-        {500.0,  100.0, 600.0});
+    std::string uframeId;
+    mainWin.commandManager().executeCommand(
+        std::make_unique<olp::app::DefineUFrameCommand>(
+            doc, 1, "UFRAME_1_Table",
+            olp::core::Vec3{500.0, -300.0, 600.0},
+            olp::core::Vec3{900.0, -300.0, 600.0},
+            olp::core::Vec3{500.0, 100.0, 600.0},
+            &uframeId));
+    const olp::core::SceneNode* uframeNode = doc.findSceneNode(uframeId);
+    if (uframeNode == nullptr) {
+        std::cerr << "Failed to define UFRAME.\n";
+        return 1;
+    }
+    const olp::core::Transform4d uframeInWorld = uframeNode->localTransform;
 
     // Find Workpiece_BoxWall_Front and Workpiece_Base_Plate for T-joint / Box inner fillet weld
     int frontWallHandle = -1;
@@ -98,12 +109,13 @@ int main(int argc, char* argv[]) {
     op.name = "Fillet_BoxWall_Front";
     op.seamId = seamOpt->id;
     op.targetWorkpieceId = frontWallNodeId;
+    op.exemptionPartIds = {seamOpt->face1PartId, seamOpt->face2PartId};
     op.genParams.travelAngleDeg = 10.0;
     op.genParams.approachDistMm = 45.0;
     op.genParams.retractDistMm = 45.0;
 
     olp::algo::SeamAndToolpathAlgo::generateOperationTargets(
-        *seamOpt, uframeNode.localTransform, op);
+        *seamOpt, uframeInWorld, op);
     prog.operations.push_back(op);
     cu.programs.push_back(prog);
     doc.controllers.push_back(cu);
@@ -117,7 +129,7 @@ int main(int argc, char* argv[]) {
     auto simRes = simEngine.validateAndSimulateProgram(
         doc.controllers[0].programs[0],
         repRes.detectedRobotBaseTransform,
-        uframeNode.localTransform,
+        uframeInWorld,
         utoolOffset,
         doc.sceneNodes,
         0.05);
@@ -127,15 +139,35 @@ int main(int argc, char* argv[]) {
               << " s, Air: " << simRes.airCutTimeSec << " s).\n";
 
     // Export FANUC .ls and Single-File Offline HTML5 Animation Package
-    std::cout << "[5/5] Exporting FANUC .ls Program & Single-File HTML 3D Preview...\n";
+    std::cout << "[5/5] Exporting FANUC .ls Program & offline HTML TCP preview...\n";
+    bool blockingIssue = simRes.hasConfigJumpInLinear;
+    for (const auto& issue : simRes.issues) {
+        std::cout << "      -> Issue [" << issue.targetName << "] " << issue.description << "\n";
+        if (issue.state == olp::core::TargetValidationState::Collision ||
+            issue.state == olp::core::TargetValidationState::Unreachable ||
+            issue.state == olp::core::TargetValidationState::JointLimitExceeded ||
+            issue.state == olp::core::TargetValidationState::ConfigJump) {
+            blockingIssue = true;
+        }
+    }
+
     const std::string lsOut = wsRoot + "/build/WELD_001.ls";
     const std::string htmlOut = wsRoot + "/build/WELD_001_Preview.html";
-    olp::io::FanucLsPostProcessor::exportToFile(doc.controllers[0].programs[0], lsOut);
-    olp::io::HtmlAnimationExporter::exportSingleFileHtml(
+    const bool lsOk = olp::io::FanucLsPostProcessor::exportToFile(doc.controllers[0].programs[0], lsOut);
+    const bool htmlOk = olp::io::HtmlAnimationExporter::exportSingleFileHtml(
         htmlOut, doc.controllers[0].programs[0], doc.sceneNodes, simRes);
+    if (!lsOk || !htmlOk) {
+        std::cerr << "Export failed. .ls=" << (lsOk ? "ok" : "failed")
+                  << " html=" << (htmlOk ? "ok" : "failed") << "\n";
+        return 1;
+    }
+    if (blockingIssue) {
+        std::cerr << "Verification found blocking reachability or collision issues. Files were written for inspection.\n";
+        return 2;
+    }
 
     std::cout << "      -> Exported FANUC .ls: " << lsOut << "\n";
-    std::cout << "      -> Exported HTML 3D Animation: " << htmlOut << "\n";
+    std::cout << "      -> Exported HTML TCP preview: " << htmlOut << "\n";
     std::cout << "====================================================================\n";
     return 0;
 }

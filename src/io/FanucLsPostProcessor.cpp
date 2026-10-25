@@ -29,7 +29,8 @@ bool FanucLsPostProcessor::validateProgramName(const std::string& progName, std:
 
 std::string FanucLsPostProcessor::generateLsString(
     const core::Program& program,
-    const LsPostConfig& config) {
+    const LsPostConfig& config,
+    std::string* errorOut) {
     std::ostringstream oss;
 
     oss << "/PROG  " << program.name << "\n";
@@ -65,6 +66,14 @@ std::string FanucLsPostProcessor::generateLsString(
 
         emitLine("  ! --- Operation: " + op.name + " ---");
         for (const auto& t : op.targets) {
+            if (!t.cache.valid) {
+                if (errorOut) *errorOut = "Refusing to export " + t.name + ": inverse-kinematics cache is not valid";
+                return {};
+            }
+            if (t.motion == core::MotionType::C) {
+                if (errorOut) *errorOut = "Circular motion is not implemented; refusing to write it as a linear move";
+                return {};
+            }
             const int pIdx = nextPIndex++;
             posEntries.push_back({pIdx, &t});
 
@@ -104,6 +113,16 @@ std::string FanucLsPostProcessor::generateLsString(
         }
     }
 
+    if (config.appendReturnHome) {
+        std::ostringstream home;
+        home << std::fixed << std::setprecision(3);
+        home << "  ! HOME joints deg";
+        for (double q : program.startState.homeJointsRad) {
+            home << " " << core::rad2deg(q);
+        }
+        emitLine(home.str());
+    }
+
     oss << "/POS\n";
     oss << std::fixed << std::setprecision(3);
     for (const auto& item : posEntries) {
@@ -117,7 +136,7 @@ std::string FanucLsPostProcessor::generateLsString(
         oss << "   GP1:\n";
         oss << "\tUF : " << program.uframeNumber
             << ", UT : " << program.utoolNumber
-            << ",\t\tCONFIG : '" << t.config.toString() << "',\n";
+            << ",\t\tCONFIG : '" << t.cache.solvedConfig.toString() << "',\n";
         oss << "\tX = " << std::setw(9) << wpr.x << "  mm,\t"
             << "Y = " << std::setw(9) << wpr.y << "  mm,\t"
             << "Z = " << std::setw(9) << wpr.z << "  mm,\n";
@@ -139,11 +158,16 @@ bool FanucLsPostProcessor::exportToFile(
     if (!validateProgramName(program.name, err)) {
         return false;
     }
+    std::string genError;
+    const std::string body = generateLsString(program, config, &genError);
+    if (!genError.empty() || body.empty()) {
+        return false;
+    }
     std::ofstream ofs(outputFilePath, std::ios::binary);
     if (!ofs.is_open()) {
         return false;
     }
-    ofs << generateLsString(program, config);
+    ofs << body;
     return ofs.good();
 }
 

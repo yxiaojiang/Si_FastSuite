@@ -12,7 +12,7 @@
    - **`Scene2_Full_Workcell_STEP`**：包含 12 实体的完整焊接工位 STEP 总装 `Full_Welding_Cell_With_Robot.step`（含底座 `Robot_Pedestal_Base`、5 个静态机器人外形部件 `FANUC_M10iA_Static_*`、工装台 `Welding_Fixture_Table`、3 个箱体角焊工件实体与 2 个压块夹具），外加方管 `Workpiece_SquareTube_80x80x5.step` 与钢吊架 `Workpiece_SteelHanger_SAET200.step`。
    - **3.4 节正式拍板**：采用 **【方案 A：整场景 STEP 导入 + 用机器人库中同型号可动机器人替换静态机器人外形】（P0 默认，工期 1 周）**，并将 `FANUC M-10iA` 直接作为 M05 内置机器人库首款标准型号。
 3. **完整开发计划落地**：已将涵盖 M01~M15 全部模块、6.1~6.5 关键算法、阶段 0~阶段 5（28 周，M1/M2/M3 三大里程碑）、风险矩阵与 9 项量化验收指标的详细开发计划写入 `.claude/Plan.md` 与根目录 `Plan.md`。
-4. **C++ 基础工程骨架搭建**：正在搭建基于 CMake + C++20 + Qt6 + OpenCASCADE 的五层模块化工程骨架（`olp_core`、`olp_cad`、`olp_device`、`olp_algo`、`olp_io`、`olp_app`、`olp_ui` 及 `olp_tests`）。
+4. **阶段 1 算法与门禁**：无 Qt / OCCT 的本机只能以 `-DOLP_HEADLESS=ON` 编译算法层。产品配置默认要求 Qt6 与 OpenCASCADE。运动学已按「示教器角 → URDF 耦合 → 符号/偏置 → OPW」与 URDF 法兰/`tool0` 对拍，耦合系数符号尚未经 ROBOGUIDE 确认。四件 FreeCAD 曲面 STEP 在无 OCCT 时拒绝导入。9 项验收里的 ROBOGUIDE、客户实景和 3D PDF 熔断仍未执行。
 
 ---
 
@@ -24,15 +24,15 @@
    - **T 型角焊跨零件两侧面识别**：`ICadKernel` 同时支持同实体拓扑邻接面查询与跨实体空间最近点距离（`< 1.0 mm`）贴合面匹配；
    - **焊丝尖端碰撞豁免**：焊接段内对 TCP 焊丝尖端球域与当前待焊工件做碰撞豁免，防止所有焊接点误报碰撞。
 3. **`TcpGizmo` 交互规范**：复用 `AIS_Manipulator` 作为视觉手柄但绝不调用 `Attach()` 挂接对象；拖动中后台线程仅计算最新一帧预览 IK 与单点碰撞，松开鼠标才提交单条 `ModifyTargetPoseCommand`。
-4. **3D PDF 5 天熔断与 HTML 保底**：单文件离线 HTML 3D 动画包（Three.js + GLB 烘焙关键帧）为 P0 保底交付物；开源 3D PDF 在阶段 0 限时 5 个工作日验证，逾期未通立即熔断。
+4. **HTML 预览与 3D PDF**：当前导出是 2D TCP 折线预览，不是 Three.js + GLB。3D PDF 仍受阶段 0 的 5 个工作日熔断约束，尚未开始。
 
 ---
 
 ## 3. 下一步计划
 
-1. 完成 CMake + Qt6 + OpenCASCADE 基础 C++ 工程骨架全部源码编写、MSVC 2022 编译构建与自动化单元测试验证。
-2. 运行针对 `SampleScenes/` 的阶段 0 预研测试（验证 `Full_Welding_Cell_With_Robot.step` 整场景导入与静态机器人替换、`Workpiece_TJoint_With_Clamps.step` 跨零件焊缝识别、`FANUC M-10iA` OPW 正逆解闭环及 `.ls` 程序导出）。
-3. 推进阶段 0 剩余对拍项（ROBOGUIDE 金样本核对与单文件离线 HTML 动画包导出验证）。
+1. 在装有 Qt6 与 OpenCASCADE 的环境做产品配置编译，并核对 OCCT 导入路径。
+2. 用 ROBOGUIDE 核对耦合系数符号、圈数轴和法兰位姿。这三项在代码里标为待核，不能当成已对齐。
+3. 阶段 0 的客户实景和 3D PDF 熔断仍未关闭。
 
 ---
 

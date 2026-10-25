@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 
 #ifdef OLP_HAS_OCCT
@@ -27,6 +29,22 @@
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Solid.hxx>
+#include <IFSelect_ReturnStatus.hxx>
+#include <Interface_Static.hxx>
+#include <TCollection_AsciiString.hxx>
+#include <TDataStd_Name.hxx>
+#include <TDocStd_Document.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <Geom_Line.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Vec.hxx>
+#include <gp_Dir.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <GeomAbs_CurveType.hxx>
+#include <TDF_LabelSequence.hxx>
 #endif
 
 namespace olp::cad {
@@ -58,12 +76,76 @@ core::TriMesh makeBoxMesh(const core::Vec3& bmin, const core::Vec3& bmax) {
     return mesh;
 }
 
+std::string hashStepFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::uint64_t hash = 14695981039346656037ull;
+    char buffer[4096];
+    while (in) {
+        in.read(buffer, sizeof(buffer));
+        const std::streamsize n = in.gcount();
+        for (std::streamsize i = 0; i < n; ++i) {
+            hash ^= static_cast<unsigned char>(buffer[i]);
+            hash *= 1099511628211ull;
+        }
+        if (n <= 0) break;
+    }
+    std::ostringstream oss;
+    oss << "fnv1a64:" << std::hex << hash;
+    return oss.str();
+}
+
 } // namespace
 
 bool OcctCadKernel::importStep(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
+#ifdef OLP_HAS_OCCT
+    return importStepWithOcct(filePath, outPartNodes);
+#else
+    return importStepBuiltin(filePath, outPartNodes);
+#endif
+}
+
+bool OcctCadKernel::importStepBuiltin(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
     std::ifstream ifs(filePath);
     if (!ifs.is_open()) {
         return false;
+    }
+
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(ifs, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        lines.push_back(std::move(line));
+    }
+
+    double unitScaleToMm = 1.0;
+    bool inData = false;
+    for (const auto& raw : lines) {
+        if (!inData) {
+            if (raw.find("DATA;") != std::string::npos) inData = true;
+            continue;
+        }
+        if (raw.find("ENDSEC;") != std::string::npos) break;
+        if (raw.empty() || raw[0] == '/' || raw[0] == '*') continue;
+        if (raw.back() != ';') {
+            // Wrapped ISO-10303-21 entity. A line reader would truncate it.
+            return false;
+        }
+        if (raw.find("CIRCLE") != std::string::npos ||
+            raw.find("CYLINDRICAL_SURFACE") != std::string::npos ||
+            raw.find("CONICAL_SURFACE") != std::string::npos ||
+            raw.find("SPHERICAL_SURFACE") != std::string::npos ||
+            raw.find("TOROIDAL_SURFACE") != std::string::npos ||
+            raw.find("B_SPLINE") != std::string::npos ||
+            raw.find("SURFACE_OF_REVOLUTION") != std::string::npos ||
+            raw.find("OFFSET_SURFACE") != std::string::npos) {
+            // Headless adapter only understands planes and straight edges.
+            return false;
+        }
+    }
+    for (const auto& raw : lines) {
+        if (raw.find("SI_UNIT") != std::string::npos && raw.find(".METRE.") != std::string::npos) {
+            unitScaleToMm = (raw.find(".MILLI.") == std::string::npos) ? 1000.0 : 1.0;
+        }
     }
 
     // Parse ISO-10303-21 STEP entities (CARTESIAN_POINT, VERTEX_POINT, DIRECTION,
@@ -89,23 +171,13 @@ bool OcctCadKernel::importStep(const std::string& filePath, std::vector<core::Sc
     std::vector<StepSolid> manifoldSolids;
     std::string fallbackProductName = "STEP_Part";
 
-    double unitScaleToMm = 1.0; // Default mm; if SI_UNIT($,.METRE.) without .MILLI., scale = 1000.0
-
-    std::string line;
     std::regex reId(R"(^\s*#(\d+)\s*=\s*(.*)$)");
     std::regex reCoords(R"(\(\s*([-\d.Ee+]+)\s*,\s*([-\d.Ee+]+)\s*,\s*([-\d.Ee+]+)\s*\))");
     std::regex reRefs(R"(#(\d+))");
     std::regex reName(R"('([^']*)')");
 
-    while (std::getline(ifs, line)) {
-        if (line.find("SI_UNIT") != std::string::npos && line.find(".METRE.") != std::string::npos) {
-            if (line.find(".MILLI.") == std::string::npos) {
-                unitScaleToMm = 1000.0;
-            } else {
-                unitScaleToMm = 1.0;
-            }
-        }
-
+    try {
+    for (const std::string& line : lines) {
         std::smatch mId;
         if (!std::regex_search(line, mId, reId)) {
             continue;
@@ -217,6 +289,9 @@ bool OcctCadKernel::importStep(const std::string& filePath, std::vector<core::Sc
             }
         }
     }
+    } catch (const std::exception&) {
+        return false;
+    }
 
     if (manifoldSolids.empty()) {
         return false;
@@ -236,6 +311,7 @@ bool OcctCadKernel::importStep(const std::string& filePath, std::vector<core::Sc
         SolidRecord rec;
         rec.handleId = nextHandleId_++;
         rec.sourceFile = filePath;
+        rec.contentHash = hashStepFile(filePath);
         rec.name = ms.name.empty()
             ? (fallbackProductName + "_Solid_" + std::to_string(solidCounter))
             : ms.name;
@@ -416,7 +492,6 @@ bool OcctCadKernel::importStl(const std::string& filePath, core::TriMesh& outMes
                 ifs.read(reinterpret_cast<char*>(&attr), 2);
                 const uint32_t baseIdx = static_cast<uint32_t>(outMesh.vertices.size());
                 for (int k = 0; k < 3; ++k) {
-                    // URDF STL meshes in ROS-Industrial fanuc_m10ia are in meters; if small (<10), scale to mm
                     core::Vec3 pt{v[k * 3 + 0], v[k * 3 + 1], v[k * 3 + 2]};
                     outMesh.vertices.push_back(pt);
                     outMesh.bboxMin.x = std::min(outMesh.bboxMin.x, pt.x);
@@ -568,7 +643,143 @@ core::TopologicalSignature OcctCadKernel::computeEdgeSignature(
     sig.midPoint = edge.midPt;
     sig.midTangent = edge.tangent;
     sig.arcLengthMm = edge.lengthMm;
+    sig.cadFileHash = it->second.contentHash;
     return sig;
 }
+
+bool OcctCadKernel::importRobotStlMillimeters(const std::string& filePath, core::TriMesh& outMesh) {
+    if (!importStl(filePath, outMesh)) {
+        return false;
+    }
+    constexpr double kMetersToMm = 1000.0;
+    for (auto& vertex : outMesh.vertices) {
+        vertex = vertex * kMetersToMm;
+    }
+    outMesh.bboxMin = outMesh.bboxMin * kMetersToMm;
+    outMesh.bboxMax = outMesh.bboxMax * kMetersToMm;
+    return true;
+}
+
+#ifdef OLP_HAS_OCCT
+bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
+    Interface_Static::SetCVal("xstep.cascade.unit", "MM");
+    Handle(XCAFApp_Application) app = XCAFApp_Application::GetApplication();
+    Handle(TDocStd_Document) doc;
+    app->NewDocument("MDTV-XCAF", doc);
+
+    STEPCAFControl_Reader reader;
+    reader.SetColorMode(true);
+    reader.SetNameMode(true);
+    if (reader.ReadFile(filePath.c_str()) != IFSelect_RetDone) {
+        return false;
+    }
+    if (!reader.Transfer(doc)) {
+        return false;
+    }
+
+    Handle(XCAFDoc_ShapeTool) shapeTool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+    TDF_LabelSequence roots;
+    shapeTool->GetFreeShapes(roots);
+    const std::string fingerprint = hashStepFile(filePath);
+
+    for (int i = 1; i <= roots.Length(); ++i) {
+        const TDF_Label label = roots.Value(i);
+        const TopoDS_Shape shape = shapeTool->GetShape(label);
+        if (shape.IsNull()) continue;
+
+        std::string rootName;
+        Handle(TDataStd_Name) nameAttr;
+        if (label.FindAttribute(TDataStd_Name::GetID(), nameAttr)) {
+            rootName = TCollection_AsciiString(nameAttr->Get()).ToCString();
+        }
+
+        TopExp_Explorer solids(shape, TopAbs_SOLID);
+        for (; solids.More(); solids.Next()) {
+            const TopoDS_Solid solid = TopoDS::Solid(solids.Current());
+            SolidRecord rec;
+            rec.handleId = nextHandleId_++;
+            rec.sourceFile = filePath;
+            rec.contentHash = fingerprint;
+            rec.name = rootName.empty() ? ("OCCT_Solid_" + std::to_string(rec.handleId)) : rootName;
+
+            TopTools_IndexedMapOfShape edgeMap;
+            TopExp::MapShapes(solid, TopAbs_EDGE, edgeMap);
+            for (int e = 1; e <= edgeMap.Extent(); ++e) {
+                const TopoDS_Edge edge = TopoDS::Edge(edgeMap(e));
+                if (BRep_Tool::Degenerated(edge)) continue;
+                BRepAdaptor_Curve curve(edge);
+                const double length = GCPnts_AbscissaPoint::Length(curve);
+                const gp_Pnt start = curve.Value(curve.FirstParameter());
+                const gp_Pnt end = curve.Value(curve.LastParameter());
+                GCPnts_AbscissaPoint mid(curve, std::max(0.0, length * 0.5), curve.FirstParameter());
+                gp_Pnt midPt = start;
+                gp_Vec tangent(1.0, 0.0, 0.0);
+                if (mid.IsDone()) {
+                    curve.D1(mid.Parameter(), midPt, tangent);
+                }
+                if (edge.Orientation() == TopAbs_REVERSED) tangent.Reverse();
+
+                CadEdgeInfo einfo;
+                einfo.edgeIndex = static_cast<int>(rec.edges.size());
+                einfo.startPt = {start.X(), start.Y(), start.Z()};
+                einfo.endPt = {end.X(), end.Y(), end.Z()};
+                einfo.midPt = {midPt.X(), midPt.Y(), midPt.Z()};
+                einfo.tangent = core::Vec3{tangent.X(), tangent.Y(), tangent.Z()}.normalized();
+                einfo.lengthMm = length;
+                einfo.isLinear = curve.GetType() == GeomAbs_Line;
+                rec.edges.push_back(std::move(einfo));
+            }
+
+            BRepAdaptor_Surface firstSurfProbe(([]() {
+                TopoDS_Face dummy;
+                return dummy;
+            })());
+            (void)firstSurfProbe;
+
+            int faceIndex = 0;
+            for (TopExp_Explorer faces(solid, TopAbs_FACE); faces.More(); faces.Next(), ++faceIndex) {
+                const TopoDS_Face face = TopoDS::Face(faces.Current());
+                BRepAdaptor_Surface surf(face);
+                const double uMid = 0.5 * (surf.FirstUParameter() + surf.LastUParameter());
+                const double vMid = 0.5 * (surf.FirstVParameter() + surf.LastVParameter());
+                BRepLProp_SLProps props(surf, uMid, vMid, 1, 1e-7);
+                core::Vec3 normal{0.0, 0.0, 1.0};
+                if (props.IsNormalDefined()) {
+                    gp_Dir n = props.Normal();
+                    if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+                    normal = {n.X(), n.Y(), n.Z()};
+                }
+                CadFaceInfo finfo;
+                finfo.faceIndex = faceIndex;
+                finfo.outwardNormal = normal;
+                finfo.surfaceType = (surf.GetType() == GeomAbs_Plane) ? CadSurfaceType::Plane : CadSurfaceType::Other;
+                rec.faces.push_back(std::move(finfo));
+            }
+
+            Bnd_Box box;
+            BRepBndLib::Add(solid, box);
+            if (!box.IsVoid()) {
+                double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+                box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                rec.bboxMin = {xmin, ymin, zmin};
+                rec.bboxMax = {xmax, ymax, zmax};
+            }
+
+            core::SceneNode node;
+            node.id = "part_" + std::to_string(rec.handleId);
+            node.name = rec.name;
+            node.type = core::SceneNodeType::Part;
+            node.sourceCadFile = filePath;
+            node.cadHandleId = rec.handleId;
+            node.collisionRole = core::CollisionRole::Workpiece;
+            node.renderMesh = makeBoxMesh(rec.bboxMin, rec.bboxMax);
+            node.collisionMesh = node.renderMesh;
+            solids_[rec.handleId] = std::move(rec);
+            outPartNodes.push_back(std::move(node));
+        }
+    }
+    return !outPartNodes.empty();
+}
+#endif
 
 } // namespace olp::cad

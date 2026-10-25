@@ -60,7 +60,8 @@ public:
         const std::string& activeWorkpieceId,
         bool isWeldingRole,
         double& outMinClearanceMm,
-        std::string& outCollidingPartName) const noexcept;
+        std::string& outCollidingPartName,
+        const std::vector<std::string>& exemptionPartIds = {}) const noexcept;
 
     // Section 6.5: Scan twist angle in [-180, 180] deg around wire Z axis
     std::vector<TwistScanSample> scanTwistAngles(
@@ -71,7 +72,8 @@ public:
         const core::FanucConfig& requiredConfig,
         const std::vector<core::SceneNode>& sceneNodes,
         const std::string& activeWorkpieceId,
-        double stepDeg = 5.0) const;
+        double stepDeg = 5.0,
+        const std::vector<std::string>& exemptionPartIds = {}) const;
 
     // M10 & M11: Validate entire program, run J/L interpolation & bake animation frames
     SimulationResult validateAndSimulateProgram(
