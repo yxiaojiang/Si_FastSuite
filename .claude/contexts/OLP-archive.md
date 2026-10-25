@@ -1,6 +1,6 @@
 # OLP-archive.md — 机器人焊接离线编程（OLP）系统规划、双模型复盘与工程落地上下文
 
-> 状态：**当前活跃主线**（2026-10-25 晚：审计修复在 `02b8005`；OCCT 8.0.0 已安装；Qt6 未安装；OCCT 导入路径尚未编译）。
+> 状态：**当前活跃主线**（2026-10-25 夜：审计修复在 `02b8005`；Qt 6.12.0 与 OCCT 8.0.0 已安装；`build-full` 已编译；曲面 STEP 走 OCCT，平面装配仍走内置解析）。
 
 ## 0. 2026-10-25 场景核验拍板与 C++ 工程骨架落地
 
@@ -10,12 +10,12 @@
    - **拍板结论**：3.4 节正式采用 **方案 A（整场景 STEP 导入 + 用机器人库中同型号可动机器人替换静态机器人外形，P0，1 周）**，并将 `FANUC M-10iA` 作为 M05 内置机器人库首款标准型号。
 2. **CMake + Qt6 + OpenCASCADE 五层 C++20 工程骨架结构**：
    - `src/core` (`olp_core`): 核心数据模型（`Types.h` 4x4 矩阵/四元数/WPR、变换树 `SceneNode`、`ControllerUnit`、`Program`、`Operation`、`Target`、`SeamDefinition`、持久化几何签名）。
-   - `src/cad` (`olp_cad`): `ICadKernel` 与 `OcctCadKernel`。装有 OpenCASCADE 时走 `STEPCAFControl_Reader`；无 OCCT 时只接受本仓库的平面方盒 STEP，遇到曲面或跨行实体会失败，不能当成 B-Rep 内核。
+   - `src/cad` (`olp_cad`): `ICadKernel` 与 `OcctCadKernel`。`importStep` 先走内置平面解析；遇到曲面或跨行实体才走 `STEPCAFControl_Reader`。无 OCCT 时这些文件失败，不能当成 B-Rep 内核。OCCT 的 XCAF 目前只给出装配名，所以整场景不能改由它抢先解析。
    - `src/device` (`olp_device`): `RobotModel`、内置 `FANUC M-10iA` 与 URDF 限位读取。偏置和符号从 `resources/robots/fanuc_m10ia.json` 加载。
    - `src/algo` (`olp_algo`): `OpwKinematics`、焊缝与路径、碰撞和仿真。法兰位姿与 URDF `tool0` 对过；ROBOGUIDE 对拍未做。
    - `src/io` (`olp_io`): `.ls` 后处理（无效 IK 缓存和圆弧运动会拒绝写出）以及 2D TCP HTML 预览。没有 M14 工程序列化器，也没有 3D PDF。
    - `src/app` (`olp_app`): `ProjectDocument`、`CommandManager`、`WorkcellLayoutService`（方案 A）。没有 `SelectionManager`、`EventBus` 或独立的 `RobotReplacementService`。
-   - `src/ui` (`olp_ui`): `TcpGizmo` 与窗口骨架。OCCT 8.0.0 已装在 `C:\vcpkg\vcpkg\installed\x64-windows`，但产品配置还缺 Qt6，所以 `importStepWithOcct` 和 OCCT 视口都还没在本机编译。headless 主程序退出码 2，原因是 `APPROACH` / `WELD_START` 与 `Table_Clamp_Block_1` 干涉。
+   - `src/ui` (`olp_ui`): `TcpGizmo` 与窗口骨架。Qt 6.12.0 在 `D:\Soft\Qt\6.12.0\msvc2022_64`，OCCT 8.0.0 在 `C:\vcpkg\vcpkg\installed\x64-windows`。`build-full` 已链上两者。OCCT 视口还没接成可交互窗口。主程序退出码 2，原因是 `APPROACH` / `WELD_START` 与 `Table_Clamp_Block_1` 干涉。
 
 ---
 

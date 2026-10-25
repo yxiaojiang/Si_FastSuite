@@ -266,6 +266,30 @@ void testSchemeAFullWorkcellImport() {
         "/SampleScenes/Scene2_Full_Workcell_STEP/Workpiece_SquareTube_80x80x5.step",
         "/SampleScenes/Scene2_Full_Workcell_STEP/Workpiece_SteelHanger_SAET200.step"
     };
+#ifdef OLP_HAS_OCCT
+    bool curvedOk = true;
+    int curvedNonLinearEdges = 0;
+    int curvedNonPlaneFaces = 0;
+    for (const char* rel : curvedFiles) {
+        std::vector<olp::core::SceneNode> curved;
+        if (!cad.importStep(std::string(OLP_SOURCE_DIR) + rel, curved) || curved.empty()) {
+            curvedOk = false;
+            continue;
+        }
+        for (const auto& node : curved) {
+            for (const auto& edge : cad.getEdges(node.cadHandleId)) {
+                if (!edge.isLinear && edge.lengthMm > 0.1) ++curvedNonLinearEdges;
+            }
+            for (const auto& face : cad.getFaces(node.cadHandleId)) {
+                if (face.surfaceType != olp::cad::CadSurfaceType::Plane) ++curvedNonPlaneFaces;
+            }
+        }
+    }
+    check(curvedOk && curvedNonLinearEdges > 0 && curvedNonPlaneFaces > 0,
+          "OCCT imports the four curved FreeCAD files with non-linear edges and non-plane faces",
+          "edges=" + std::to_string(curvedNonLinearEdges) +
+          " faces=" + std::to_string(curvedNonPlaneFaces));
+#else
     bool curvedRejected = true;
     for (const char* rel : curvedFiles) {
         std::vector<olp::core::SceneNode> curved;
@@ -274,6 +298,7 @@ void testSchemeAFullWorkcellImport() {
         }
     }
     check(curvedRejected, "Headless STEP import rejects the four curved FreeCAD files");
+#endif
 }
 
 void testTJointCrossPartSeamAndCollisionExemption() {

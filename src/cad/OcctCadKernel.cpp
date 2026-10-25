@@ -97,10 +97,14 @@ std::string hashStepFile(const std::string& path) {
 } // namespace
 
 bool OcctCadKernel::importStep(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
+    if (importStepBuiltin(filePath, outPartNodes)) {
+        return true;
+    }
 #ifdef OLP_HAS_OCCT
+    outPartNodes.clear();
     return importStepWithOcct(filePath, outPartNodes);
 #else
-    return importStepBuiltin(filePath, outPartNodes);
+    return false;
 #endif
 }
 
@@ -729,12 +733,6 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
                 einfo.isLinear = curve.GetType() == GeomAbs_Line;
                 rec.edges.push_back(std::move(einfo));
             }
-
-            BRepAdaptor_Surface firstSurfProbe(([]() {
-                TopoDS_Face dummy;
-                return dummy;
-            })());
-            (void)firstSurfProbe;
 
             int faceIndex = 0;
             for (TopExp_Explorer faces(solid, TopAbs_FACE); faces.More(); faces.Next(), ++faceIndex) {

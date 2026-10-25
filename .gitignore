@@ -1,5 +1,6 @@
 # Build directories and outputs
 build/
+build-full/
 bin/
 out/
 target/

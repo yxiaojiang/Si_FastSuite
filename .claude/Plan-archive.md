@@ -1,5 +1,11 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-25 夜：Qt 6.12 已安装，曲面 STEP 已由 OCCT 导入
+
+1. **[DONE] Qt 6.12.0 MSVC 2022 64 位**装在 `D:\Soft\Qt\6.12.0\msvc2022_64`。产品配置在 `build-full`，`OLP_HEADLESS` 关闭，并设置 `VCPKG_MANIFEST_MODE=OFF`，避免 vcpkg 源码编译 Qt。
+2. **[DONE] 四件曲面 STEP**（管法兰、U 型支架、方管、钢吊架）由 `importStepWithOcct` 导入。`build-full` 的 `olp_tests` 33 项通过，确认有非直线边和非平面。
+3. **未完成，转入活跃计划**：夹具碰撞退出码 2、OCCT 装配实体名、ROBOGUIDE 对拍、客户实景与 3D PDF 熔断。
+
 ## 2026-10-25 晚：审计修复已推送，OpenCASCADE 已安装
 
 `.claude/Plan.md` 按记忆规则收成 3 条活跃事项。完整排期没有删，仍在根目录 `Plan.md`。
