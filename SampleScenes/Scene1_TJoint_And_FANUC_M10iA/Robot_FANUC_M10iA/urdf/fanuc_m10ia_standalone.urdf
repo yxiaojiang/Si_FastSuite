@@ -1,0 +1,72 @@
+<?xml version="1.0" ?>
+<!-- FANUC M-10iA / ARC Mate 100iC 6-Axis Welding Robot Standalone URDF -->
+<robot name="fanuc_m10ia_arcmate100ic">
+  <link name="base_link">
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/visual/base_link.stl"/></geometry></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/collision/base_link.stl"/></geometry></collision>
+  </link>
+  <link name="link_1">
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/visual/link_1.stl"/></geometry></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/collision/link_1.stl"/></geometry></collision>
+  </link>
+  <link name="link_2">
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/visual/link_2.stl"/></geometry></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/collision/link_2.stl"/></geometry></collision>
+  </link>
+  <link name="link_3">
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/visual/link_3.stl"/></geometry></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/collision/link_3.stl"/></geometry></collision>
+  </link>
+  <link name="link_4">
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/visual/link_4.stl"/></geometry></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/collision/link_4.stl"/></geometry></collision>
+  </link>
+  <link name="link_5">
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/visual/link_5.stl"/></geometry></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/collision/link_5.stl"/></geometry></collision>
+  </link>
+  <link name="link_6">
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/visual/link_6.stl"/></geometry></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../meshes/collision/link_6.stl"/></geometry></collision>
+  </link>
+  <link name="flange"/>
+  <link name="tool0"/>
+
+  <!-- OPW Parameters: a1=150mm, a2=-150mm, b=0, c1=450mm, c2=600mm, c3=640mm, c4=100mm -->
+  <joint name="joint_1" type="revolute">
+    <origin xyz="0 0 0.450" rpy="0 0 0"/>
+    <parent link="base_link"/><child link="link_1"/><axis xyz="0 0 1"/>
+    <limit lower="-2.967" upper="2.967" effort="0" velocity="3.665"/>
+  </joint>
+  <joint name="joint_2" type="revolute">
+    <origin xyz="0.150 0 0" rpy="0 0 0"/>
+    <parent link="link_1"/><child link="link_2"/><axis xyz="0 1 0"/>
+    <limit lower="-1.570" upper="2.792" effort="0" velocity="3.316"/>
+  </joint>
+  <joint name="joint_3" type="revolute">
+    <origin xyz="0 0 0.600" rpy="0 0 0"/>
+    <parent link="link_2"/><child link="link_3"/><axis xyz="0 -1 0"/>
+    <limit lower="-2.967" upper="4.014" effort="0" velocity="3.665"/>
+  </joint>
+  <joint name="joint_4" type="revolute">
+    <origin xyz="0 0 0.150" rpy="0 0 0"/>
+    <parent link="link_3"/><child link="link_4"/><axis xyz="-1 0 0"/>
+    <limit lower="-3.316" upper="3.316" effort="0" velocity="6.981"/>
+  </joint>
+  <joint name="joint_5" type="revolute">
+    <origin xyz="0.640 0 0" rpy="0 0 0"/>
+    <parent link="link_4"/><child link="link_5"/><axis xyz="0 -1 0"/>
+    <limit lower="-3.316" upper="3.316" effort="0" velocity="6.981"/>
+  </joint>
+  <joint name="joint_6" type="revolute">
+    <origin xyz="0.100 0 0" rpy="0 0 0"/>
+    <parent link="link_5"/><child link="link_6"/><axis xyz="-1 0 0"/>
+    <limit lower="-6.283" upper="6.283" effort="0" velocity="10.471"/>
+  </joint>
+  <joint name="joint_6-flange" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/><parent link="link_6"/><child link="flange"/>
+  </joint>
+  <joint name="link_6-tool0" type="fixed">
+    <origin xyz="0 0 0" rpy="3.14159 -1.570796 0"/><parent link="flange"/><child link="tool0"/>
+  </joint>
+</robot>

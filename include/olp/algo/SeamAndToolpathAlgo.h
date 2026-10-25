@@ -1,0 +1,44 @@
+#pragma once
+
+#include "olp/cad/ICadKernel.h"
+#include "olp/core/ProjectModel.h"
+#include <optional>
+#include <vector>
+
+namespace olp::algo {
+
+// Section 6.1 & M07 / M08: Seam Coordinate Frame & Toolpath Generation Algorithms
+class SeamAndToolpathAlgo {
+public:
+    // Section 6.1 Step 1-4: Compute local seam coordinate frame from tangent t and two outward normals n1, n2
+    // X = normalize(t), b = normalize(n1 + n2), Z0 = -b (pointing into seam root), Y = normalize(Z0 x X), Z = X x Y
+    static std::optional<core::Transform4d> computeSeamFrame(
+        const core::Vec3& point,
+        const core::Vec3& tangent,
+        const core::Vec3& outwardNormal1,
+        const core::Vec3& outwardNormal2) noexcept;
+
+    // Section 6.1 Step 5: Torch Pose = SeamFrame * Rx(workAngle) * Ry(travelAngle) * Rz(twistAngle)
+    static core::Transform4d applyWeldingAngles(
+        const core::Transform4d& seamFrame,
+        double workAngleDeg,
+        double travelAngleDeg,
+        double twistAngleDeg) noexcept;
+
+    // M07: Build SeamDefinition from picked edge (handles both single-solid adjacent faces & T-joint cross-part faces)
+    static std::optional<core::SeamDefinition> buildSeamFromPickedEdge(
+        const cad::ICadKernel& cadKernel,
+        int sourceCadHandleId,
+        int edgeIndex,
+        const std::vector<int>& allWorkpieceCadHandles,
+        double sampleStepMm = 20.0);
+
+    // M08 & M09: Generate Targets (APPROACH, WELD_START, WELD_VIA*, WELD_END, RETRACT)
+    // Rule 2: Preserves existing targets where userModified == true by matching arcLengthRatio
+    static void generateOperationTargets(
+        const core::SeamDefinition& seam,
+        const core::Transform4d& uframeInWorld,
+        core::Operation& inOutOperation);
+};
+
+} // namespace olp::algo

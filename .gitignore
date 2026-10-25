@@ -1,0 +1,50 @@
+# Build directories and outputs
+build/
+bin/
+out/
+target/
+
+# CMake temporary files
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+cmake_install.cmake
+compile_commands.json
+
+# Visual Studio / MSBuild files
+.vs/
+*.user
+*.suo
+*.userosv
+*.sln.docstates
+*.vcxproj.user
+*.opensdf
+*.sdf
+*.opendb
+*.db
+*.VC.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Package managers
+vcpkg_installed/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+*.patch
+
+# Windows system files
+[Dd]esktop.ini
+[Tt]humbs.db
+$RECYCLE.BIN/
+
+# Office temporary lock files
+~$*.xlsx
+~$*.docx
+~$*.pptx

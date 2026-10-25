@@ -1,0 +1,43 @@
+{
+  "model_id": "fanuc_m10ia",
+  "display_name": "FANUC M-10iA / ARC Mate 100iC",
+  "manufacturer": "FANUC",
+  "kinematics_type": "OPW",
+  "dof": 6,
+  "opw_params_mm": {
+    "a1": 150.0,
+    "a2": -150.0,
+    "b": 0.0,
+    "c1": 450.0,
+    "c2": 600.0,
+    "c3": 640.0,
+    "c4": 100.0
+  },
+  "joint_sign_corrections": [1, 1, -1, -1, -1, -1],
+  "joint_offsets_deg": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+  "j2_j3_coupling": true,
+  "j2_j3_coupling_coeff": 1.0,
+  "home_joints_deg": [0.0, 0.0, 0.0, 0.0, -90.0, 0.0],
+  "joints": [
+    { "name": "J1", "lower_deg": -170.0, "upper_deg": 170.0, "max_vel_deg_s": 210.0, "max_acc_deg_s2": 600.0 },
+    { "name": "J2", "lower_deg": -90.0,  "upper_deg": 160.0, "max_vel_deg_s": 190.0, "max_acc_deg_s2": 550.0 },
+    { "name": "J3", "lower_deg": -170.0, "upper_deg": 230.0, "max_vel_deg_s": 210.0, "max_acc_deg_s2": 600.0 },
+    { "name": "J4", "lower_deg": -190.0, "upper_deg": 190.0, "max_vel_deg_s": 400.0, "max_acc_deg_s2": 1200.0 },
+    { "name": "J5", "lower_deg": -190.0, "upper_deg": 190.0, "max_vel_deg_s": 400.0, "max_acc_deg_s2": 1200.0 },
+    { "name": "J6", "lower_deg": -360.0, "upper_deg": 360.0, "max_vel_deg_s": 600.0, "max_acc_deg_s2": 1800.0 }
+  ],
+  "meshes": {
+    "urdf_path": "SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Robot_FANUC_M10iA/urdf/fanuc_m10ia_standalone.urdf",
+    "visual_dir": "SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Robot_FANUC_M10iA/meshes/visual",
+    "collision_dir": "SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Robot_FANUC_M10iA/meshes/collision",
+    "links": [
+      "base_link.stl",
+      "link_1.stl",
+      "link_2.stl",
+      "link_3.stl",
+      "link_4.stl",
+      "link_5.stl",
+      "link_6.stl"
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "si-fastsuite-olp",
+  "version-string": "0.1.0",
+  "description": "Industrial Robot Welding Offline Programming (OLP) System benchmarking CENIT FASTSUITE Edition 2",
+  "homepage": "https://github.com/mimovr/Si_FastSuite",
+  "license": "Proprietary",
+  "dependencies": [
+    "eigen3",
+    "nlohmann-json",
+    "opencascade",
+    "qtbase",
+    "fcl",
+    "gtest"
+  ]
+}
