@@ -349,4 +349,38 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
     return sim;
 }
 
+OperationTorchClearance CollisionAndSimEngine::measureOperationTorchClearance(
+    const core::Operation& operation,
+    const core::Transform4d& uframeInWorld,
+    const std::vector<core::SceneNode>& sceneNodes) const {
+    OperationTorchClearance out;
+    out.minClearanceMm = 10000.0;
+    bool sawTarget = false;
+    for (const auto& target : operation.targets) {
+        sawTarget = true;
+        const core::Transform4d targetWorld = uframeInWorld * target.poseInUFrame;
+        const bool isWeldRole =
+            target.role == core::TargetRole::WELD_START ||
+            target.role == core::TargetRole::WELD_VIA ||
+            target.role == core::TargetRole::WELD_END;
+        double clearance = 0.0;
+        std::string hitName;
+        checkTorchPoseCollision(
+            targetWorld, sceneNodes, operation.targetWorkpieceId, isWeldRole,
+            clearance, hitName, operation.exemptionPartIds);
+        if (clearance < out.minClearanceMm) {
+            out.minClearanceMm = clearance;
+            out.targetName = target.name;
+            out.partName = hitName;
+        }
+    }
+    if (!sawTarget) {
+        out.minClearanceMm = -1.0;
+        out.meetsSafeDistance = false;
+        return out;
+    }
+    out.meetsSafeDistance = out.minClearanceMm >= settings_.collisionSafeClearanceMm;
+    return out;
+}
+
 } // namespace olp::algo

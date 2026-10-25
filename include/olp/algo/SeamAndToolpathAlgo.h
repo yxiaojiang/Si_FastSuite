@@ -1,5 +1,6 @@
 #pragma once
 
+#include "olp/algo/CollisionAndSim.h"
 #include "olp/cad/ICadKernel.h"
 #include "olp/core/ProjectModel.h"
 #include <optional>
@@ -31,7 +32,22 @@ public:
         int sourceCadHandleId,
         int edgeIndex,
         const std::vector<int>& allWorkpieceCadHandles,
-        double sampleStepMm = 20.0);
+        double sampleStepMm = 20.0,
+        double startTrimMm = 5.0);
+
+    // Walk the seam start forward until the torch spheres meet the safe clearance.
+    // The fillet angles stay as set on the operation. Returns false if the 25% trim cap is still blocked.
+    static bool extendStartTrimUntilTorchClears(
+        const cad::ICadKernel& cadKernel,
+        int sourceCadHandleId,
+        int edgeIndex,
+        const std::vector<int>& allWorkpieceCadHandles,
+        double sampleStepMm,
+        const CollisionAndSimEngine& collision,
+        const core::Transform4d& uframeInWorld,
+        const std::vector<core::SceneNode>& sceneNodes,
+        core::SeamDefinition& inOutSeam,
+        core::Operation& inOutOperation);
 
     // M08 & M09: Generate Targets (APPROACH, WELD_START, WELD_VIA*, WELD_END, RETRACT)
     // Rule 2: Preserves existing targets where userModified == true by matching arcLengthRatio

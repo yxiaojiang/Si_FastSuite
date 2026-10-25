@@ -6,7 +6,7 @@
 
 ## 1. 当前目标
 
-四件曲面 STEP 已由 OpenCASCADE 导入。下一步查演示程序退出码 2：接近点和焊缝起点碰到 `Table_Clamp_Block_1`。不要再装库。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
+四件曲面 STEP 已由 OpenCASCADE 导入。演示焊缝起点已沿焊缝收到 32 mm，焊枪离开 `Table_Clamp_Block_1`，角平分线没改。用户决定暂不装 ROBOGUIDE，耦合符号保持 +1 并继续标为待核。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
 
 ## 2. 这轮已经落地的事实
 
@@ -18,22 +18,20 @@
 
 J2/J3 耦合写在 URDF 关节空间，系数目前是正一。只动 J2、示教器 J3 保持零时，前臂绝对角应保持不变。圈数暂按 J1、J4、J6 记，发那科 `$TURN_AXIS` 常是 J4、J5、J6，这个对应未核。关节限位按 URDF 几何角检查。耦合后的 J3 用哪套限位也待核。
 
-`build-full` 的 `olp_tests` 三十三项通过。仓库自带的平面方盒整场景仍可导入，共十二个实体，没有「安装法兰过渡台」。主程序上次在 headless 构建里退出码是 2，文件写到 `build/`。今晚没有用 `build-full` 重跑主程序。焊丝尖端只豁免本焊缝两块母材，并且只在十毫米半径内。仿真只写 `TargetCache`。无效逆解和圆弧运动不会写成 `.ls`。HTML 仍是二维 TCP 折线。`build-full` 是本地构建目录，不进仓库。下载脚本 `C:\vcpkg\vcpkg\olp-download.ps1` 也不在仓库里。
+`build-full` 的 `olp_tests` 三十五项通过。仓库自带的平面方盒整场景仍可导入，共十二个实体，没有「安装法兰过渡台」。默认 5 mm 起弧仍会让喷嘴球吃进夹具约 9 mm；`extendStartTrimUntilTorchClears` 把起点收到 32 mm 后，安全间隙 5 mm 满足，主程序退出码是 0。文件写到 `build/`。焊丝尖端只豁免本焊缝两块母材，并且只在十毫米半径内。仿真只写 `TargetCache`。无效逆解和圆弧运动不会写成 `.ls`。HTML 仍是二维 TCP 折线。`build-full` 是本地构建目录，不进仓库。下载脚本 `C:\vcpkg\vcpkg\olp-download.ps1` 也不在仓库里。
 
 ## 3. 未关闭风险
 
-1. 耦合符号、圈数记在哪三个轴、法兰相对示教器的位姿，都没有 ROBOGUIDE 对拍。
+1. 耦合符号、圈数记在哪三个轴、法兰相对示教器的位姿，都没有真机或 ROBOGUIDE 对拍。用户决定先不装 ROBOGUIDE，继续开发，关节程序仍只能当草稿。
 2. 平面装配若改走 OCCT，实体名会丢，十二个实体的隐藏和底座对准会坏。修名字之前不要倒换导入顺序。
-3. 夹具碰撞是真实干涉。退出码 2 表示失败，不要改成 0。
-4. 客户实景和 3D PDF 五天熔断都没开始。
-5. 算法层不得依赖 Qt。改文档走 `CommandManager`。肩部奇异是几何代理，不是雅可比最小奇异值。FANUC 世界原点未对真机。零位移拖拽和找不到目标的命令不入栈。
+3. 客户实景和 3D PDF 五天熔断都没开始。插补过程中的焊枪扫掠还没做碰撞检查，目前只查目标点。
+4. 算法层不得依赖 Qt。改文档走 `CommandManager`。肩部奇异是几何代理。FANUC 世界原点未对真机。
 
 ## 4. 下一步
 
-1. 查 `APPROACH` 和 `WELD_START` 为何碰到 `Table_Clamp_Block_1`。继续用现有平面解析即可，不必先改 OCCT 命名。
-2. 有 ROBOGUIDE 时并行核对 J2/J3 耦合正负号。
-3. 视口和 3D PDF 先不做。
+1. 让 OCCT 读出每个实体的名字，再考虑让平面整场景走 OCCT。修名字之前不要倒换导入顺序。
+2. 视口和 3D PDF 仍先不做。真机到位后再核对 J2/J3。
 
 ## 5. 索引
 
-设计基线：`Docs/OLP_System_Design_Claude.md`、`Docs/FASTSUITE_OLP_System_Architecture.md`。排期：根目录 `Plan.md`。模块现状：`.claude/contexts/OLP-archive.md`。视觉沿边是历史归档，见 `.claude/contexts/VisionEdgeSystem.md`。
+设计基线：`Docs/OLP_System_Design_Claude.md`、`Docs/FASTSUITE_OLP_System_Architecture.md`。排期：根目录 `Plan.md`。设计复盘：`.claude/contexts/OLP-archive.md`。已做步骤：`.claude/contexts/steps/00-index.md`。视觉沿边是历史归档，见 `.claude/contexts/VisionEdgeSystem.md`。

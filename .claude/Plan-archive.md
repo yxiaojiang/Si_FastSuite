@@ -1,5 +1,10 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-25 夜：演示焊缝起点躲开夹具
+
+1. **[DONE] 夹具干涉。** 默认 5 mm 起弧时，喷嘴球吃进 `Table_Clamp_Block_1`。没有放宽退出码，也没有改角平分线。`extendStartTrimUntilTorchClears` 把起点收到 32 mm，安全间隙 5 mm 满足。`build-full` 测试 35 项通过，主程序退出码 0。
+2. **决定**：暂不安装 ROBOGUIDE，耦合符号保持待核。
+
 ## 2026-10-25 夜：Qt 6.12 已安装，曲面 STEP 已由 OCCT 导入
 
 1. **[DONE] Qt 6.12.0 MSVC 2022 64 位**装在 `D:\Soft\Qt\6.12.0\msvc2022_64`。产品配置在 `build-full`，`OLP_HEADLESS` 关闭，并设置 `VCPKG_MANIFEST_MODE=OFF`，避免 vcpkg 源码编译 Qt。

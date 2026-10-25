@@ -58,7 +58,8 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromPickedEdge
     int sourceCadHandleId,
     int edgeIndex,
     const std::vector<int>& allWorkpieceCadHandles,
-    double sampleStepMm) {
+    double sampleStepMm,
+    double startTrimMm) {
     const auto edges = cadKernel.getEdges(sourceCadHandleId);
     if (edgeIndex < 0 || edgeIndex >= static_cast<int>(edges.size())) {
         return std::nullopt;
@@ -120,6 +121,7 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromPickedEdge
         ? ("part_" + std::to_string(crossMatch->partHandleId))
         : seam.face1PartId;
     seam.face2Index = face2Idx;
+    seam.startTrimMm = std::max(0.0, startTrimMm);
 
     const double totalLen = pickedEdge.lengthMm;
     const double sStart = std::min(seam.startTrimMm, totalLen * 0.25);
@@ -338,6 +340,49 @@ void SeamAndToolpathAlgo::generateOperationTargets(
     }
 
     inOutOperation.targets = std::move(newTargets);
+}
+
+bool SeamAndToolpathAlgo::extendStartTrimUntilTorchClears(
+    const cad::ICadKernel& cadKernel,
+    int sourceCadHandleId,
+    int edgeIndex,
+    const std::vector<int>& allWorkpieceCadHandles,
+    double sampleStepMm,
+    const CollisionAndSimEngine& collision,
+    const core::Transform4d& uframeInWorld,
+    const std::vector<core::SceneNode>& sceneNodes,
+    core::SeamDefinition& inOutSeam,
+    core::Operation& inOutOperation) {
+    const auto edges = cadKernel.getEdges(sourceCadHandleId);
+    if (edgeIndex < 0 || edgeIndex >= static_cast<int>(edges.size())) {
+        return false;
+    }
+    const double maxTrim = edges[edgeIndex].lengthMm * 0.25;
+    constexpr double kStepMm = 1.0;
+
+    auto tryTrim = [&](double trimMm) -> bool {
+        auto rebuilt = buildSeamFromPickedEdge(
+            cadKernel, sourceCadHandleId, edgeIndex, allWorkpieceCadHandles, sampleStepMm, trimMm);
+        if (!rebuilt.has_value() || rebuilt->sampledFrames.empty()) {
+            return false;
+        }
+        inOutSeam = *rebuilt;
+        generateOperationTargets(inOutSeam, uframeInWorld, inOutOperation);
+        if (inOutOperation.targets.empty()) {
+            return false;
+        }
+        const auto clearance = collision.measureOperationTorchClearance(
+            inOutOperation, uframeInWorld, sceneNodes);
+        return clearance.meetsSafeDistance;
+    };
+
+    const double first = std::min(std::max(0.0, inOutSeam.startTrimMm), maxTrim);
+    for (double trim = first; trim <= maxTrim + 1e-6; trim += kStepMm) {
+        if (tryTrim(trim)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace olp::algo

@@ -114,16 +114,24 @@ int main(int argc, char* argv[]) {
     op.genParams.approachDistMm = 45.0;
     op.genParams.retractDistMm = 45.0;
 
-    olp::algo::SeamAndToolpathAlgo::generateOperationTargets(
-        *seamOpt, uframeInWorld, op);
+    olp::algo::OpwKinematics kin(robotModel);
+    olp::algo::CollisionAndSimEngine simEngine(kin, doc.settings);
+    const bool torchClears = olp::algo::SeamAndToolpathAlgo::extendStartTrimUntilTorchClears(
+        cad, frontWallHandle, 3, workpieceHandles, 50.0,
+        simEngine, uframeInWorld, doc.sceneNodes, *seamOpt, op);
+    doc.seams.back() = *seamOpt;
+    if (torchClears) {
+        std::cout << "      -> Moved the seam start to " << seamOpt->startTrimMm
+                  << " mm so the torch clears the clamp. Fillet angle is unchanged.\n";
+    } else {
+        std::cerr << "      -> Torch still violates the safe clearance at the maximum seam-start trim.\n";
+    }
     prog.operations.push_back(op);
     cu.programs.push_back(prog);
     doc.controllers.push_back(cu);
 
     // Run OPW Kinematics, Collision Detection (with wire-tip exemption) & Trajectory Simulation
     std::cout << "[4/5] Running OPW Inverse Kinematics, Collision Check & Frame Baking...\n";
-    olp::algo::OpwKinematics kin(robotModel);
-    olp::algo::CollisionAndSimEngine simEngine(kin, doc.settings);
     const olp::core::Transform4d utoolOffset = olp::core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
 
     auto simRes = simEngine.validateAndSimulateProgram(

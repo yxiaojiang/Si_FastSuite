@@ -14,7 +14,7 @@
 
 1. 每个项目任务先读取 `.claude/SessionBrief.md` 与 `.claude/Plan.md`。
 2. 再按任务选择上下文：
-   - **当前主线（对标 FASTSUITE 的机器人焊接离线编程 OLP 系统）**：读 `.claude/contexts/OLP-archive.md`、`Docs/OLP_System_Design_Claude.md` 与 `Docs/FASTSUITE_OLP_System_Architecture.md`。
+   - **当前主线（对标 FASTSUITE 的机器人焊接离线编程 OLP 系统）**：读 `.claude/contexts/OLP-archive.md`、`Docs/OLP_System_Design_Claude.md` 与 `Docs/FASTSUITE_OLP_System_Architecture.md`。要恢复已经做过的实现步骤时，再读 `.claude/contexts/steps/00-index.md`，按模块打开，不要整目录塞进上下文。
    - **历史归档（基于 3D 视觉的免示教沿边涂抹方案）**：读 `.claude/contexts/VisionEdgeSystem.md` 及 `Docs/Vision_Edge_System_Baseline.md`。
 3. 涉及全局架构、双模型（Gemini 与 Claude Opus）协作历史、跨模块契约或无法由模块上下文判断的问题，才读 `.claude/ProjectMemory.md`。
 4. 用户说“读取记忆”时，执行第 1~3 步；不要全文加载 archive 或无关大文件。

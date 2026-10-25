@@ -1,6 +1,6 @@
 # OLP-archive.md — 机器人焊接离线编程（OLP）系统规划、双模型复盘与工程落地上下文
 
-> 状态：**当前活跃主线**（2026-10-25 夜：审计修复在 `02b8005`；Qt 6.12.0 与 OCCT 8.0.0 已安装；`build-full` 已编译；曲面 STEP 走 OCCT，平面装配仍走内置解析）。
+> 状态：**当前活跃主线**（2026-10-25 夜：审计修复在 `02b8005`；Qt 6.12.0 与 OCCT 8.0.0 已安装；`build-full` 已编译；曲面 STEP 走 OCCT，平面装配仍走内置解析）。按模块记的已做步骤在 `.claude/contexts/steps/`。
 
 ## 0. 2026-10-25 场景核验拍板与 C++ 工程骨架落地
 
@@ -15,7 +15,7 @@
    - `src/algo` (`olp_algo`): `OpwKinematics`、焊缝与路径、碰撞和仿真。法兰位姿与 URDF `tool0` 对过；ROBOGUIDE 对拍未做。
    - `src/io` (`olp_io`): `.ls` 后处理（无效 IK 缓存和圆弧运动会拒绝写出）以及 2D TCP HTML 预览。没有 M14 工程序列化器，也没有 3D PDF。
    - `src/app` (`olp_app`): `ProjectDocument`、`CommandManager`、`WorkcellLayoutService`（方案 A）。没有 `SelectionManager`、`EventBus` 或独立的 `RobotReplacementService`。
-   - `src/ui` (`olp_ui`): `TcpGizmo` 与窗口骨架。Qt 6.12.0 在 `D:\Soft\Qt\6.12.0\msvc2022_64`，OCCT 8.0.0 在 `C:\vcpkg\vcpkg\installed\x64-windows`。`build-full` 已链上两者。OCCT 视口还没接成可交互窗口。主程序退出码 2，原因是 `APPROACH` / `WELD_START` 与 `Table_Clamp_Block_1` 干涉。
+   - `src/ui` (`olp_ui`): `TcpGizmo` 与窗口骨架。Qt 6.12.0 在 `D:\Soft\Qt\6.12.0\msvc2022_64`，OCCT 8.0.0 在 `C:\vcpkg\vcpkg\installed\x64-windows`。`build-full` 已链上两者。OCCT 视口还没接成可交互窗口。演示焊缝起点收到 32 mm 后，主程序退出码 0；5 mm 起弧仍会碰到 `Table_Clamp_Block_1`。
 
 ---
 

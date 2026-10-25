@@ -10,7 +10,7 @@
    - **目标**：导入带机器人的 3D CAD 场景（STEP） $\rightarrow$ 拾取工件焊缝边自动生成带姿态路径 $\rightarrow$ 增删改点与 6D 姿态微调 $\rightarrow$ 可达性与碰撞检测 $\rightarrow$ 运动插补播放预览 $\rightarrow$ 导出 FANUC `.ls` 离线程序与可播放预览的 3D PDF / 单文件 HTML。
    - **成果文档**：`Docs/FASTSUITE_OLP_System_Architecture.md`（Gemini）、`Docs/OLP_System_Design_Claude.md (v1.1)`（Opus 定版主方案）、`Plan.md`（完整开发计划）、`Docs/机器人焊接离线编程软件报价单.xlsx`、测试资产 `SampleScenes/`。
    - **3.4 节方案拍板（2026-10-25）**：基于 `SampleScenes/` 两套场景核验，正式拍板采用 **方案 A（整场景 STEP 导入 + 用内置库同型号可动机器人 `FANUC M-10iA` 替换静态机器人外形）**。算法回归用 `-DOLP_HEADLESS=ON`。产品配置同时要求 Qt6 与 OpenCASCADE。2026-10-25 夜 Qt 6.12.0（MSVC 2022 64 位）在 `D:\Soft\Qt\6.12.0\msvc2022_64`，OCCT 8.0.0 在 `C:\vcpkg\vcpkg\installed\x64-windows`。曲面 STEP 走 OCCT；平面装配仍走内置解析，因为 XCAF 丢失实体名。
-   - **详细技术沉淀**：见 `.claude/contexts/OLP-archive.md` 与 `.claude/Plan.md`。
+   - **详细技术沉淀**：见 `.claude/contexts/OLP-archive.md`。已做步骤按模块记在 `.claude/contexts/steps/`。当前事项见 `.claude/Plan.md`。
 
 2. **第二阶段（已归档备查，2026-10-21 ~ 2026-10-22）：基于 3D 视觉的机器人免示教动态沿边涂抹/作业系统**
    - **触发原因**：用户明确调整项目主方向——不再做离线编程软件，而是做**“没有任何编程和调试、无 CAD 模型输入、仅靠视觉感知周围物体形状并动态沿边操作”**的系统。

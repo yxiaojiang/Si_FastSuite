@@ -44,6 +44,13 @@ struct SimulationResult {
     std::vector<ValidationIssue> issues{};
 };
 
+struct OperationTorchClearance {
+    double minClearanceMm{0.0};
+    std::string targetName{};
+    std::string partName{};
+    bool meetsSafeDistance{false};
+};
+
 // M10 & M11: Reachability, Collision (with Wire-Tip Exemption) & Trajectory Simulation
 class CollisionAndSimEngine {
 public:
@@ -74,6 +81,12 @@ public:
         const std::string& activeWorkpieceId,
         double stepDeg = 5.0,
         const std::vector<std::string>& exemptionPartIds = {}) const;
+
+    // Minimum torch-sphere clearance of every target. Welding roles use the wire-tip exemption.
+    OperationTorchClearance measureOperationTorchClearance(
+        const core::Operation& operation,
+        const core::Transform4d& uframeInWorld,
+        const std::vector<core::SceneNode>& sceneNodes) const;
 
     // M10 & M11: Validate entire program, run J/L interpolation & bake animation frames
     SimulationResult validateAndSimulateProgram(

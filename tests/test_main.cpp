@@ -299,6 +299,42 @@ void testSchemeAFullWorkcellImport() {
     }
     check(curvedRejected, "Headless STEP import rejects the four curved FreeCAD files");
 #endif
+
+    auto seamTrim = olp::algo::SeamAndToolpathAlgo::buildSeamFromPickedEdge(
+        cad, frontHandle, 3, workpieceHandles, 50.0);
+    olp::core::Operation trimOp;
+    if (seamTrim.has_value()) {
+        trimOp.targetWorkpieceId = seamTrim->face1PartId;
+        trimOp.exemptionPartIds = {seamTrim->face1PartId, seamTrim->face2PartId};
+    }
+    trimOp.genParams.travelAngleDeg = 10.0;
+    trimOp.genParams.approachDistMm = 45.0;
+    trimOp.genParams.retractDistMm = 45.0;
+    if (seamTrim.has_value()) {
+        olp::algo::SeamAndToolpathAlgo::generateOperationTargets(
+            *seamTrim, olp::core::Transform4d::identity(), trimOp);
+    }
+    const auto trimRobot = olp::device::RobotModel::createFanucM10iA();
+    olp::algo::OpwKinematics trimKin(trimRobot);
+    olp::core::UnitsSettings trimSettings;
+    olp::algo::CollisionAndSimEngine trimEngine(trimKin, trimSettings);
+    const auto beforeTrim = trimEngine.measureOperationTorchClearance(
+        trimOp, olp::core::Transform4d::identity(), doc.sceneNodes);
+    check(seamTrim.has_value() && beforeTrim.minClearanceMm < 0.0 &&
+              beforeTrim.partName == "Table_Clamp_Block_1",
+          "Default 5 mm trim puts the torch into Table_Clamp_Block_1",
+          "clearance=" + std::to_string(beforeTrim.minClearanceMm) + " part=" + beforeTrim.partName);
+
+    const bool cleared = seamTrim.has_value() &&
+        olp::algo::SeamAndToolpathAlgo::extendStartTrimUntilTorchClears(
+            cad, frontHandle, 3, workpieceHandles, 50.0, trimEngine,
+            olp::core::Transform4d::identity(), doc.sceneNodes, *seamTrim, trimOp);
+    const auto afterTrim = trimEngine.measureOperationTorchClearance(
+        trimOp, olp::core::Transform4d::identity(), doc.sceneNodes);
+    check(cleared && afterTrim.meetsSafeDistance && seamTrim.has_value() && seamTrim->startTrimMm > 5.0,
+          "Seam start trim moves off the clamp while keeping the fillet torch angle",
+          "trim=" + (seamTrim ? std::to_string(seamTrim->startTrimMm) : "none") +
+          " clearance=" + std::to_string(afterTrim.minClearanceMm) + " part=" + afterTrim.partName);
 }
 
 void testTJointCrossPartSeamAndCollisionExemption() {
