@@ -1,6 +1,6 @@
 # OLP-archive.md — 机器人焊接离线编程（OLP）系统规划、双模型复盘与工程落地上下文
 
-> 状态：**当前活跃主线**（2026-10-25 恢复推进并进入阶段 0 预研与阶段 1 C++ 工程骨架搭建）。
+> 状态：**当前活跃主线**（2026-10-25 晚：审计修复在 `02b8005`；OCCT 8.0.0 已安装；Qt6 未安装；OCCT 导入路径尚未编译）。
 
 ## 0. 2026-10-25 场景核验拍板与 C++ 工程骨架落地
 
@@ -15,7 +15,7 @@
    - `src/algo` (`olp_algo`): `OpwKinematics`、焊缝与路径、碰撞和仿真。法兰位姿与 URDF `tool0` 对过；ROBOGUIDE 对拍未做。
    - `src/io` (`olp_io`): `.ls` 后处理（无效 IK 缓存和圆弧运动会拒绝写出）以及 2D TCP HTML 预览。没有 M14 工程序列化器，也没有 3D PDF。
    - `src/app` (`olp_app`): `ProjectDocument`、`CommandManager`、`WorkcellLayoutService`（方案 A）。没有 `SelectionManager`、`EventBus` 或独立的 `RobotReplacementService`。
-   - `src/ui` (`olp_ui`): `TcpGizmo` 与窗口骨架。本机未接上 Qt6 主窗口和 OCCT 视口。
+   - `src/ui` (`olp_ui`): `TcpGizmo` 与窗口骨架。OCCT 8.0.0 已装在 `C:\vcpkg\vcpkg\installed\x64-windows`，但产品配置还缺 Qt6，所以 `importStepWithOcct` 和 OCCT 视口都还没在本机编译。headless 主程序退出码 2，原因是 `APPROACH` / `WELD_START` 与 `Table_Clamp_Block_1` 干涉。
 
 ---
 

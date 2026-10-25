@@ -1,5 +1,13 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-25 晚：审计修复已推送，OpenCASCADE 已安装
+
+`.claude/Plan.md` 按记忆规则收成 3 条活跃事项。完整排期没有删，仍在根目录 `Plan.md`。
+
+1. **[DONE] 独立审计对应的代码修复**已提交并推送 `02b8005`。headless 测试 33 项通过。运动学按 URDF 链对过；曲面 STEP 在无 OCCT 时拒绝导入；导出和编译脚本失败时返回非零。
+2. **[DONE] OpenCASCADE 8.0.0（freetype）**装在 `C:\vcpkg\vcpkg\installed\x64-windows`。`importStepWithOcct` 尚未在本机编译。
+3. **未完成，转入活跃计划**：Qt6、四件曲面 STEP 的 OCCT 验收、夹具碰撞、ROBOGUIDE 对拍、客户实景与 3D PDF 熔断。
+
 ## 2026-10-25 归档：切换回第一阶段 OLP 离线编程系统开发主线（阶段 0 预研与阶段 1 C++ 骨架启动）
 
 > **归档原因**：用户于 2026-10-25 明确指示切回对标 FASTSUITE Edition 2 的机器人焊接离线编程（OLP）系统，严格按照 `Docs/OLP_System_Design_Claude.md (v1.1)` 制定完整详细开发计划写入 `Plan.md`，基于已就绪的两套测试场景 `SampleScenes/` 完成 3.4 节场景导入方案拍板，并正式启动 CMake + Qt6 + OpenCASCADE 基础 C++ 工程骨架搭建。原第二阶段（视觉免示教沿边涂胶演示计划）归档保留如下：

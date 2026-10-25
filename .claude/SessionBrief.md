@@ -1,44 +1,37 @@
 # SessionBrief.md — 当前接手摘要
 
-> 最近刷新：2026-10-25（正式切回对标 FASTSUITE Edition 2 的机器人焊接离线编程 OLP 系统开发主线，完成 `SampleScenes/` 两套场景核验与 3.4 节方案 A 拍板，生成完整开发计划 `Plan.md`，并启动 CMake + Qt6 + OpenCASCADE 基础 C++ 工程骨架）。工作区：`C:\Users\mimovr\Desktop\TEmp\Si_FastSuite`。
+> 最近刷新：2026-10-25 晚。主线仍是对标 FASTSUITE Edition 2 的机器人焊接离线编程。审计修复已推送 `02b8005`。OpenCASCADE 8.0.0（带 FreeType）已装在 `C:\vcpkg\vcpkg\installed\x64-windows`。本机没有 Qt6。工作区：`C:\Users\mimovr\Desktop\TEmp\Si_FastSuite`。
 
 ---
 
-## 1. 当前目标与最新进展
+## 1. 当前目标
 
-1. **主线锁定**：严格依据定版执行方案 [`Docs/OLP_System_Design_Claude.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/OLP_System_Design_Claude.md)（v1.1）与全景架构文档 [`Docs/FASTSUITE_OLP_System_Architecture.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/FASTSUITE_OLP_System_Architecture.md)，推进对标德国 CENIT FASTSUITE Edition 2 的工业机器人焊接离线编程（OLP）系统研发。
-2. **两套真实测试场景（`SampleScenes/`）核验与 3.4 节拍板**：
-   - **`Scene1_TJoint_And_FANUC_M10iA`**：包含 ROS-Industrial 官方 `FANUC M-10iA / ARC Mate 100iC` 独立 URDF（已明确 OPW 参数：`a1=150, a2=-150, b=0, c1=450, c2=600, c3=640, c4=100` mm，以及 J1~J6 轴向与软限位）、全套视觉/碰撞 STL 网格，以及 3 件典型焊接 STEP 工件（含 4 实体的 T 型角焊带左右夹具总装 `Workpiece_TJoint_With_Clamps.step`、管法兰 `Workpiece_PipeFlange_DN15.step`、U 型支架 `Workpiece_U_Bracket_L70.step`）。
-   - **`Scene2_Full_Workcell_STEP`**：包含 12 实体的完整焊接工位 STEP 总装 `Full_Welding_Cell_With_Robot.step`（含底座 `Robot_Pedestal_Base`、5 个静态机器人外形部件 `FANUC_M10iA_Static_*`、工装台 `Welding_Fixture_Table`、3 个箱体角焊工件实体与 2 个压块夹具），外加方管 `Workpiece_SquareTube_80x80x5.step` 与钢吊架 `Workpiece_SteelHanger_SAET200.step`。
-   - **3.4 节正式拍板**：采用 **【方案 A：整场景 STEP 导入 + 用机器人库中同型号可动机器人替换静态机器人外形】（P0 默认，工期 1 周）**，并将 `FANUC M-10iA` 直接作为 M05 内置机器人库首款标准型号。
-3. **完整开发计划落地**：已将涵盖 M01~M15 全部模块、6.1~6.5 关键算法、阶段 0~阶段 5（28 周，M1/M2/M3 三大里程碑）、风险矩阵与 9 项量化验收指标的详细开发计划写入 `.claude/Plan.md` 与根目录 `Plan.md`。
-4. **阶段 1 算法与门禁**：无 Qt / OCCT 的本机只能以 `-DOLP_HEADLESS=ON` 编译算法层。产品配置默认要求 Qt6 与 OpenCASCADE。运动学已按「示教器角 → URDF 耦合 → 符号/偏置 → OPW」与 URDF 法兰/`tool0` 对拍，耦合系数符号尚未经 ROBOGUIDE 确认。四件 FreeCAD 曲面 STEP 在无 OCCT 时拒绝导入。9 项验收里的 ROBOGUIDE、客户实景和 3D PDF 熔断仍未执行。
+把已经装好的 OpenCASCADE 编译进工程，并确认四件曲面 STEP 能导入。产品配置在关闭 `OLP_HEADLESS` 时同时要求 Qt6 和 OCCT，所以下一件安装是 Qt 6 的 MSVC 2022 64 位套件。装好后用 vcpkg 工具链做一次非 headless 配置，修通 `importStepWithOcct`。完整排期不在本文件，见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
 
----
+## 2. 这轮已经落地的事实
 
-## 2. 关键技术约束与未关闭风险
+运动学顺序是示教器关节角、URDF 耦合、`q = s·J − o`、再进入 OPW。存储的偏置不是 ROS-Industrial 那种直接相加。J3 的存储偏置是负九十度、符号是负一，对应的 ROS 偏置才是正九十度。J6 从 OPW 折回示教器时要落在负 π 到正 π，否则零圈会被报成负一圈。法兰位置和 `tool0` 的 Z 轴与独立 URDF 链对过，两百组样本误差小于 0.01 毫米。零位法兰大约在 (890, 0, 1200) 毫米，工具轴向是正 X。连杆网格坐标系仍是 OPW 抽象，没有逐节对齐 URDF。
 
-1. **五层解耦与命令栈铁律**：算法层（`olp_algo`）严禁依赖 Qt 和视图，100% 纯 C++ 可独立单测；UI 所有数据修改强制走 `CommandManager`（Undo/Redo 命令栈），在阶段 1 第一天即强制落地。
-2. **三大行业暗坑防护**：
-   - **FANUC J2/J3 轴耦合**：示教器显示角与内部几何模型关节角必须经过耦合换算，并通过 ROBOGUIDE 采样点双向比对；
-   - **T 型角焊跨零件两侧面识别**：`ICadKernel` 同时支持同实体拓扑邻接面查询与跨实体空间最近点距离（`< 1.0 mm`）贴合面匹配；
-   - **焊丝尖端碰撞豁免**：焊接段内对 TCP 焊丝尖端球域与当前待焊工件做碰撞豁免，防止所有焊接点误报碰撞。
-3. **`TcpGizmo` 交互规范**：复用 `AIS_Manipulator` 作为视觉手柄但绝不调用 `Attach()` 挂接对象；拖动中后台线程仅计算最新一帧预览 IK 与单点碰撞，松开鼠标才提交单条 `ModifyTargetPoseCommand`。
-4. **HTML 预览与 3D PDF**：当前导出是 2D TCP 折线预览，不是 Three.js + GLB。3D PDF 仍受阶段 0 的 5 个工作日熔断约束，尚未开始。
+J2/J3 耦合写在 URDF 关节空间，系数目前是正一。只动 J2、J3 示教器角保持零时，前臂绝对角应保持不变。这个系数的正负号、圈数记在 J1/J4/J6 还是 J4/J5/J6，都还没跟 ROBOGUIDE 核对。关节限位按 URDF 几何角检查，耦合后的 J3 用哪套限位也待核。
 
----
+没有 OCCT 时，管法兰、U 型支架、方管、钢吊架必须导入失败。仓库自带的平面方盒整场景仍可导入，共十二个实体，没有「安装法兰过渡台」。机器人 STL 由加载器从米换成毫米，`importStl` 本身不猜单位。焊丝尖端只豁免本焊缝两块母材，并且只在十毫米半径内。仿真只写 `TargetCache`，不回写目标配置字。无效逆解缓存和圆弧运动不会写成 `.ls`。零位移拖拽、找不到目标的命令不入栈。
 
-## 3. 下一步计划
+`-DOLP_HEADLESS=ON` 下 `olp_tests` 三十三项通过。主程序退出码是 2：接近点和焊缝起点与 `Table_Clamp_Block_1` 干涉，文件仍写到 `build/`。HTML 仍是二维 TCP 折线。下载脚本 `C:\vcpkg\vcpkg\olp-download.ps1` 只服务于本机 vcpkg，不在仓库里。
 
-1. 在装有 Qt6 与 OpenCASCADE 的环境做产品配置编译，并核对 OCCT 导入路径。
-2. 用 ROBOGUIDE 核对耦合系数符号、圈数轴和法兰位姿。这三项在代码里标为待核，不能当成已对齐。
-3. 阶段 0 的客户实景和 3D PDF 熔断仍未关闭。
+## 3. 未关闭风险
 
----
+1. 耦合符号和圈数轴没有 ROBOGUIDE 对拍，不能宣称与示教器一致。
+2. `importStepWithOcct` 写过，但本机还没编译过这段代码。
+3. 演示程序的夹具碰撞是真实干涉。退出码 2 表示失败，不要为了让脚本变绿而放行。
+4. 至少两份带机器人外形的客户实景，以及 3D PDF 五个工作日熔断，都还没开始。
+5. 算法层不得依赖 Qt。会改文档的操作走 `CommandManager`。肩部奇异只是几何代理，不是雅可比最小奇异值。FANUC 世界坐标系原点和耦合符号一样，未对真机。
 
-## 4. 模块与文档索引
+## 4. 下一步
 
-- **开发计划与记忆**：`.claude/Plan.md`（同步镜像至根目录 `Plan.md`）、`.claude/Rules.md`、`.claude/ProjectMemory.md`、`.claude/Plan-archive.md`。
-- **核心设计基线**：`Docs/OLP_System_Design_Claude.md`（v1.1 主执行方案）、`Docs/FASTSUITE_OLP_System_Architecture.md`（全景概念方案）、`.claude/contexts/OLP-archive.md`。
-- **测试场景资产**：`SampleScenes/Scene1_TJoint_And_FANUC_M10iA/`、`SampleScenes/Scene2_Full_Workcell_STEP/`。
-- **历史另册归档**：视觉免示教沿边涂胶方案见 `.claude/contexts/VisionEdgeSystem.md` 与 `Docs/Vision_Edge_System_Baseline.md`。
+1. 用 Qt 官方安装器安装 Qt 6、MSVC 2022 64 位和 Widgets，把 `Qt6_DIR` 交给工程。不要用 vcpkg 从源码编译 Qt，除非安装器不可用。
+2. 配置时加上 `-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/vcpkg/scripts/buildsystems/vcpkg.cmake`，不要打开 `OLP_HEADLESS`。编译后用四件曲面 STEP 验收边和法向。
+3. 手头有 ROBOGUIDE 时，并行核对耦合符号。夹具碰撞可以在 headless 下继续查，不依赖窗口。
+
+## 5. 索引
+
+设计基线：`Docs/OLP_System_Design_Claude.md`、`Docs/FASTSUITE_OLP_System_Architecture.md`。排期：根目录 `Plan.md`。模块现状：`.claude/contexts/OLP-archive.md`。当前提交：`02b8005`。视觉沿边方案是历史归档，见 `.claude/contexts/VisionEdgeSystem.md`。
