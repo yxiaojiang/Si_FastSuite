@@ -133,3 +133,13 @@
 - **触发阶段**：下一次改自转图的点击或拖拽取角时。
 - **验收条件**：点击分支切割点得到 \(-180^\circ\) 或 \(+175^\circ\) 中与指针最近的已有样本，不发出没有样本的 \(+180^\circ\)。
 
+---
+
+## M10-008 [OPEN] 逆解失败后仍把默认构型当成已有解锁住（P2）
+
+- **来源轮次**：`M10-COLLISION-REACH-001` Round 2 审核（2026-10-26）。
+- **位置**：`MainWindow::scanSelectedTargetTwistAngles` 的 `hasPriorSolution`。
+- **现状**：条件是 `cache.valid || status != Unchecked`。逆解失败时 `valid` 为 false，`solvedConfig` 保持默认 `N U T, 0, 0, 0`，状态却已经不是 `Unchecked`。扫描会锁住这套默认构型。已有成功解、后来只是把 `valid` 清掉的点不受影响，所以不挡 `M10-002`。
+- **触发阶段**：下一次改自转扫描的构型锁，或要在不可达点上扫出其他构型的可行角时。
+- **验收条件**：只有 cache 里确实写下过解（`valid`，或关节/构型来自一次成功的逆解）才锁定 `solvedConfig`。纯失败点不锁默认 `N U T`，参考关节用 Home。
+

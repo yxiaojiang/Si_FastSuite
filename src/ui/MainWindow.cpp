@@ -6,11 +6,75 @@ namespace olp::ui {
 
 MainWindow::MainWindow() {
     cmdMgr_.addDocumentChangedListener([this] {
-        syncRobotJointsFromSelectedTarget();
+        handleDocumentChanged();
     });
 }
 
 MainWindow::~MainWindow() = default;
+
+void MainWindow::handleDocumentChanged() {
+    if (inValidation_) return;
+    inValidation_ = true;
+
+    // 1. Check if selected operation still exists
+    if (!selectedOperationId_.empty()) {
+        if (doc_.findOperation(selectedOperationId_) == nullptr) {
+            selectedOperationId_.clear();
+            selectedTargetId_.clear();
+            lastSimulationResult_ = algo::SimulationResult{};
+        }
+    }
+
+    // 2. Check if selected target still exists
+    if (!selectedTargetId_.empty()) {
+        if (doc_.findTarget(selectedTargetId_) == nullptr) {
+            selectedTargetId_.clear();
+        }
+    }
+
+    // 3. Determine which operation to validate
+    std::string opToValidate = selectedOperationId_;
+    if (opToValidate.empty() && !selectedTargetId_.empty()) {
+        for (const auto& cu : doc_.controllers) {
+            for (const auto& prog : cu.programs) {
+                for (const auto& op : prog.operations) {
+                    for (const auto& t : op.targets) {
+                        if (t.id == selectedTargetId_) {
+                            opToValidate = op.id;
+                            selectedOperationId_ = op.id;
+                            break;
+                        }
+                    }
+                    if (!opToValidate.empty()) break;
+                }
+                if (!opToValidate.empty()) break;
+            }
+            if (!opToValidate.empty()) break;
+        }
+    }
+
+    if (!opToValidate.empty() && doc_.findOperation(opToValidate) != nullptr) {
+        validateOperation(opToValidate);
+    } else {
+        bool validatedAny = false;
+        for (const auto& cu : doc_.controllers) {
+            for (const auto& prog : cu.programs) {
+                if (!prog.operations.empty()) {
+                    validateOperation(prog.operations.front().id);
+                    validatedAny = true;
+                    break;
+                }
+            }
+            if (validatedAny) break;
+        }
+        if (!validatedAny) {
+            lastSimulationResult_ = algo::SimulationResult{};
+        }
+    }
+
+    syncRobotJointsFromSelectedTarget();
+    inValidation_ = false;
+}
 
 void MainWindow::syncRobotJointsFromSelectedTarget() {
     if (selectedTargetId_.empty()) return;
@@ -222,13 +286,7 @@ bool MainWindow::smoothTargetOrientations(
 
     auto cmd = std::make_unique<app::SmoothTargetOrientationsCommand>(
         doc_, opId, startTargetId, endTargetId);
-    const bool mutated = cmdMgr_.executeCommand(std::move(cmd));
-    if (mutated) {
-        validateOperation(opId);
-        syncRobotJointsFromSelectedTarget();
-        cmdMgr_.notifyDocumentChanged();
-    }
-    return mutated;
+    return cmdMgr_.executeCommand(std::move(cmd));
 }
 
 bool MainWindow::rotateTargetTcpZ(const std::string& targetId, double angleRad) {
@@ -240,17 +298,7 @@ bool MainWindow::rotateTargetsTcpZ(const std::vector<std::string>& targetIds, do
         return false;
     }
     auto cmd = std::make_unique<app::RotateTargetAroundTcpZCommand>(doc_, targetIds, angleRad);
-    const bool mutated = cmdMgr_.executeCommand(std::move(cmd));
-    if (mutated) {
-        if (!selectedOperationId_.empty()) {
-            validateOperation(selectedOperationId_);
-        } else {
-            validateCurrentOperation();
-        }
-        syncRobotJointsFromSelectedTarget();
-        cmdMgr_.notifyDocumentChanged();
-    }
-    return mutated;
+    return cmdMgr_.executeCommand(std::move(cmd));
 }
 
 bool MainWindow::modifyTargetProcessParams(
@@ -266,17 +314,7 @@ bool MainWindow::modifyTargetsProcessParams(
         return false;
     }
     auto cmd = std::make_unique<app::ModifyTargetProcessParamsCommand>(doc_, targetIds, params);
-    const bool mutated = cmdMgr_.executeCommand(std::move(cmd));
-    if (mutated) {
-        if (!selectedOperationId_.empty()) {
-            validateOperation(selectedOperationId_);
-        } else {
-            validateCurrentOperation();
-        }
-        syncRobotJointsFromSelectedTarget();
-        cmdMgr_.notifyDocumentChanged();
-    }
-    return mutated;
+    return cmdMgr_.executeCommand(std::move(cmd));
 }
 
 algo::SimulationResult MainWindow::validateOperation(const std::string& operationId) {

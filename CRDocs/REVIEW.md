@@ -1,110 +1,78 @@
 # 审核结论 — M10-COLLISION-REACH-001
 
 > **Task ID**：`M10-COLLISION-REACH-001`
-> **Task**：M10 可达性、奇异点、碰撞与自转角扫描 — Round 1
-> **Round**：1
+> **Task**：M10 可达性、奇异点、碰撞与自转角扫描 — Round 2
+> **Round**：2
 > **Reviewer**：审核方
 > **Reviewed at**：2026-10-26
 > **Executor**：Gemini / Claude
 > **Verdict**：**CHANGES_REQUESTED**
 >
-> 对照提交 `777091c` 的源码和调用链，不以 `IMPLEMENTATION.md` 自述为完成证据。审核方复跑 `build-full/Release/olp_tests.exe`：**334 passed, 0 failed**。Test 17 覆盖的是引擎直调和“生成后调用 `validateOperation`”，下面三条界面路径它都没有走到。
+> 对照提交 `3968211` 的源码和调用链。审核方复跑 `build-full/Release/olp_tests.exe`：**357 passed, 0 failed**。`M10-001` ~ `M10-003` 的原验收已经落到代码和 Test 17 上。撤销后的仿真结果没有跟着回去，问题列表会继续显示已经撤销的段内问题。
 
-M09 Round 2 的 `M09-001` ~ `M09-003` 维持 **RESOLVED**。本轮没有把它们打回。
+M09 的 `M09-001` ~ `M09-003` 维持 **RESOLVED**。
 
 ---
 
-## 本轮必须修改
+## 结论
 
 | ID | 级别 | 状态 | 涉及文件 | 结论 |
 |---|---|---|---|---|
-| M10-001 | P1 | **OPEN** | `src/ui/MainWindow.cpp`<br>`src/ui/ShellWindow.cpp`<br>`src/app/CommandManager.cpp` | 平滑、自转、工艺修改在 `execute()` 之前读 `didMutate()`，返回值恒为 false，验证不会跑，状态栏把成功报成失败。 |
-| M10-002 | P1 | **OPEN** | `src/ui/MainWindow.cpp`<br>`src/algo/CollisionAndSim.cpp` | 自转扫描锁的是从未写入的默认构型 `N U T, 0, 0, 0`，并且对接近/回退点也按焊接角色豁免焊丝尖端。 |
-| M10-003 | P1 | **OPEN** | `src/ui/ShellWindow.cpp`<br>`src/algo/CollisionAndSim.cpp` | 问题列表只读 `target.cache`。段内扫掠碰撞和直线段构型跳变只写在 `SimulationResult.issues` 里，列表中不出现，也无法跳转。 |
+| M10-001 | P1 | **RESOLVED** | `src/ui/MainWindow.cpp`<br>`src/app/CommandManager.cpp` | `executeCommand` 在 `execute()` 之后返回是否入栈。三条入口据此重新验证，并把选中点的关节写到机器人节点。自转快照保存整份 `TargetCache`，撤销/重做能带回该点的姿态和关节。 |
+| M10-002 | P1 | **RESOLVED** | `src/ui/MainWindow.cpp`<br>`src/algo/CollisionAndSim.cpp` | 已有解时锁定 `cache.solvedConfig` 和 `cache.jointsRad`。焊接角色豁免焊丝尖端，`APPROACH` 在同一几何上判碰撞。 |
+| M10-003 | P1 | **RESOLVED** | `src/ui/ShellWindow.cpp` | `fillIssues()` 读入 `lastSimulationResult.issues`，扫掠碰撞能出现在列表里，并带上 `targetId` 与 `operationId`。 |
+| M10-007 | P1 | **OPEN** | `src/ui/MainWindow.cpp`<br>`src/app/CommandManager.cpp`<br>`src/ui/ShellWindow.cpp` | 验证写了整条程序的 cache 和 `lastSimulationResult`，撤销只恢复被编辑的点。问题列表和下游点的解留在编辑后的姿态上。 |
 
-`M10-004`、`M10-005`、`M10-006` 已写入 `DEFERRED.md`。不挡这三条，但本轮不能把它们当成已经验收。
+`M10-004` ~ `M10-006` 仍延期。`M10-008` 已写入 `DEFERRED.md`。
 
 ---
 
-### M10-001 [P1] 三条编辑入口在执行前读取 `didMutate()`
+### M10-001 [P1] RESOLVED
 
-`SmoothTargetOrientationsCommand`、`RotateTargetAroundTcpZCommand`、`ModifyTargetProcessParamsCommand` 的 `mutated_` 初值是 false，只在 `execute()` 里赋值。`CommandManager::executeCommand` 先 `execute()`，再根据 `didMutate()` 决定是否入栈。
+`CommandManager::executeCommand` 先 `execute()`，再按 `didMutate()` 返回 true/false。`smoothTargetOrientations`、`rotateTargetsTcpZ`、`modifyTargetsProcessParams` 用这个返回值决定是否 `validateOperation`。零增量自转在入栈前返回 false。
 
-`MainWindow` 把顺序反过来了：
+`MainWindow` 在文档变更时调用 `syncRobotJointsFromSelectedTarget()`。选中点 `cache.valid` 时，机器人节点的 `currentJointsRad` 换成该点的解。Test 17：15° 自转返回 true，撤销后该点姿态、`userModified`、关节与机器人节点回到自转前，重做后再对齐。
 
-```206:213:src/ui/MainWindow.cpp
-    auto cmd = std::make_unique<app::SmoothTargetOrientationsCommand>(
-        doc_, opId, startTargetId, endTargetId);
-    const bool mutated = cmd->didMutate();
-    cmdMgr_.executeCommand(std::move(cmd));
-    if (mutated) {
-        validateOperation(opId);
-    }
-    return mutated;
-```
+自转和工艺命令的快照改为整份 `TargetCache`。第一次 `undo()` 把验证后的 cache 封进 `afterSnapshots_`，重做时按这份快照写回。被编辑的那一个点，撤销/重做是对称的。
 
-`rotateTargetsTcpZ`（约 224–232 行）和 `modifyTargetsProcessParams`（约 247–255 行）相同。命令其实已经入栈并改了文档，`notifyDocumentChanged` 也会刷新界面，但函数永远返回 false，`validateOperation` 永远不跑。
+---
 
-界面按这个返回值报结果：
+### M10-002 [P1] RESOLVED
 
-- 姿态平滑走到失败文案：「未能执行姿态平滑：没有有效操作或中间点」。姿态其实已经插值。
-- 扇区点击、一键最优角、±1°/±5°/±15° 和顺/逆时针按钮都包在 `if (rotateTargetsTcpZ(...))` 里。成功提示不会出现。
-- 工艺单元格不再显示「已更新目标点工艺参数」。
+`scanTwistAngles` 的构型参数改为 `optional<FanucConfig>`，并增加 `isWeldingRole`。`scanSelectedTargetTwistAngles` 在 `cache.valid` 或状态已不是 `Unchecked` 时锁定 `cache.solvedConfig`，参考关节用 `cache.jointsRad`。角色只有 `WELD_START` / `WELD_VIA` / `WELD_END` 才把 `isWeldingRole` 设为 true。
 
-这和已延期的 `M09-004` 不是一回事。`M09-004` 要求零变化时不要报成功。现在是有变化也报失败。修的时候不能改回“一律返回 true”。
+Test 17 经 `MainWindow::scanSelectedTargetTwistAngles`：当前 0° 可达；母材顶面贴在焊缝上时，焊接角色 `collisionFree`，同一姿态改成 `APPROACH` 后不豁免。失败解仍会锁住默认构型的缺口记在 `M10-008`，不挡本条关闭。
 
-自转还会把 `cache.valid` 清掉（`rotateTargetAroundTcpZ`）。机器人关节只在 `selectTarget` 里、且 `cache.valid` 时才写到机器人节点；同一个点已经选中时 `selectTarget` 直接返回。所以点了最优角之后，手柄跟着新姿态走，手臂仍停在旧关节上，属性里的构型、可操作度和问题说明也不更新。
+---
 
-撤销快照目前只保存了 `cache.valid` 这一个布尔量，没有关节角、构型和问题文本。一旦验证改写了 cache，再撤销会回到旧姿态，关节却还是新解。修这条时必须一起处理。
+### M10-003 [P1] RESOLVED
+
+`fillIssues()` 先写入 `lastSimulationResult().issues`，再用 `{targetId, description}` 与点缓存去重。硬碰撞、不可达、超限、构型跳变为红色，其余警告为橙色。Test 17 在两端点之间放入 `Fixture_Clamp_Middle`，仿真结果和 `ShellWindow` 的问题列表都能看到该夹具，条目带有 `targetId` 与 `operationId`。单击/双击仍走 `selectOperation` + `selectTarget`。
+
+列表的内容在撤销后会过期，见 `M10-007`。显示路径本身已经接上。
+
+---
+
+### M10-007 [P1] OPEN — 撤销后仿真结果和下游 cache 仍是编辑后的
+
+`validateAndSimulateProgram` 会改写该程序里每一个点的 cache，并把段内扫掠、直线段无解和构型跳变放进 `SimulationResult`。`MainWindow` 把这份结果留在 `lastSimulationResult_`。这次写入发生在 `executeCommand` 返回之后，不在命令快照里。
+
+`CommandManager::undo()` 只调用命令自己的 `undo()`，然后 `notifyDocumentChanged()`。自转命令的快照只有被转的那些点。下游点的关节、构型和问题文本保持验证后的值。`lastSimulationResult_` 完全不恢复，也不重算。
+
+`fillIssues()` 先画 `lastSimulationResult_.issues`。因此：
+
+- 自转引入一段扫掠碰撞后再撤销，姿态已经回去，问题列表仍显示这段碰撞。
+- 自转消掉一段碰撞后再撤销，列表上的段内条目不会回来。
+- 焊接段的构型锁记在 `WELD_START` 的解上。这次自转若换成另一套构型，下游点的 cache 留在新构型里，撤销后的 `WELD_START` 却是旧构型。导出时一条焊缝里会混两套构型。
+- 撤销“由焊缝生成操作”后，操作已经不在文档里，`lastSimulationResult_` 里的旧 `targetId` 仍会进问题列表。
+
+重做刚好把被编辑点放回验证后的快照，而 `lastSimulationResult_` 一直停在那次验证上，所以重做之后列表又看起来是对的。断的是撤销这一侧。
+
+Test 17 只比较了被转那一个点的关节，没有读下游点，也没有在撤销之后看问题列表。
 
 **验收**
 
-1. 有实际变化时，这三条入口返回 true，并在入栈之后调用 `validateOperation`。零变化仍返回 false，且不入栈。
-2. 姿态平滑成功时状态栏不再写“未能执行”。自转和工艺修改成功时写出对应的完成说明。
-3. 已选中的点被自转或平滑之后，机器人节点的 `currentJointsRad` 换成新解，不依赖再次切换选中点。
-4. 撤销一次自转后，姿态、`userModified` 和 cache（关节、构型、状态、间隙、问题文本）一起回到自转前。重做后再与验证结果一致。
-5. Test 17 或相邻测试走 `MainWindow::rotateTargetsTcpZ` / `smoothTargetOrientations`，断言返回值、cache 重新有效、撤销后关节与姿态一致。不要只调用引擎。
-
----
-
-### M10-002 [P1] 自转扫描锁错构型，接近/回退也豁免焊丝尖端
-
-`scanSelectedTargetTwistAngles` 把 `target->config` 交给 `scanTwistAngles`。全库没有任何写入 `target.config` 的路径。默认值是 `flip=false, up=true, top=true, turns={0,0,0}`，也就是 `N U T, 0, 0, 0`。验证结果写在 `cache.solvedConfig`。
-
-`selectBestSolution` 的第三个参数是 `optional<FanucConfig>`。传入一个构型值就会变成硬锁：`samePosture` 含翻转、肘、肩和三轴圈数。扫描因此始终锁在默认构型上，而不是该点已经解出的构型。参考关节也只在 `cache.valid` 时才用 `cache.jointsRad`；自转刚把 `valid` 清掉，下一次扫描的参考关节退回 Home。
-
-`scanTwistAngles` 里碰撞调用写死 `isWeldingRole=true`。属性面板对任何选中点都扫描，包括 `APPROACH` 和 `RETRACT`。这些点的焊丝尖端插进母材时，圆环会把该角度画成可行。设计里的豁免只在焊接角色、且只对当前焊缝母材、且穿透不超过 `wireTipExemptionRadiusMm`。
-
-Test 17 第 5 段直接把 `computeConfig(home)` 传进引擎，第 6 段只断言样本数是 72。两条都发现不了这条。
-
-**验收**
-
-1. 该点已有解时，扫描锁定 `cache.solvedConfig`（含圈数），参考关节用 `cache.jointsRad`，即使 `cache.valid` 暂时为 false。从未解过的点才用 Home，并且不要锁死默认 `N U T`。
-2. 未自转的当前姿态，若验证已经给出同构型解，必须落在可达样本上。构型不是默认 `N U T` 的点也要满足。
-3. 碰撞角色跟随点的角色：只有 `WELD_START` / `WELD_VIA` / `WELD_END` 豁免焊丝尖端。同一几何下，接近或回退点尖端进入母材必须是碰撞（红），焊接点在豁免半径内必须不是碰撞。
-4. 上述两条用 `MainWindow::scanSelectedTargetTwistAngles` 断言，不要只构造引擎参数。
-
----
-
-### M10-003 [P1] 段内问题进不了问题列表
-
-`validateAndSimulateProgram` 把端点问题写入 `target.cache`，同时把直线段无解、关节步距超过 15°、扫掠碰撞和扫掠间隙不足只推进 `SimulationResult.issues`。`validateOperation` 把这份结果留在 `lastSimulationResult_`。
-
-`fillIssues()` 只遍历 `target.cache.issueMessage`。端点间隙合格、中段撞夹具的情况（Test 9 已经证明引擎能报出）在问题面板里是空的。单击/双击导航也到不了这些条目。
-
-**验收**
-
-1. 端点清楚、段内硬碰撞或直线段构型跳变时，问题列表出现对应条目，带上 `operationId` 和 `targetId`，硬碰撞/不可达/超限/构型跳变为红色，间隙不足为橙色。
-2. 点击该条目会选中对应点，路径点表滚到该行，手柄挂到该点，机器人关节切到该点的解。
-3. 回归用一对端点间隙合格、中段穿过夹具的关节运动，断言列表文本里能找到扫掠碰撞，而不是只断言 `SimulationResult.issues` 非空。
-
----
-
-## 已核对、本轮不打回的部分
-
-- 关节软限位和 5° 警戒：Home 不警戒；J1 = 168° 警戒且未超限，175° 超限；J2 = −88° 下沿警戒，−95° 超限。Test 17 这些断言为真。
-- 腕奇异（J5 = 0）可操作度降到 0；肘伸直（\(q_2+\psi=0\)）能检出。Home 的代理指标实测约 0.974。这不是雅可比奇异值，见 `M10-004`。
-- 72 个样本的角度是 \([-180^\circ,+175^\circ]\)，步长 5°。\(180^\circ\) 与 \(-180^\circ\) 是同一姿态，不重复采样是对的。
-- `findOptimalFeasibleAngleDeg` 对连续可行区间 \([-30^\circ,+50^\circ]\) 取到 \(+10^\circ\)，环绕搜索有 \(2n\) 展开，整圈可行时会截断。
-- 生成路径之后会调用 `validateOperation`，cache 不再停留在 `Unchecked`。这条路径没有 `M10-001` 的返回值错误。
-- 焊丝尖端豁免在引擎的焊接角色下对母材生效，喷嘴打到 `Fixture_Clamp_Left` 能报出部件名。问题在扫描入口把非焊接点也送进了豁免，见 `M10-002`。
+1. 自转、平滑或工艺修改触发验证之后，再撤销一次：该程序每个点的 cache（关节、构型、状态、间隙、问题文本）以及 `lastSimulationResult.issues` 与撤销后的姿态一致。与“编辑前先验证一次、再比较”的结果相同即算一致。
+2. 重做后，上述 cache 和段内问题回到编辑后的那次验证。
+3. 撤销生成操作后，问题列表不再出现已删除点的条目。
+4. Test 17 记录自转前下游点的关节和 `issues` 文本，撤销后逐项相等；重做后再与自转后的记录相等。不要只断言被转的那一个点。

@@ -2719,6 +2719,75 @@ void testKinematicsReachabilitySingularityAndTwistScan() {
             }
             check(shellHasSweepIssue, "M10-003: ShellWindow issueList_ displays sweep collision item for navigation");
 #endif
+
+            // M10-007: Undo/Redo restores downstream targets' caches and lastSimulationResult.issues
+            const auto target2Id = op->targets[2].id;
+            const auto target3Id = op->targets[3].id;
+            const auto t2JointsBefore = mainWin.document().findTarget(target2Id)->cache.jointsRad;
+            const auto t2ConfigBefore = mainWin.document().findTarget(target2Id)->cache.solvedConfig.toString();
+            const auto t3JointsBefore = mainWin.document().findTarget(target3Id)->cache.jointsRad;
+            std::vector<std::string> issuesBefore;
+            for (const auto& iss : mainWin.lastSimulationResult().issues) {
+                issuesBefore.push_back(iss.targetId + ":" + iss.description);
+            }
+
+            // Perform rotation on Target 1 (WELD_START)
+            const bool rotAgainOk = mainWin.rotateTargetsTcpZ({t0Id}, olp::core::deg2rad(20.0));
+            check(rotAgainOk, "M10-007: Rotate target 1 by 20 deg succeeds");
+            const auto t2JointsAfter = mainWin.document().findTarget(target2Id)->cache.jointsRad;
+            const auto t2ConfigAfter = mainWin.document().findTarget(target2Id)->cache.solvedConfig.toString();
+            const auto t3JointsAfter = mainWin.document().findTarget(target3Id)->cache.jointsRad;
+            std::vector<std::string> issuesAfter;
+            for (const auto& iss : mainWin.lastSimulationResult().issues) {
+                issuesAfter.push_back(iss.targetId + ":" + iss.description);
+            }
+
+            // Undo: Downstream targets' caches and lastSimulationResult.issues must match pre-rotation exactly
+            mainWin.commandManager().undo();
+            const auto t2JointsUndone = mainWin.document().findTarget(target2Id)->cache.jointsRad;
+            const auto t2ConfigUndone = mainWin.document().findTarget(target2Id)->cache.solvedConfig.toString();
+            const auto t3JointsUndone = mainWin.document().findTarget(target3Id)->cache.jointsRad;
+            std::vector<std::string> issuesUndone;
+            for (const auto& iss : mainWin.lastSimulationResult().issues) {
+                issuesUndone.push_back(iss.targetId + ":" + iss.description);
+            }
+            check(t2JointsUndone == t2JointsBefore, "M10-007: Downstream target 2 joints restored after undo");
+            check(t2ConfigUndone == t2ConfigBefore, "M10-007: Downstream target 2 config restored after undo");
+            check(t3JointsUndone == t3JointsBefore, "M10-007: Downstream target 3 joints restored after undo");
+            check(issuesUndone == issuesBefore, "M10-007: lastSimulationResult.issues restored after undo");
+
+            // Redo: Downstream targets' caches and lastSimulationResult.issues must match post-rotation exactly
+            mainWin.commandManager().redo();
+            const auto t2JointsRedone = mainWin.document().findTarget(target2Id)->cache.jointsRad;
+            const auto t2ConfigRedone = mainWin.document().findTarget(target2Id)->cache.solvedConfig.toString();
+            const auto t3JointsRedone = mainWin.document().findTarget(target3Id)->cache.jointsRad;
+            std::vector<std::string> issuesRedone;
+            for (const auto& iss : mainWin.lastSimulationResult().issues) {
+                issuesRedone.push_back(iss.targetId + ":" + iss.description);
+            }
+            check(t2JointsRedone == t2JointsAfter, "M10-007: Downstream target 2 joints match after redo");
+            check(t2ConfigRedone == t2ConfigAfter, "M10-007: Downstream target 2 config matches after redo");
+            check(t3JointsRedone == t3JointsAfter, "M10-007: Downstream target 3 joints match after redo");
+            check(issuesRedone == issuesAfter, "M10-007: lastSimulationResult.issues match after redo");
+
+            // Undoing operation generation removes deleted targets and leaves zero stale issues
+            while (mainWin.commandManager().canUndo() && mainWin.document().findOperation(mainWin.selectedOperationId()) != nullptr) {
+                mainWin.commandManager().undo();
+            }
+            check(mainWin.lastSimulationResult().issues.empty(), "M10-007: lastSimulationResult.issues cleared after undoing operation creation");
+#ifdef OLP_HAS_QT6
+            shell.refreshFromDocument();
+            bool hasDeletedTargetIssue = false;
+            for (auto* lw : listWidgets) {
+                for (int i = 0; i < lw->count(); ++i) {
+                    if (lw->item(i)->data(Qt::UserRole).toString() == QString::fromStdString(t0Id)) {
+                        hasDeletedTargetIssue = true;
+                        break;
+                    }
+                }
+            }
+            check(!hasDeletedTargetIssue, "M10-007: Deleted operation targets do not appear in ShellWindow issue list");
+#endif
         }
     }
 }

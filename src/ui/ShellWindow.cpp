@@ -1510,16 +1510,16 @@ void ShellWindow::fillIssues() {
 
     // 1. SimulationResult issues (includes segment no-inverse, sweep collision, sweep clearance, ConfigJump)
     for (const auto& issue : controller_.lastSimulationResult().issues) {
-        std::string opName = issue.operationId;
         const auto* op = controller_.document().findOperation(issue.operationId);
-        if (op != nullptr && !op->name.empty()) {
-            opName = op->name;
+        if (op == nullptr) {
+            continue;
         }
-        std::string tName = issue.targetName;
-        if (tName.empty()) {
-            const auto* t = controller_.document().findTarget(issue.targetId);
-            if (t != nullptr) tName = t->name;
+        const auto* t = controller_.document().findTarget(issue.targetId);
+        if (t == nullptr) {
+            continue;
         }
+        std::string opName = op->name.empty() ? issue.operationId : op->name;
+        std::string tName = issue.targetName.empty() ? t->name : issue.targetName;
         addIssueItem(issue.operationId, issue.targetId, opName, tName, issue.state, issue.description);
     }
 

@@ -6,9 +6,9 @@
 
 ## 1. 当前目标
 
-M10 机器人运动学可达性、奇异点检测、碰撞检测与自转角扫描（`M10-COLLISION-REACH-001`）已完成 Round 2 缺陷闭环修复（`M10-001` ~ `M10-003`），已转交审核方（`READY_FOR_REVIEW`）。自动化测试由 334 项增至 **357 项全部通过**，端到端验证 `--verify` 退出码为 0。
+M10 机器人运动学可达性、奇异点检测、碰撞检测与自转角扫描（`M10-COLLISION-REACH-001`）已完成 Round 2 缺陷闭环修复（`M10-001` ~ `M10-003` 及 `M10-007`），已转交审核方（`READY_FOR_REVIEW`）。自动化测试由 334 项增至 **368 项全部通过**，端到端验证 `--verify` 退出码为 0。
 
-## 2. 这轮已经落地的事实（M10 Round 2）
+## 2. 这轮已经落地的事实（M10 Round 2 & M10-007）
 
 1. **M10-001 缺陷修复（执行前读取 didMutate 与撤销/重做缓存对称性）**：
    - `CommandManager::executeCommand` 返回真实变更 `bool`；`smoothTargetOrientations`、`rotateTargetsTcpZ`、`modifyTargetsProcessParams` 执行后触发验证；
@@ -24,22 +24,24 @@ M10 机器人运动学可达性、奇异点检测、碰撞检测与自转角扫�
    - 改造 `ShellWindow::fillIssues()`，完整提取 `SimulationResult.issues`（段内扫掠碰撞、扫掠间隙不足、构型跳变等）与目标点缓存问题，使用 `seen` 集合精准去重；
    - 条目携带 `operationId` 与 `targetId`，点击/双击条目可直接导航跳转并同步路径点表、视口手柄与 3D 机器人姿态。
 
-4. **自动化测试与验收（Test 17）**：
-   - 增补了对 `rotateTargetsTcpZ` 返回值、机器人关节同步、Undo/Redo 对称性；
-   - 增补了 `scanSelectedTargetTwistAngles` 锁定构型与焊接/接近角色尖端豁免对比断言；
-   - 增补了中间扫掠碰撞在 `SimulationResult` 与 `ShellWindow` 问题列表中的端到端断言；
-   - `olp_tests.exe` 增至 **357 passed, 0 failed**，`SiFastSuiteOLP.exe --verify` 退出码 0。
+4. **M10-007 缺陷修复（撤销后全程序仿真与下游目标点缓存同步）**：
+   - `MainWindow` 注册文档变更监听（`handleDocumentChanged`），在任何命令执行、Undo 或 Redo 时自动对当前操作触发完整程序仿真 `validateOperation`，保证全程序所有下游点的缓存（关节、构型、状态、间隙、问题）与 `lastSimulationResult_` 始终与当前文档姿态 100% 动态对称；
+   - 撤销生成操作时清空 `lastSimulationResult_`，且 `ShellWindow::fillIssues()` 严格过滤已从文档中删除的操作与目标点，彻底杜绝过期条目残留；
+   - Test 17 增补了下游 Target 2/3 在自转前、自转后、Undo、Redo 下的关节、构型与 issues 逐项相等断言，以及撤销生成操作后列表条目为 0 的端到端断言。
+
+5. **自动化测试与验收（Test 17）**：
+   - `olp_tests.exe` 增至 **368 passed, 0 failed**，`SiFastSuiteOLP.exe --verify` 退出码 0。
 
 ## 3. 未关闭风险
 
 1. 耦合符号、圈数记在哪三个轴、法兰相对示教器的位姿，仍无真机或 ROBOGUIDE 对拍。用户决定先不装 ROBOGUIDE，继续开发，关节程序仍只能当草稿。
 2. 回退段对 `Workpiece_BoxWall_Front` 的间隙低于 5 mm，不挡退出码。
 3. 客户实景和 3D PDF 五天熔断仍未开始。
-4. `M10-004` ~ `M10-006` 留在 `CRDocs/DEFERRED.md`。
+4. `M10-004` ~ `M10-006`、`M10-008` 留在 `CRDocs/DEFERRED.md`。
 
 ## 4. 下一步
 
-1. 审核方针对 `M10-COLLISION-REACH-001` Round 2 进行代码复核并在 `CRDocs/REVIEW.md` 给出反馈。
+1. 审核方针对 `M10-COLLISION-REACH-001` Round 2 / M10-007 进行复核。
 2. 审核通过后推进 M11（轨迹动画与仿真回放系统）。
 
 ## 5. 索引

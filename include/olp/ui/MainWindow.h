@@ -71,7 +71,10 @@ public:
 
 private:
     void notifySelectionChanged();
+    void handleDocumentChanged();
     void syncRobotJointsFromSelectedTarget();
+
+    bool inValidation_{false};
 
     app::ProjectDocument doc_{};
     app::CommandManager cmdMgr_{200};
