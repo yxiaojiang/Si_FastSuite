@@ -579,6 +579,13 @@ void SmoothTargetOrientationsCommand::execute() {
         initialized_ = true;
     }
 
+    if (!afterTargets_.empty()) {
+        op->targets = afterTargets_;
+        doc_.isDirty = true;
+        mutated_ = true;
+        return;
+    }
+
     const core::SeamDefinition* seam = doc_.findSeam(op->seamId);
     int uframeNum = 1;
     for (const auto& cu : doc_.controllers) {
@@ -608,6 +615,9 @@ void SmoothTargetOrientationsCommand::undo() {
     if (!mutated_) return;
     core::Operation* op = doc_.findOperation(operationId_);
     if (op) {
+        if (afterTargets_.empty()) {
+            afterTargets_ = op->targets;
+        }
         op->targets = beforeTargets_;
     }
     doc_.isDirty = beforeDirty_;
@@ -677,7 +687,7 @@ void ModifyTargetProcessParamsCommand::execute() {
                 snap.cntValue = t->cntValue;
                 snap.events = t->events;
                 snap.processModified = t->processModified;
-                snap.cacheValid = t->cache.valid;
+                snap.cache = t->cache;
                 beforeSnapshots_.push_back(std::move(snap));
             }
         }
@@ -692,6 +702,24 @@ void ModifyTargetProcessParamsCommand::execute() {
 
     if (beforeSnapshots_.empty()) {
         mutated_ = false;
+        return;
+    }
+
+    if (!afterSnapshots_.empty()) {
+        for (const auto& snap : afterSnapshots_) {
+            auto* t = doc_.findTarget(snap.targetId);
+            if (!t) continue;
+            t->motion = snap.motion;
+            t->speedValue = snap.speedValue;
+            t->useWeldSpeed = snap.useWeldSpeed;
+            t->termination = snap.termination;
+            t->cntValue = snap.cntValue;
+            t->events = snap.events;
+            t->processModified = snap.processModified;
+            t->cache = snap.cache;
+        }
+        doc_.isDirty = true;
+        mutated_ = true;
         return;
     }
 
@@ -714,6 +742,23 @@ void ModifyTargetProcessParamsCommand::execute() {
 
 void ModifyTargetProcessParamsCommand::undo() {
     if (!mutated_) return;
+    if (afterSnapshots_.empty()) {
+        for (const auto& snap : beforeSnapshots_) {
+            auto* t = doc_.findTarget(snap.targetId);
+            if (!t) continue;
+            TargetParamsSnapshot afterSnap;
+            afterSnap.targetId = t->id;
+            afterSnap.motion = t->motion;
+            afterSnap.speedValue = t->speedValue;
+            afterSnap.useWeldSpeed = t->useWeldSpeed;
+            afterSnap.termination = t->termination;
+            afterSnap.cntValue = t->cntValue;
+            afterSnap.events = t->events;
+            afterSnap.processModified = t->processModified;
+            afterSnap.cache = t->cache;
+            afterSnapshots_.push_back(std::move(afterSnap));
+        }
+    }
     for (const auto& snap : beforeSnapshots_) {
         auto* t = doc_.findTarget(snap.targetId);
         if (!t) continue;
@@ -724,7 +769,7 @@ void ModifyTargetProcessParamsCommand::undo() {
         t->cntValue = snap.cntValue;
         t->events = snap.events;
         t->processModified = snap.processModified;
-        t->cache.valid = snap.cacheValid;
+        t->cache = snap.cache;
     }
     doc_.isDirty = beforeDirty_;
 }
@@ -777,7 +822,7 @@ void RotateTargetAroundTcpZCommand::execute() {
             snap.poseInUFrame = t->poseInUFrame;
             snap.userDeltaOffset = t->userDeltaOffset;
             snap.userModified = t->userModified;
-            snap.cacheValid = t->cache.valid;
+            snap.cache = t->cache;
             beforeSnapshots_.push_back(std::move(snap));
         }
 
@@ -787,6 +832,20 @@ void RotateTargetAroundTcpZCommand::execute() {
             return;
         }
         initialized_ = true;
+    }
+
+    if (!afterSnapshots_.empty()) {
+        for (const auto& snap : afterSnapshots_) {
+            auto* t = doc_.findTarget(snap.targetId);
+            if (!t) continue;
+            t->poseInUFrame = snap.poseInUFrame;
+            t->userDeltaOffset = snap.userDeltaOffset;
+            t->userModified = snap.userModified;
+            t->cache = snap.cache;
+        }
+        doc_.isDirty = true;
+        mutated_ = true;
+        return;
     }
 
     bool anyRotated = false;
@@ -809,13 +868,26 @@ void RotateTargetAroundTcpZCommand::execute() {
 
 void RotateTargetAroundTcpZCommand::undo() {
     if (!mutated_) return;
+    if (afterSnapshots_.empty()) {
+        for (const auto& snap : beforeSnapshots_) {
+            auto* t = doc_.findTarget(snap.targetId);
+            if (!t) continue;
+            TargetPoseSnapshot afterSnap;
+            afterSnap.targetId = t->id;
+            afterSnap.poseInUFrame = t->poseInUFrame;
+            afterSnap.userDeltaOffset = t->userDeltaOffset;
+            afterSnap.userModified = t->userModified;
+            afterSnap.cache = t->cache;
+            afterSnapshots_.push_back(std::move(afterSnap));
+        }
+    }
     for (const auto& snap : beforeSnapshots_) {
         auto* t = doc_.findTarget(snap.targetId);
         if (!t) continue;
         t->poseInUFrame = snap.poseInUFrame;
         t->userDeltaOffset = snap.userDeltaOffset;
         t->userModified = snap.userModified;
-        t->cache.valid = snap.cacheValid;
+        t->cache = snap.cache;
     }
     doc_.isDirty = beforeDirty_;
 }
@@ -834,6 +906,7 @@ bool RotateTargetAroundTcpZCommand::mergeWith(const ICommand* other) {
         algo::SeamAndToolpathAlgo::rotateTargetAroundTcpZ(*t, rhs->angleRad_);
     }
     angleRad_ += rhs->angleRad_;
+    afterSnapshots_.clear();
     return true;
 }
 
@@ -850,17 +923,17 @@ std::string RotateTargetAroundTcpZCommand::description() const {
 CommandManager::CommandManager(size_t maxHistoryDepth)
     : maxDepth_(maxHistoryDepth) {}
 
-void CommandManager::executeCommand(std::unique_ptr<ICommand> cmd) {
-    if (!cmd) return;
+bool CommandManager::executeCommand(std::unique_ptr<ICommand> cmd) {
+    if (!cmd) return false;
     cmd->execute();
     if (!cmd->didMutate()) {
-        return;
+        return false;
     }
 
     if (mergeSession_ && !undoStack_.empty() && undoStack_.back()->mergeWith(cmd.get())) {
         redoStack_.clear();
         notifyDocumentChanged();
-        return;
+        return true;
     }
 
     if (undoStack_.size() >= maxDepth_) {
@@ -869,6 +942,7 @@ void CommandManager::executeCommand(std::unique_ptr<ICommand> cmd) {
     undoStack_.push_back(std::move(cmd));
     redoStack_.clear();
     notifyDocumentChanged();
+    return true;
 }
 
 bool CommandManager::undo() {

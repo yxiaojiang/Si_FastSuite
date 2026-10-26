@@ -4,9 +4,26 @@
 
 namespace olp::ui {
 
-MainWindow::MainWindow() = default;
+MainWindow::MainWindow() {
+    cmdMgr_.addDocumentChangedListener([this] {
+        syncRobotJointsFromSelectedTarget();
+    });
+}
 
 MainWindow::~MainWindow() = default;
+
+void MainWindow::syncRobotJointsFromSelectedTarget() {
+    if (selectedTargetId_.empty()) return;
+    const auto* t = doc_.findTarget(selectedTargetId_);
+    if (t != nullptr && t->cache.valid) {
+        for (auto& node : doc_.sceneNodes) {
+            if (node.type == core::SceneNodeType::Robot) {
+                node.currentJointsRad = t->cache.jointsRad;
+                break;
+            }
+        }
+    }
+}
 
 void MainWindow::selectSceneNode(const std::string& nodeId) {
     if (selectedSceneNodeId_ == nodeId && selectedTargetId_.empty()) {
@@ -205,10 +222,11 @@ bool MainWindow::smoothTargetOrientations(
 
     auto cmd = std::make_unique<app::SmoothTargetOrientationsCommand>(
         doc_, opId, startTargetId, endTargetId);
-    const bool mutated = cmd->didMutate();
-    cmdMgr_.executeCommand(std::move(cmd));
+    const bool mutated = cmdMgr_.executeCommand(std::move(cmd));
     if (mutated) {
         validateOperation(opId);
+        syncRobotJointsFromSelectedTarget();
+        cmdMgr_.notifyDocumentChanged();
     }
     return mutated;
 }
@@ -222,12 +240,15 @@ bool MainWindow::rotateTargetsTcpZ(const std::vector<std::string>& targetIds, do
         return false;
     }
     auto cmd = std::make_unique<app::RotateTargetAroundTcpZCommand>(doc_, targetIds, angleRad);
-    const bool mutated = cmd->didMutate();
-    cmdMgr_.executeCommand(std::move(cmd));
+    const bool mutated = cmdMgr_.executeCommand(std::move(cmd));
     if (mutated) {
         if (!selectedOperationId_.empty()) {
             validateOperation(selectedOperationId_);
+        } else {
+            validateCurrentOperation();
         }
+        syncRobotJointsFromSelectedTarget();
+        cmdMgr_.notifyDocumentChanged();
     }
     return mutated;
 }
@@ -245,12 +266,15 @@ bool MainWindow::modifyTargetsProcessParams(
         return false;
     }
     auto cmd = std::make_unique<app::ModifyTargetProcessParamsCommand>(doc_, targetIds, params);
-    const bool mutated = cmd->didMutate();
-    cmdMgr_.executeCommand(std::move(cmd));
+    const bool mutated = cmdMgr_.executeCommand(std::move(cmd));
     if (mutated) {
         if (!selectedOperationId_.empty()) {
             validateOperation(selectedOperationId_);
+        } else {
+            validateCurrentOperation();
         }
+        syncRobotJointsFromSelectedTarget();
+        cmdMgr_.notifyDocumentChanged();
     }
     return mutated;
 }
@@ -355,10 +379,22 @@ std::vector<algo::TwistScanSample> MainWindow::scanSelectedTargetTwistAngles(dou
     }
 
     const core::Transform4d baseTargetWorldPose = uframeInWorld * target->poseInUFrame;
+    std::optional<core::FanucConfig> requiredConfig = std::nullopt;
     std::array<double, 6> refJoints = prog->startState.homeJointsRad;
-    if (target->cache.valid) {
+
+    const bool hasPriorSolution =
+        target->cache.valid ||
+        target->cache.status != core::TargetValidationState::Unchecked;
+
+    if (hasPriorSolution) {
+        requiredConfig = target->cache.solvedConfig;
         refJoints = target->cache.jointsRad;
     }
+
+    const bool isWeldRole =
+        target->role == core::TargetRole::WELD_START ||
+        target->role == core::TargetRole::WELD_VIA ||
+        target->role == core::TargetRole::WELD_END;
 
     algo::OpwKinematics kin(robotModel_);
     algo::CollisionAndSimEngine simEngine(kin, doc_.settings);
@@ -368,11 +404,12 @@ std::vector<algo::TwistScanSample> MainWindow::scanSelectedTargetTwistAngles(dou
         robotBaseInWorld,
         utoolOffset,
         refJoints,
-        target->config,
+        requiredConfig,
         doc_.sceneNodes,
         op->targetWorkpieceId,
         stepDeg,
-        op->exemptionPartIds);
+        op->exemptionPartIds,
+        isWeldRole);
 }
 
 int MainWindow::addSelectionListener(std::function<void()> listener) {

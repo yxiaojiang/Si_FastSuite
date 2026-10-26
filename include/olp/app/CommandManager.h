@@ -183,6 +183,7 @@ private:
     std::string startTargetId_;
     std::string endTargetId_;
     std::vector<core::Target> beforeTargets_{};
+    std::vector<core::Target> afterTargets_{};
     bool beforeDirty_{false};
     bool initialized_{false};
     bool mutated_{false};
@@ -238,7 +239,7 @@ private:
         int cntValue{100};
         std::vector<core::ProcessEvent> events{};
         bool processModified{false};
-        bool cacheValid{false};
+        core::TargetCache cache{};
     };
 
     ProjectDocument& doc_;
@@ -246,6 +247,7 @@ private:
     TargetProcessParams newParams_{};
 
     std::vector<TargetParamsSnapshot> beforeSnapshots_{};
+    std::vector<TargetParamsSnapshot> afterSnapshots_{};
     bool beforeDirty_{false};
     bool initialized_{false};
     bool mutated_{false};
@@ -280,7 +282,7 @@ private:
         core::Transform4d poseInUFrame{};
         core::Transform4d userDeltaOffset{};
         bool userModified{false};
-        bool cacheValid{false};
+        core::TargetCache cache{};
     };
 
     ProjectDocument& doc_;
@@ -289,6 +291,7 @@ private:
     bool allowMerge_{false};
 
     std::vector<TargetPoseSnapshot> beforeSnapshots_{};
+    std::vector<TargetPoseSnapshot> afterSnapshots_{};
     bool beforeDirty_{false};
     bool initialized_{false};
     bool mutated_{false};
@@ -299,7 +302,7 @@ class CommandManager {
 public:
     explicit CommandManager(size_t maxHistoryDepth = 200);
 
-    void executeCommand(std::unique_ptr<ICommand> cmd);
+    bool executeCommand(std::unique_ptr<ICommand> cmd);
     bool canUndo() const noexcept { return !undoStack_.empty(); }
     bool canRedo() const noexcept { return !redoStack_.empty(); }
     bool undo();
@@ -313,9 +316,9 @@ public:
     void setOnDocumentChangedCallback(std::function<void()> cb) { onChanged_ = std::move(cb); }
     int addDocumentChangedListener(std::function<void()> listener);
     void removeDocumentChangedListener(int listenerId);
+    void notifyDocumentChanged();
 
 private:
-    void notifyDocumentChanged();
 
     size_t maxDepth_{200};
     std::vector<std::unique_ptr<ICommand>> undoStack_{};

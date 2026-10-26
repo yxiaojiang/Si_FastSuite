@@ -4,97 +4,93 @@
 >
 > 日期：2026-10-26
 >
-> 轮次：Round 1
+> 轮次：Round 2
 >
 > 状态：READY_FOR_REVIEW（见 `STATUS.md`）
 >
-> 对应任务：M10 机器人运动学可达性、奇异点检测、碰撞检测与自转角扫描（关节限位与 5° 警戒区判定、腕/肘/肩奇异点与可操作度计算、FANUC 构型一致性与 ConfigJump 拦截、焊丝尖端豁免在焊接与非焊接角色对比、72 组自转角扫描可视化组件与一键寻优微调、问题列表联动导航）。
+> 对应任务：M10 机器人运动学可达性、奇异点检测、碰撞检测与自转角扫描（解决 Round 1 审核提出的 M10-001 ~ M10-003 缺陷，严格遵循未打开 M10-004 ~ M10-006 延期项约定）。
 
 ---
 
-## 1. 核心功能与架构实现
+## Round 2 缺陷修复与实现细节
 
-### 1.1 MainWindow 验证与扫描管线 (`MainWindow.h` / `MainWindow.cpp`)
-- **操作验证管线**：
-  - 新增 `validateOperation(const std::string& opId)` 与 `validateCurrentOperation()`；
-  - 接入 `CollisionAndSimEngine`，针对操作所有焊接/进退避目标点执行逆解、FANUC 构型一致性、关节软限位、腕/肘/肩奇异点及可操作度评估；
-  - 自动将评估结果写回 `TargetCache`（`status`、`solvedJointsRad`、`solvedConfig`、`minClearanceMm`、`manipulability`、`issueDescription` 等）；
-  - 操作生成（`generateOperationFromSelectedSeam`）、姿态平滑（`smoothTargetOrientations`）、自转角微调（`rotateTargetsTcpZ`）以及工艺参数变更（`modifyTargetsProcessParams`）后自动触发 `validateOperation`，保持文档状态与 UI 实时联动；
-- **自转角 72 组扫描接口**：
-  - 新增 `scanSelectedTargetTwistAngles(double stepDeg = 5.0)` 接口，对选中的目标点沿焊枪本地 Z 轴在 $[-180^\circ, +175^\circ]$ 范围内进行 72 组采样；
-  - 调用 `CollisionAndSimEngine::scanTwistAngles`，评估每个角度下的逆解可达性、碰撞安全间隙与奇异点/限位警告。
+针对 Reviewer 在 `CRDocs/REVIEW.md` 中指出的 3 项 OPEN P1 缺陷，逐项完成闭环修复与自动化回归测试：
 
-### 1.2 自转角可视化微调控件 (`ShellWindow.h` / `ShellWindow.cpp`)
-- **`TwistScanWidget`（方案 6.5 自转角圆环/表盘控件）**：
-  - 继承 `QWidget`，以甜甜圈圆环（Donut Ring）划分为 72 个扇区（每扇区 $5^\circ$）：
-    - **绿色扇区**：逆解可达、无碰撞、无奇异点/限位警告；
-    - **黄色扇区**：逆解可达，但处于警戒区（间隙低于安全阈值、接近关节限位 $< 5^\circ$ 或接近奇异点）；
-    - **红色扇区**：不可达（无同构型逆解）、超限或发生碰撞；
-  - 表盘中心显示当前自转角数值及状态摘要；
-  - 包含白色指针与角度标记线；
-  - 支持鼠标悬停展示当前扇区角度、碰撞间隙及状态提示（Tooltip）；
-  - 支持鼠标点击扇区直接触发 `angleSelected(double angleDeg)` 信号；
-  - 提供 `findOptimalFeasibleAngleDeg()`：自动扫描最大连续可行安全区间（绿色且间隙最大），返回中心最优可行自转角。
-- **一键微调按钮与属性面板集成**：
-  - 在属性面板自转角面板中嵌入 `TwistScanWidget`；
-  - 新增 `★ 一键微调至最优自转角` 按钮：点击后调用 `findOptimalFeasibleAngleDeg()` 计算全局最优角，通过 `controller_.rotateTargetsTcpZ` 提交撤销重做栈，并自动刷新；
-  - 选中目标点时，属性面板自动展示构型字串（`N U T, 0, 0, 0`）、Yoshikawa 可操作度指标、各轴关节角及 `TwistScanWidget`。
+### 1. M10-001 [P1] 编辑入口执行前读取 `didMutate()` 与撤销/重做缓存对称性修复
+- **修改文件**：
+  - `include/olp/app/CommandManager.h`、`src/app/CommandManager.cpp`
+  - `include/olp/ui/MainWindow.h`、`src/ui/MainWindow.cpp`
+  - `src/ui/ShellWindow.cpp`
+  - `tests/test_main.cpp`
+- **问题**：
+  1. `MainWindow` 在 `executeCommand(std::move(cmd))` 之前读取 `cmd->didMutate()`，初值恒为 false，导致函数恒返回 false，`validateOperation` 永远不跑，UI 状态栏将成功错报为失败；
+  2. 选中的点自转后，机器人节点的 `currentJointsRad` 停在旧关节角，属性构型与可操作度不刷新；
+  3. 撤销快照只存了 `cache.valid`，撤销后回到旧姿态但关节残存新解，重做后无法保持验证结果。
+- **实现方案**：
+  - `CommandManager::executeCommand` 返回 `bool`（标识命令是否真正执行变更并入栈/合并），三条入口（`smoothTargetOrientations`、`rotateTargetsTcpZ`、`modifyTargetsProcessParams`）直接接收执行后的真实 `mutated` 结果；
+  - 若 `mutated` 为 true，调用 `validateOperation(opId)`，并通过新增的 `syncRobotJointsFromSelectedTarget()` 自动将解出的关节角写入机器人节点的 `currentJointsRad`，随后触发文档变更通知；
+  - `MainWindow` 构造时监听 `cmdMgr_` 的文档变更事件，文档变化时自动执行 `syncRobotJointsFromSelectedTarget()`；
+  - `RotateTargetAroundTcpZCommand` 与 `ModifyTargetProcessParamsCommand` 的快照由原仅存 `cacheValid` 扩展为完整保存 `core::TargetCache cache`；在首次 `undo()` 时自动将验证后的有效缓存与状态封存至 `afterSnapshots_`，`execute()` 重做时对称还原 `afterSnapshots_`，确保无论是撤销还是重做，目标姿态、`userModified`、缓存（逆解、构型、状态、间隙、问题）以及场景机器人关节均 100% 对称一致；
+  - `SmoothTargetOrientationsCommand` 同样增加 `afterTargets_` 并在 undo/redo 时对称备份与还原。
 
-### 1.3 问题列表联动与视口/表格同步 (`ShellWindow.cpp`)
-- **`issueList_` 联动导航**：
-  - `fillIssues()` 解析仿真与验证问题，为列表项注入 `targetId`、`opId` 及严重级别（红/橙色区分阻断性错误与警告）；
-  - 连接 `issueList_->itemClicked` 与 `itemDoubleClicked`：
-    - 自动通过 `controller_.selectOperation(opId)` 与 `controller_.selectTarget(targetId, opId)` 选中目标操作与点；
-    - 视口相机手柄挂载至该目标点，3D 机器人姿态联动更新至该点的计算逆解；
-    - 路径点表格（`targetTable_`）高亮并滚动定位至对应行。
+### 2. M10-002 [P1] 自转扫描锁定当前求解构型与焊丝尖端角色判定
+- **修改文件**：
+  - `include/olp/algo/CollisionAndSim.h`、`src/algo/CollisionAndSim.cpp`
+  - `include/olp/ui/MainWindow.h`、`src/ui/MainWindow.cpp`
+  - `tests/test_main.cpp`
+- **问题**：
+  1. `scanSelectedTargetTwistAngles` 之前传入未初始化的 `target->config`（恒为默认 `N U T, 0, 0, 0`），导致扫描始终锁在默认构型，而非目标点已解出的真实构型；
+  2. 扫描时碰撞检查硬编码 `isWeldingRole=true`，导致接近点（`APPROACH`）与回退点（`RETRACT`）的焊丝尖端插入工件也被豁免，显示为绿色安全。
+- **实现方案**：
+  - 将 `CollisionAndSimEngine::scanTwistAngles` 的 `requiredConfig` 参数改为 `const std::optional<core::FanucConfig>&`，并新增 `bool isWeldingRole` 参数；
+  - 在 `MainWindow::scanSelectedTargetTwistAngles` 中：
+    - 若目标点此前已有解（`cache.valid || cache.status != Unchecked`），以其解出的 `cache.solvedConfig` 作为锁定构型，参考关节使用 `cache.jointsRad`；若从未解过，则传 `nullopt` 且参考关节使用 Home，绝不硬锁默认 `N U T`；
+    - 严格根据点角色判定 `isWeldRole = (role == WELD_START || role == WELD_VIA || role == WELD_END)`；
+  - 在 `scanTwistAngles` 内部将 `isWeldingRole` 传递给 `checkTorchPoseCollision`，确保只有焊接角色的焊丝尖端在母材与豁免部件内豁免，接近/回退点尖端接触母材严格报警（判定为干涉/红色）。
 
----
-
-## 2. 自动化测试套件与验证（Test 17）
-
-在 `tests/test_main.cpp` 中新增 `testKinematicsReachabilitySingularityAndTwistScan()`：
-1. **关节软限位与 5° 警戒区验证**：
-   - 验证 Home 姿态各轴无超限且不处于警戒区；
-   - 验证 J1 在 $168^\circ$（限位 $170^\circ$）处于警戒区但未超限，在 $175^\circ$ 判定为超限；
-   - 验证 J2 在 $-88^\circ$ 触发下限警戒区，在 $-95^\circ$ 判定为超限。
-2. **运动学奇异点与可操作度验证**：
-   - 验证 Home 姿态远离奇异点且可操作度 $> 0.95$；
-   - 验证腕奇异点（J5 = $0^\circ$）：成功检出腕部轴 4 与轴 6 共线奇异，可操作度降至 0；
-   - 验证肘奇异点（前臂伸直 $q_2 + \psi = 0$）：成功检出肘部奇异；
-   - 验证肩奇异点与可操作度有界性（严格属于 $[0, 1]$）。
-3. **构型一致性与 ConfigJump 拦截**：
-   - 验证多候选逆解在构型锁定时准确选出与当前构型一致的解；
-   - 验证当给定姿态无法保持构型时返回空解，防止直线段发生姿态突跳（`ConfigJump`）。
-4. **焊丝尖端碰撞豁免与夹具干涉判定**：
-   - 验证焊接角色下焊丝尖端接触母材不产生误报（`checkTorchPoseCollision` 返回 false）；
-   - 验证非焊接角色或非豁免工件在相同位置报出接触/近距碰撞；
-   - 验证焊枪喷嘴碰到夹具 `Fixture_Clamp_Left` 时严格报警，并准确返回碰撞部件名。
-5. **72 组自转角可行性扫描与最优角算法验证**：
-   - 验证 `scanTwistAngles` 产生严格 72 组采样，跨越 $[-180^\circ, +175^\circ]$，可达扇区占比正常；
-   - 验证 `TwistScanWidget::findOptimalFeasibleAngleDeg` 在连续可行区间 $[-30^\circ, +50^\circ]$ 中准确命中几何中点 $+10^\circ$。
-6. **MainWindow 与交互联动验证**：
-   - 验证焊缝生成操作后自动缓存仿真结果、验证目标点缓存且状态非 `Unchecked`；
-   - 验证通过控制器接口扫描选中目标点自转角返回 72 组有效样本。
+### 3. M10-003 [P1] 段内扫掠碰撞与直线段异常进入问题列表
+- **修改文件**：
+  - `src/ui/ShellWindow.cpp`
+  - `tests/test_main.cpp`
+- **问题**：
+  1. `ShellWindow::fillIssues()` 之前仅遍历目标点自身端点的 `target.cache.issueMessage`；
+  2. 仿真引擎检出的端点间隙合格但中段扫掠穿透夹具（Sweep Collision）、扫掠安全间隙不足（Sweep Clearance）以及直线段无解/构型跳变等，只记录在 `SimulationResult.issues` 中，未能呈现在问题列表面板，用户无法通过列表查看和点击跳转。
+- **实现方案**：
+  - 改造 `ShellWindow::fillIssues()`：
+    - 优先将 `controller_.lastSimulationResult().issues` 中的段内碰撞、扫掠间隙不足、构型跳变等全部注入列表；
+    - 补入各操作目标点的独立缓存异常（`TargetCache.issueMessage`），使用 `seen` 集合（`{targetId, description}`）精确去重；
+    - 为每个条目绑定 `operationId` 与 `targetId`，硬碰撞/不可达/超限/跳变设为红色（阻断），间隙不足设为橙色（警告）；
+    - 用户单击/双击列表中任意段内问题，触发 `controller_.selectOperation(opId)` 与 `controller_.selectTarget(targetId, opId)`，完成路径点表定位、视口手柄挂载与机器人姿态同步。
 
 ---
 
-## 3. 构建与验证证据
+## 自动化测试与验证证据（Test 17）
 
-### 3.1 自动化测试全量通过
+在 `tests/test_main.cpp` 的 Test 17 中增补对 Round 1 审核意见的端到端自动化测试：
+1. **M10-001 验证**：
+   - 调用 `mainWin.rotateTargetsTcpZ` 传入 0 增量，断言返回 false 且不入栈；
+   - 传入 15° 增量，断言返回 true，`userModified` 置 true，缓存重算且 valid，机器人节点关节角同步更新为新解；
+   - 执行 `commandManager().undo()`，断言目标点姿态、`userModified`、缓存（valid、joints、config）及机器人节点关节角 100% 还原至自转前；
+   - 执行 `commandManager().redo()`，断言姿态、缓存与机器人关节角再次严格与验证结果一致；
+   - 调用 `mainWin.smoothTargetOrientations()`，断言返回 true。
+2. **M10-002 验证**：
+   - 验证 `scanSelectedTargetTwistAngles` 准确以当前已解出的构型为基准进行扫描，0° 当前姿态可达；
+   - 工件贴合焊缝根部（z=500）时，焊接角色目标点（`WELD_START`）焊丝尖端接触工件，`collisionFree = true`（尖端豁免有效）；
+   - 将同一几何位置的目标点角色设为 `APPROACH`，再次扫描，断言 `collisionFree = false`（接近点尖端不豁免，严格判干涉）。
+3. **M10-003 验证**：
+   - 在两端点间隙合格的轨迹中间放置夹具部件 `Fixture_Clamp_Middle`，调用 `validateOperation`；
+   - 断言 `SimulationResult.issues` 成功捕获扫掠碰撞 `Sweep collides with Fixture_Clamp_Middle`；
+   - 构建 `ShellWindow`，断言 `issueList_` 包含该夹具扫掠碰撞条目，且条目携带 `targetId` 与 `operationId` 用于导航。
+
+### 构建与测试结果
 ```powershell
 $env:PATH = "D:\Soft\Qt\6.12.0\msvc2022_64\bin;C:\vcpkg\vcpkg\installed\x64-windows\bin;$env:PATH"; .\build-full\Release\olp_tests.exe
 ```
 **测试输出**：
-- 334 passed, 0 failed（全绿）。
+- **357 passed, 0 failed**（全绿，包含 Test 17 扩充的全部断言）。
 
-### 3.2 真实几何模型与端到端验证通过
 ```powershell
 $env:PATH = "D:\Soft\Qt\6.12.0\msvc2022_64\bin;C:\vcpkg\vcpkg\installed\x64-windows\bin;$env:PATH"; .\build-full\Release\SiFastSuiteOLP.exe --verify
 ```
-**输出结果**：
-- [1/5] 导入工作站 STEP 模型并执行机器人替换；
-- [2/5] 提取 T 型接头交叉焊缝与角平分线姿态；
-- [3/5] 生成刀轨与工艺事件（切入切出避让夹具 32mm）；
-- [4/5] 执行逆解、碰撞检测与动画帧烘焙（764 帧，无阻断性错误）；
-- [5/5] 导出 FANUC .ls 与 HTML 离线预览；
-- 退出码：0。
+**端到端输出**：
+- 5 个阶段完整跑通，生成 764 帧离线轨迹，导出 FANUC .ls 与 HTML 离线预览，退出码为 0。

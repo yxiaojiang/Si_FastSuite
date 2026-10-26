@@ -6,43 +6,40 @@
 
 ## 1. 当前目标
 
-M10 机器人运动学可达性、奇异点检测、碰撞检测与自转角扫描（`M10-COLLISION-REACH-001`）已完成 Round 1 编码、UI 实现与 Test 17 自动化测试，已转交审核方（`READY_FOR_REVIEW`）。自动化测试由 298 项增至 **334 项全部通过**，端到端验证 `--verify` 退出码为 0。
+M10 机器人运动学可达性、奇异点检测、碰撞检测与自转角扫描（`M10-COLLISION-REACH-001`）已完成 Round 2 缺陷闭环修复（`M10-001` ~ `M10-003`），已转交审核方（`READY_FOR_REVIEW`）。自动化测试由 334 项增至 **357 项全部通过**，端到端验证 `--verify` 退出码为 0。
 
-## 2. 这轮已经落地的事实（M10）
+## 2. 这轮已经落地的事实（M10 Round 2）
 
-1. **MainWindow 验证与扫描管线**：
-   - 在 `MainWindow.h`/`MainWindow.cpp` 中新增 `validateOperation(opId)` 与 `validateCurrentOperation()`，在操作生成、SLERP 平滑、自转角微调和工艺参数修改后自动执行逆解与碰撞安全验证，更新目标点缓存。
-   - 新增 `scanSelectedTargetTwistAngles(stepDeg)` 接口，获取 72 组 $[-180^\circ, +175^\circ]$ 的自转角可达性、碰撞间隙及奇异点评估样本。
+1. **M10-001 缺陷修复（执行前读取 didMutate 与撤销/重做缓存对称性）**：
+   - `CommandManager::executeCommand` 返回真实变更 `bool`；`smoothTargetOrientations`、`rotateTargetsTcpZ`、`modifyTargetsProcessParams` 执行后触发验证；
+   - `MainWindow` 监听文档变更，通过 `syncRobotJointsFromSelectedTarget()` 同步更新机器人节点关节角；
+   - `RotateTargetAroundTcpZCommand`、`ModifyTargetProcessParamsCommand` 与 `SmoothTargetOrientationsCommand` 的快照完整保存 `core::TargetCache`，并在 undo/redo 时对称备份与还原 `afterSnapshots_`，确保撤销后目标姿态、`userModified`、缓存及场景机器人关节角 100% 还原至自转前，重做后与验证结果一致。
 
-2. **自转角可视化与一键寻优微调（TwistScanWidget）**：
-   - 在 `ShellWindow.h`/`ShellWindow.cpp` 中实现方案 6.5 自转角圆环/表盘控件 `TwistScanWidget`：
-     - 72 个甜甜圈扇区（绿色=可行安全、黄色=警示/接近限位或奇异/间隙小、红色=不可达/碰撞/超限）；
-     - 显示白色指针、当前角度与状态摘要，支持鼠标点击选择及悬停 Tooltip 提示；
-     - 提供 `findOptimalFeasibleAngleDeg()`：自动扫描最大连续可行安全区间（绿色且间隙最大），返回中心最优可行自转角；
-     - 属性面板新增 `★ 一键微调至最优自转角` 按钮，通过命令栈一键平滑调优。
-   - 属性面板联动展示 FANUC 构型字串（`N U T, 0, 0, 0`）、Yoshikawa 可操作度指标及解出关节角。
+2. **M10-002 缺陷修复（自转扫描锁定当前求解构型与焊丝尖端角色判定）**：
+   - `scanTwistAngles` 接收 `std::optional<FanucConfig>` 与 `bool isWeldingRole`；
+   - `MainWindow::scanSelectedTargetTwistAngles` 准确提取已求解的 `cache.solvedConfig` 与 `cache.jointsRad` 作为锁定构型与参考关节（未求解点用 Home 且不锁硬默认 `N U T`）；
+   - 严格根据点角色设置 `isWeldRole = (role == WELD_START || role == WELD_VIA || role == WELD_END)`，非焊接角色（接近/退避点）焊丝尖端接触母材严格报警判定为干涉。
 
-3. **问题列表联动与视口/表格同步**：
-   - `fillIssues()` 注入 `targetId`、`opId` 并区分红/橙严重级别；
-   - 点击/双击 `issueList_` 条目自动切换选中操作与目标点，视口手柄居中挂载、3D 机器人姿态联动更新、点表自动滚动高亮。
+3. **M10-003 缺陷修复（段内扫掠碰撞与直线段异常进入问题列表）**：
+   - 改造 `ShellWindow::fillIssues()`，完整提取 `SimulationResult.issues`（段内扫掠碰撞、扫掠间隙不足、构型跳变等）与目标点缓存问题，使用 `seen` 集合精准去重；
+   - 条目携带 `operationId` 与 `targetId`，点击/双击条目可直接导航跳转并同步路径点表、视口手柄与 3D 机器人姿态。
 
 4. **自动化测试与验收（Test 17）**：
-   - 覆盖关节软限位与 5° 警戒区判定、腕/肘/肩三大奇异点检测与可操作度计算；
-   - 构型一致性与 `ConfigJump` 拦截；
-   - 焊丝尖端豁免在焊接段与非焊接段的对比，以及夹具干涉判定；
-   - 72 组自转角扫描准确性与最优角提取；
-   - `MainWindow` 验证管线与点选联动。
-   - `olp_tests.exe` 增至 **334 passed, 0 failed**，`SiFastSuiteOLP.exe --verify` 退出码 0。
+   - 增补了对 `rotateTargetsTcpZ` 返回值、机器人关节同步、Undo/Redo 对称性；
+   - 增补了 `scanSelectedTargetTwistAngles` 锁定构型与焊接/接近角色尖端豁免对比断言；
+   - 增补了中间扫掠碰撞在 `SimulationResult` 与 `ShellWindow` 问题列表中的端到端断言；
+   - `olp_tests.exe` 增至 **357 passed, 0 failed**，`SiFastSuiteOLP.exe --verify` 退出码 0。
 
 ## 3. 未关闭风险
 
 1. 耦合符号、圈数记在哪三个轴、法兰相对示教器的位姿，仍无真机或 ROBOGUIDE 对拍。用户决定先不装 ROBOGUIDE，继续开发，关节程序仍只能当草稿。
 2. 回退段对 `Workpiece_BoxWall_Front` 的间隙低于 5 mm，不挡退出码。
 3. 客户实景和 3D PDF 五天熔断仍未开始。
+4. `M10-004` ~ `M10-006` 留在 `CRDocs/DEFERRED.md`。
 
 ## 4. 下一步
 
-1. 审核方针对 `M10-COLLISION-REACH-001` Round 1 进行代码复核并在 `CRDocs/REVIEW.md` 给出反馈。
+1. 审核方针对 `M10-COLLISION-REACH-001` Round 2 进行代码复核并在 `CRDocs/REVIEW.md` 给出反馈。
 2. 审核通过后推进 M11（轨迹动画与仿真回放系统）。
 
 ## 5. 索引

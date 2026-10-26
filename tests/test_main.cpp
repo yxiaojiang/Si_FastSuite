@@ -13,6 +13,7 @@
 #ifdef OLP_HAS_QT6
 #include "olp/ui/ShellWindow.h"
 #include <QApplication>
+#include <QListWidget>
 #include <QStringList>
 #endif
 
@@ -2565,7 +2566,9 @@ void testKinematicsReachabilitySingularityAndTwistScan() {
         robotNode.localTransform = olp::core::Transform4d::fromTranslation(0.0, 0.0, 500.0);
         mainWin.document().sceneNodes.push_back(robotNode);
 
-        const bool genOk = mainWin.generateOperationFromSelectedSeam();
+        olp::core::ToolpathGenParams genParams;
+        genParams.endpointsOnlyForLine = false;
+        const bool genOk = mainWin.generateOperationFromSelectedSeam(&genParams);
         check(genOk, "MainWindow::generateOperationFromSelectedSeam succeeds");
         check(!mainWin.selectedOperationId().empty(), "Operation is selected after generation");
 
@@ -2580,9 +2583,142 @@ void testKinematicsReachabilitySingularityAndTwistScan() {
             check(op->targets.front().cache.status != olp::core::TargetValidationState::Unchecked,
                   "First target cache status is evaluated (not Unchecked)");
 
-            mainWin.selectTarget(op->targets.front().id, op->id);
+            // Use WELD_START (target 1 on the seam, z=500) for rotation, SLERP, and exemption tests
+            const std::string t0Id = (op->targets.size() > 1) ? op->targets[1].id : op->targets.front().id;
+            mainWin.selectTarget(t0Id, op->id);
+
+            // M10-001: Return value, robot joints sync, and Undo/Redo cache symmetry
+            const bool zeroRot = mainWin.rotateTargetsTcpZ({t0Id}, 0.0);
+            check(!zeroRot, "M10-001: Zero-delta rotation returns false and is not stacked");
+
+            const auto origPose = mainWin.document().findTarget(t0Id)->poseInUFrame;
+            const auto origJoints = mainWin.document().findTarget(t0Id)->cache.jointsRad;
+            const bool origUserMod = mainWin.document().findTarget(t0Id)->userModified;
+
+            const bool rotOk = mainWin.rotateTargetsTcpZ({t0Id}, olp::core::deg2rad(15.0));
+            check(rotOk, "M10-001: rotateTargetsTcpZ returns true when actually mutated");
+            check(mainWin.document().findTarget(t0Id)->userModified, "M10-001: Target marked userModified after rotation");
+            check(mainWin.document().findTarget(t0Id)->cache.valid, "M10-001: Target cache re-validated and valid after rotation");
+
+            const auto* rNode = mainWin.document().findSceneNode("robot_m10");
+            check(rNode != nullptr, "Robot node found in scene");
+            if (rNode) {
+                check(rNode->currentJointsRad == mainWin.document().findTarget(t0Id)->cache.jointsRad,
+                      "M10-001: Robot node currentJointsRad matches newly validated target cache joints");
+            }
+
+            // Undo: pose, userModified, cache and robot joints restore exactly
+            mainWin.commandManager().undo();
+            const auto* tAfterUndo = mainWin.document().findTarget(t0Id);
+            check((tAfterUndo->poseInUFrame.pos - origPose.pos).norm() < 1e-4, "M10-001: Target position restored after undo");
+            check(std::abs(tAfterUndo->poseInUFrame.toWPR().wDeg - origPose.toWPR().wDeg) < 1e-4,
+                  "M10-001: Target orientation restored after undo");
+            check(tAfterUndo->userModified == origUserMod, "M10-001: userModified restored after undo");
+            check(tAfterUndo->cache.valid, "M10-001: Target cache valid restored after undo");
+            check(tAfterUndo->cache.jointsRad == origJoints, "M10-001: Target cache joints restored after undo");
+            if (rNode) {
+                check(rNode->currentJointsRad == origJoints, "M10-001: Robot node joints restored to match undone cache joints");
+            }
+
+            // Redo: pose, userModified, cache and robot joints match redone state
+            mainWin.commandManager().redo();
+            const auto* tAfterRedo = mainWin.document().findTarget(t0Id);
+            check(tAfterRedo->cache.valid, "M10-001: Target cache valid after redo");
+            check(tAfterRedo->userModified, "M10-001: userModified true after redo");
+            if (rNode) {
+                check(rNode->currentJointsRad == tAfterRedo->cache.jointsRad,
+                      "M10-001: Robot node joints match redone cache joints");
+            }
+
+            // SLERP smoothing across rotated WELD_START and unrotated WELD_END
+            const bool smoothOk = mainWin.smoothTargetOrientations();
+            check(smoothOk, "M10-001: smoothTargetOrientations returns true when targets smoothed");
+
+            // M10-002: scanSelectedTargetTwistAngles locks solvedConfig and distinguishes welding vs approach role
             const auto targetSamples = mainWin.scanSelectedTargetTwistAngles(5.0);
-            check(targetSamples.size() == 72, "scanSelectedTargetTwistAngles returns 72 samples for selected target");
+            check(targetSamples.size() == 72, "M10-002: scanSelectedTargetTwistAngles returns 72 samples for selected target");
+
+            auto itZero = std::find_if(targetSamples.begin(), targetSamples.end(),
+                [](const olp::algo::TwistScanSample& s) { return std::abs(s.twistAngleDeg) < 1e-4; });
+            check(itZero != targetSamples.end() && itZero->reachable,
+                  "M10-002: Current angle 0° is reachable under locked solvedConfig");
+
+            // Workpiece at weld root (z = 500)
+            olp::core::SceneNode wpNode;
+            wpNode.id = "wp_test_m10";
+            wpNode.name = "WorkpiecePlate";
+            wpNode.type = olp::core::SceneNodeType::Part;
+            wpNode.collisionRole = olp::core::CollisionRole::Workpiece;
+            wpNode.visible = true;
+            wpNode.collisionMesh.bboxMin = {550.0, -100.0, 480.0};
+            wpNode.collisionMesh.bboxMax = {750.0, 100.0, 500.0};
+            mainWin.document().sceneNodes.push_back(wpNode);
+
+            auto* opMut = mainWin.document().findOperation(mainWin.selectedOperationId());
+            opMut->targetWorkpieceId = "wp_test_m10";
+
+            auto scanWeld = mainWin.scanSelectedTargetTwistAngles(5.0);
+            auto itZeroWeld = std::find_if(scanWeld.begin(), scanWeld.end(),
+                [](const olp::algo::TwistScanSample& s) { return std::abs(s.twistAngleDeg) < 1e-4; });
+            check(itZeroWeld != scanWeld.end() && itZeroWeld->collisionFree,
+                  "M10-002: Welding role wire tip touches workpiece -> collisionFree = true (exemption)");
+
+            // Change role to APPROACH at identical geometric position -> wire tip is NOT exempted
+            auto* targetMut = mainWin.document().findTarget(t0Id);
+            const auto origRole = targetMut->role;
+            targetMut->role = olp::core::TargetRole::APPROACH;
+            auto scanApproach = mainWin.scanSelectedTargetTwistAngles(5.0);
+            auto itZeroAppr = std::find_if(scanApproach.begin(), scanApproach.end(),
+                [](const olp::algo::TwistScanSample& s) { return std::abs(s.twistAngleDeg) < 1e-4; });
+            check(itZeroAppr != scanApproach.end() && !itZeroAppr->collisionFree,
+                  "M10-002: APPROACH role at same pose touches workpiece -> collisionFree = false (no exemption)");
+            targetMut->role = origRole;
+
+            // M10-003: Mid-segment sweep collision appears in SimulationResult and ShellWindow issue list
+            // Place obstacle at the midpoint between target 1 and target 2 along torch body offset (95mm)
+            const auto midPos = (op->targets[1].poseInUFrame.pos + op->targets[2].poseInUFrame.pos) * 0.5;
+            const auto midRot = op->targets[1].poseInUFrame.rot;
+            const olp::core::Vec3 clampCenter = midPos + (-midRot.colZ()) * 95.0;
+            constexpr double h = 8.0;
+
+            olp::core::SceneNode sweepClamp;
+            sweepClamp.id = "sweep_clamp_m10";
+            sweepClamp.name = "Fixture_Clamp_Middle";
+            sweepClamp.type = olp::core::SceneNodeType::Part;
+            sweepClamp.collisionRole = olp::core::CollisionRole::Fixture;
+            sweepClamp.visible = true;
+            sweepClamp.collisionMesh.bboxMin = clampCenter - olp::core::Vec3{h, h, h};
+            sweepClamp.collisionMesh.bboxMax = clampCenter + olp::core::Vec3{h, h, h};
+            mainWin.document().sceneNodes.push_back(sweepClamp);
+
+            const auto simSweep = mainWin.validateOperation(mainWin.selectedOperationId());
+            bool foundSweepIssue = false;
+            for (const auto& issue : simSweep.issues) {
+                if (issue.description.find("Fixture_Clamp_Middle") != std::string::npos) {
+                    foundSweepIssue = true;
+                    break;
+                }
+            }
+            check(foundSweepIssue, "M10-003: SimulationResult reports sweep collision against mid-segment clamp");
+
+#ifdef OLP_HAS_QT6
+            olp::ui::ShellWindow shell(mainWin);
+            const auto listWidgets = shell.findChildren<QListWidget*>();
+            bool shellHasSweepIssue = false;
+            for (auto* lw : listWidgets) {
+                for (int i = 0; i < lw->count(); ++i) {
+                    auto* item = lw->item(i);
+                    if (item && item->text().contains("Fixture_Clamp_Middle")) {
+                        shellHasSweepIssue = true;
+                        check(!item->data(Qt::UserRole).toString().isEmpty(), "M10-003: Issue item carries targetId");
+                        check(!item->data(Qt::UserRole + 1).toString().isEmpty(), "M10-003: Issue item carries operationId");
+                        break;
+                    }
+                }
+                if (shellHasSweepIssue) break;
+            }
+            check(shellHasSweepIssue, "M10-003: ShellWindow issueList_ displays sweep collision item for navigation");
+#endif
         }
     }
 }

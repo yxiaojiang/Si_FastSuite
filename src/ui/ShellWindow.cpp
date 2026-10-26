@@ -33,6 +33,7 @@
 #include <QMouseEvent>
 
 #include <cmath>
+#include <set>
 #include <sstream>
 
 namespace olp::ui {
@@ -1476,38 +1477,63 @@ void ShellWindow::updateUndoActions() {
 
 void ShellWindow::fillIssues() {
     issueList_->clear();
+    std::set<std::pair<std::string, std::string>> seen;
+
+    auto addIssueItem = [this, &seen](const std::string& opId, const std::string& tid,
+                                      const std::string& opName, const std::string& tName,
+                                      core::TargetValidationState state, const std::string& msg) {
+        if (msg.empty() || state == core::TargetValidationState::Valid ||
+            state == core::TargetValidationState::Unchecked) {
+            return;
+        }
+        if (!seen.insert({tid, msg}).second) {
+            return;
+        }
+        auto* item = new QListWidgetItem();
+        item->setText(QString("[%1] %2: %3")
+            .arg(QString::fromStdString(opName.empty() ? opId : opName))
+            .arg(QString::fromStdString(tName.empty() ? tid : tName))
+            .arg(QString::fromStdString(msg)));
+        item->setData(Qt::UserRole, QString::fromStdString(tid));
+        item->setData(Qt::UserRole + 1, QString::fromStdString(opId));
+
+        if (state == core::TargetValidationState::Collision ||
+            state == core::TargetValidationState::Unreachable ||
+            state == core::TargetValidationState::JointLimitExceeded ||
+            state == core::TargetValidationState::ConfigJump) {
+            item->setForeground(QColor(220, 50, 50));
+        } else {
+            item->setForeground(QColor(230, 140, 20));
+        }
+        issueList_->addItem(item);
+    };
+
+    // 1. SimulationResult issues (includes segment no-inverse, sweep collision, sweep clearance, ConfigJump)
+    for (const auto& issue : controller_.lastSimulationResult().issues) {
+        std::string opName = issue.operationId;
+        const auto* op = controller_.document().findOperation(issue.operationId);
+        if (op != nullptr && !op->name.empty()) {
+            opName = op->name;
+        }
+        std::string tName = issue.targetName;
+        if (tName.empty()) {
+            const auto* t = controller_.document().findTarget(issue.targetId);
+            if (t != nullptr) tName = t->name;
+        }
+        addIssueItem(issue.operationId, issue.targetId, opName, tName, issue.state, issue.description);
+    }
+
+    // 2. Direct TargetCache issues from Document
     for (const auto& cu : controller_.document().controllers) {
         for (const auto& program : cu.programs) {
             for (const auto& op : program.operations) {
                 for (const auto& target : op.targets) {
-                    if (target.cache.issueMessage.empty()) {
-                        continue;
-                    }
-                    if (target.cache.status == core::TargetValidationState::Valid ||
-                        target.cache.status == core::TargetValidationState::Unchecked) {
-                        continue;
-                    }
-                    auto* item = new QListWidgetItem();
-                    item->setText(QString("[%1] %2: %3")
-                        .arg(QString::fromStdString(op.name))
-                        .arg(QString::fromStdString(target.name))
-                        .arg(QString::fromStdString(target.cache.issueMessage)));
-                    item->setData(Qt::UserRole, QString::fromStdString(target.id));
-                    item->setData(Qt::UserRole + 1, QString::fromStdString(op.id));
-
-                    if (target.cache.status == core::TargetValidationState::Collision ||
-                        target.cache.status == core::TargetValidationState::Unreachable ||
-                        target.cache.status == core::TargetValidationState::JointLimitExceeded ||
-                        target.cache.status == core::TargetValidationState::ConfigJump) {
-                        item->setForeground(QColor(220, 50, 50));
-                    } else {
-                        item->setForeground(QColor(210, 140, 20));
-                    }
-                    issueList_->addItem(item);
+                    addIssueItem(op.id, target.id, op.name, target.name, target.cache.status, target.cache.issueMessage);
                 }
             }
         }
     }
+
     if (issueList_->count() == 0) {
         auto* cleanItem = new QListWidgetItem(QString::fromUtf8("未发现干涉或运动学异常 (全部正常)"));
         cleanItem->setForeground(QColor(50, 160, 80));

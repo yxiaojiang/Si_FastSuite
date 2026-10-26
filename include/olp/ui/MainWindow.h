@@ -71,6 +71,7 @@ public:
 
 private:
     void notifySelectionChanged();
+    void syncRobotJointsFromSelectedTarget();
 
     app::ProjectDocument doc_{};
     app::CommandManager cmdMgr_{200};

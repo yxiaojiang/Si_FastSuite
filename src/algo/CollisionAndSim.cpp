@@ -104,11 +104,12 @@ std::vector<TwistScanSample> CollisionAndSimEngine::scanTwistAngles(
     const core::Transform4d& robotBaseInWorld,
     const core::Transform4d& utoolOffset,
     const std::array<double, 6>& refJointsRad,
-    const core::FanucConfig& requiredConfig,
+    const std::optional<core::FanucConfig>& requiredConfig,
     const std::vector<core::SceneNode>& sceneNodes,
     const std::string& activeWorkpieceId,
     double stepDeg,
-    const std::vector<std::string>& exemptionPartIds) const {
+    const std::vector<std::string>& exemptionPartIds,
+    bool isWeldingRole) const {
     std::vector<TwistScanSample> samples;
     const core::Transform4d worldToBase = robotBaseInWorld.inverse();
 
@@ -121,7 +122,8 @@ std::vector<TwistScanSample> CollisionAndSimEngine::scanTwistAngles(
 
         const core::Transform4d tcpInBase = worldToBase * twistedWorld;
         const auto ikSols = kinematics_.inverseKinematics(tcpInBase, utoolOffset, false);
-        const auto bestSol = kinematics_.selectBestSolution(ikSols, refJointsRad, requiredConfig, true);
+        const auto bestSol = kinematics_.selectBestSolution(
+            ikSols, refJointsRad, requiredConfig, requiredConfig.has_value());
 
         if (!bestSol.has_value()) {
             s.reachable = false;
@@ -135,7 +137,7 @@ std::vector<TwistScanSample> CollisionAndSimEngine::scanTwistAngles(
         double minClearance = 0.0;
         std::string hitPart;
         const bool collided = checkTorchPoseCollision(
-            twistedWorld, sceneNodes, activeWorkpieceId, true, minClearance, hitPart, exemptionPartIds);
+            twistedWorld, sceneNodes, activeWorkpieceId, isWeldingRole, minClearance, hitPart, exemptionPartIds);
         s.collisionFree = !collided;
         s.minClearanceMm = minClearance;
         samples.push_back(s);

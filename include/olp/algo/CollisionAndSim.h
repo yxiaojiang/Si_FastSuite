@@ -77,11 +77,12 @@ public:
         const core::Transform4d& robotBaseInWorld,
         const core::Transform4d& utoolOffset,
         const std::array<double, 6>& refJointsRad,
-        const core::FanucConfig& requiredConfig,
-        const std::vector<core::SceneNode>& sceneNodes,
-        const std::string& activeWorkpieceId,
+        const std::optional<core::FanucConfig>& requiredConfig = std::nullopt,
+        const std::vector<core::SceneNode>& sceneNodes = {},
+        const std::string& activeWorkpieceId = "",
         double stepDeg = 5.0,
-        const std::vector<std::string>& exemptionPartIds = {}) const;
+        const std::vector<std::string>& exemptionPartIds = {},
+        bool isWeldingRole = true) const;
 
     // Minimum torch-sphere clearance of every target. Welding roles use the wire-tip exemption.
     OperationTorchClearance measureOperationTorchClearance(
