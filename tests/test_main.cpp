@@ -12,6 +12,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -335,6 +336,235 @@ void testSchemeAFullWorkcellImport() {
           "Seam start trim moves off the clamp while keeping the fillet torch angle",
           "trim=" + (seamTrim ? std::to_string(seamTrim->startTrimMm) : "none") +
           " clearance=" + std::to_string(afterTrim.minClearanceMm) + " part=" + afterTrim.partName);
+}
+
+void testOcctPerSolidNames() {
+    std::cout << "\n--- Test 4b: OCCT per-solid STEP names ---\n";
+#ifdef OLP_HAS_OCCT
+    olp::cad::OcctCadKernel cad;
+    const std::string fullPath = std::string(OLP_SOURCE_DIR) +
+        "/SampleScenes/Scene2_Full_Workcell_STEP/Full_Welding_Cell_With_Robot.step";
+    std::vector<olp::core::SceneNode> fullNodes;
+    const bool fullOk = cad.importStepViaOcct(fullPath, fullNodes);
+    const char* fullExpected[] = {
+        "Robot_Pedestal_Base",
+        "FANUC_M10iA_Static_Base",
+        "FANUC_M10iA_Static_Link1_Turret",
+        "FANUC_M10iA_Static_Link2_LowerArm",
+        "FANUC_M10iA_Static_Link3_UpperArm",
+        "FANUC_M10iA_Static_Wrist_And_Torch",
+        "Welding_Fixture_Table",
+        "Workpiece_Base_Plate",
+        "Workpiece_BoxWall_Front",
+        "Workpiece_BoxWall_Side",
+        "Table_Clamp_Block_1",
+        "Table_Clamp_Block_2"
+    };
+    std::set<std::string> fullNames;
+    bool staticBaseIsEnvironment = false;
+    for (const auto& node : fullNodes) {
+        fullNames.insert(node.name);
+        if (node.name == "FANUC_M10iA_Static_Base" &&
+            node.collisionRole == olp::core::CollisionRole::Environment) {
+            staticBaseIsEnvironment = true;
+        }
+    }
+    bool fullMatch = fullOk && fullNodes.size() == 12 && staticBaseIsEnvironment &&
+                     fullNames.size() == 12;
+    std::string missing;
+    for (const char* name : fullExpected) {
+        if (fullNames.find(name) == fullNames.end()) {
+            fullMatch = false;
+            missing += name;
+            missing += " ";
+        }
+    }
+    std::string got;
+    for (const auto& name : fullNames) {
+        got += name;
+        got += " ";
+    }
+    check(fullMatch,
+          "OCCT reads each MANIFOLD_SOLID_BREP name in the full workcell",
+          "missing=[" + missing + "] got=[" + got + "]");
+
+    const std::string tjointPath = std::string(OLP_SOURCE_DIR) +
+        "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_TJoint_With_Clamps.step";
+    std::vector<olp::core::SceneNode> tNodes;
+    const bool tOk = cad.importStepViaOcct(tjointPath, tNodes);
+    std::set<std::string> tNames;
+    for (const auto& node : tNodes) tNames.insert(node.name);
+    const bool tMatch = tOk && tNodes.size() == 4 &&
+        tNames.count("Base_Plate_400x300x12") == 1 &&
+        tNames.count("Vertical_Web_Plate_400x12x160") == 1 &&
+        tNames.count("Fixture_Clamp_Left") == 1 &&
+        tNames.count("Fixture_Clamp_Right") == 1;
+    std::string tGot;
+    for (const auto& name : tNames) {
+        tGot += name;
+        tGot += " ";
+    }
+    check(tMatch, "OCCT reads each solid name in the T-joint file", "got=[" + tGot + "]");
+
+    std::vector<olp::core::SceneNode> tube;
+    const bool tubeOk = cad.importStepViaOcct(
+        std::string(OLP_SOURCE_DIR) +
+            "/SampleScenes/Scene2_Full_Workcell_STEP/Workpiece_SquareTube_80x80x5.step",
+        tube);
+    const bool tubeNamed = tubeOk && tube.size() == 1 &&
+        tube[0].name.find("Square_hollow_section_80x80x5") != std::string::npos;
+    check(tubeNamed,
+          "OCCT keeps the product name when the solid name is empty",
+          tube.empty() ? "no solids" : tube[0].name);
+#else
+    check(true, "OCCT per-solid names are skipped without OpenCASCADE");
+#endif
+}
+
+int findNamedPart(const std::vector<olp::core::SceneNode>& nodes, const std::string& token) {
+    for (const auto& node : nodes) {
+        if (node.name.find(token) != std::string::npos) return node.cadHandleId;
+    }
+    return -1;
+}
+
+bool segmentsMatch(const olp::cad::CadEdgeInfo& edge, const olp::core::Vec3& a, const olp::core::Vec3& b, double tol) {
+    const double forward = (edge.startPt - a).norm() + (edge.endPt - b).norm();
+    const double backward = (edge.startPt - b).norm() + (edge.endPt - a).norm();
+    return std::min(forward, backward) <= tol;
+}
+
+int findSegment(const std::vector<olp::cad::CadEdgeInfo>& edges, const olp::core::Vec3& a, const olp::core::Vec3& b) {
+    for (int i = 0; i < static_cast<int>(edges.size()); ++i) {
+        if (segmentsMatch(edges[static_cast<std::size_t>(i)], a, b, 0.05)) return i;
+    }
+    return -1;
+}
+
+std::string edgeText(const olp::cad::CadEdgeInfo& edge) {
+    std::ostringstream oss;
+    oss << "(" << edge.startPt.x << "," << edge.startPt.y << "," << edge.startPt.z
+        << ")->(" << edge.endPt.x << "," << edge.endPt.y << "," << edge.endPt.z
+        << ") L=" << edge.lengthMm << " adj=" << edge.adjacentFaceIndices.size();
+    return oss.str();
+}
+
+std::vector<int> workpieceHandlesOf(const std::vector<olp::core::SceneNode>& nodes) {
+    std::vector<int> handles;
+    for (const auto& node : nodes) {
+        if (node.type == olp::core::SceneNodeType::Part &&
+            node.collisionRole == olp::core::CollisionRole::Workpiece) {
+            handles.push_back(node.cadHandleId);
+        }
+    }
+    return handles;
+}
+
+void testOcctWeldEdgeMatchesBuiltin() {
+    std::cout << "\n--- Test 4c: OCCT weld edge against the built-in parser ---\n";
+#ifndef OLP_HAS_OCCT
+    check(true, "OCCT weld-edge comparison is skipped without OpenCASCADE");
+    return;
+#else
+    struct WeldCase {
+        const char* file;
+        const char* part;
+    };
+    const WeldCase cases[] = {
+        {"/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_TJoint_With_Clamps.step",
+         "Vertical_Web_Plate"},
+        {"/SampleScenes/Scene2_Full_Workcell_STEP/Full_Welding_Cell_With_Robot.step",
+         "Workpiece_BoxWall_Front"}
+    };
+
+    for (const WeldCase& item : cases) {
+        olp::cad::OcctCadKernel builtinCad;
+        olp::cad::OcctCadKernel occtCad;
+        std::vector<olp::core::SceneNode> builtinNodes;
+        std::vector<olp::core::SceneNode> occtNodes;
+        const std::string path = std::string(OLP_SOURCE_DIR) + item.file;
+        const bool builtinOk = builtinCad.importStepViaBuiltin(path, builtinNodes);
+        const bool occtOk = occtCad.importStepViaOcct(path, occtNodes);
+        const int builtinPart = findNamedPart(builtinNodes, item.part);
+        const int occtPart = findNamedPart(occtNodes, item.part);
+        const auto builtinEdges = builtinCad.getEdges(builtinPart);
+        const auto occtEdges = occtCad.getEdges(occtPart);
+
+        int missingInOcct = 0;
+        int missingInBuiltin = 0;
+        if (builtinOk && occtOk) {
+            for (const auto& edge : builtinEdges) {
+                if (findSegment(occtEdges, edge.startPt, edge.endPt) < 0) ++missingInOcct;
+            }
+            for (const auto& edge : occtEdges) {
+                if (findSegment(builtinEdges, edge.startPt, edge.endPt) < 0) ++missingInBuiltin;
+            }
+        }
+        const bool sameEdges = builtinOk && occtOk && builtinPart >= 0 && occtPart >= 0 &&
+                               missingInOcct == 0 && missingInBuiltin == 0 &&
+                               builtinEdges.size() == occtEdges.size();
+        check(sameEdges,
+              std::string("OCCT and the built-in parser list the same edges of ") + item.part,
+              "builtin=" + std::to_string(builtinEdges.size()) +
+              " occt=" + std::to_string(occtEdges.size()) +
+              " missingInOcct=" + std::to_string(missingInOcct) +
+              " missingInBuiltin=" + std::to_string(missingInBuiltin));
+
+        std::string weldDetail = "no built-in edge 3";
+        bool sameIndex = false;
+        bool sameDirection = false;
+        bool sameSeam = false;
+        if (builtinEdges.size() > 3 && !occtEdges.empty()) {
+            const auto& reference = builtinEdges[3];
+            const int occtIndex = findSegment(occtEdges, reference.startPt, reference.endPt);
+            sameIndex = occtIndex == 3;
+            if (occtIndex >= 0) {
+                const auto& occtEdge = occtEdges[static_cast<std::size_t>(occtIndex)];
+                sameDirection = (occtEdge.startPt - reference.startPt).norm() <= 0.05 &&
+                                (occtEdge.endPt - reference.endPt).norm() <= 0.05;
+            }
+            const auto builtinWp = workpieceHandlesOf(builtinNodes);
+            const auto occtWp = workpieceHandlesOf(occtNodes);
+            const auto builtinSeam = olp::algo::SeamAndToolpathAlgo::buildSeamFromPickedEdge(
+                builtinCad, builtinPart, 3, builtinWp, 50.0);
+            const auto occtSeam = occtIndex >= 0
+                ? olp::algo::SeamAndToolpathAlgo::buildSeamFromPickedEdge(
+                      occtCad, occtPart, occtIndex, occtWp, 50.0)
+                : std::nullopt;
+            if (builtinSeam && occtSeam && !builtinSeam->sampledFrames.empty() &&
+                !occtSeam->sampledFrames.empty()) {
+                const auto& b0 = builtinSeam->sampledFrames.front();
+                const auto& o0 = occtSeam->sampledFrames.front();
+                const double startGap = (b0.position - o0.position).norm();
+                const double bisectorDeg = olp::core::rad2deg(std::acos(std::clamp(
+                    std::abs(b0.bisector.dot(o0.bisector)), 0.0, 1.0)));
+                const double lengthGap = std::abs(reference.lengthMm - occtEdges[static_cast<std::size_t>(occtIndex)].lengthMm);
+                sameSeam = startGap < 0.5 && bisectorDeg < 5.0 && lengthGap < 0.1 &&
+                           builtinSeam->face1PartId != builtinSeam->face2PartId &&
+                           occtSeam->face1PartId != occtSeam->face2PartId;
+                weldDetail = "builtinIndex=3 occtIndex=" + std::to_string(occtIndex) +
+                             " startGap=" + std::to_string(startGap) +
+                             " bisectorDeg=" + std::to_string(bisectorDeg) +
+                             " builtin=" + edgeText(reference) +
+                             " occt=" + edgeText(occtEdges[static_cast<std::size_t>(occtIndex)]);
+            } else {
+                weldDetail = "builtinIndex=3 occtIndex=" + std::to_string(occtIndex) +
+                             " builtinSeam=" + (builtinSeam ? "yes" : "no") +
+                             " occtSeam=" + (occtSeam ? "yes" : "no") +
+                             " builtin=" + edgeText(reference);
+                if (occtIndex >= 0) {
+                    weldDetail += " occt=" + edgeText(occtEdges[static_cast<std::size_t>(occtIndex)]);
+                }
+            }
+        }
+        check(sameIndex && sameDirection,
+              std::string("OCCT keeps edge 3 and its direction on ") + item.part,
+              weldDetail);
+        check(sameSeam,
+              std::string("OCCT rebuilds the same fillet seam on ") + item.part,
+              weldDetail);
+    }
+#endif
 }
 
 void testTJointCrossPartSeamAndCollisionExemption() {
@@ -696,6 +926,8 @@ int main() {
     testUrdfAndStlLoading();
     testOpwKinematics100Samples();
     testSchemeAFullWorkcellImport();
+    testOcctPerSolidNames();
+    testOcctWeldEdgeMatchesBuiltin();
     testTJointCrossPartSeamAndCollisionExemption();
     testGizmoAndUndoRedo100Steps();
     testFanucLsGeneration();

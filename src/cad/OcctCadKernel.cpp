@@ -1,6 +1,7 @@
 #include "olp/cad/OcctCadKernel.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -22,6 +23,8 @@
 #include <STEPCAFControl_Reader.hxx>
 #include <STEPControl_Reader.hxx>
 #include <ShapeAnalysis_Surface.hxx>
+#include <StepData_StepModel.hxx>
+#include <StepShape_SolidModel.hxx>
 #include <StlAPI_Reader.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -29,22 +32,34 @@
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Solid.hxx>
+#include <TransferBRep.hxx>
+#include <Transfer_TransientProcess.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <Interface_InterfaceModel.hxx>
 #include <Interface_Static.hxx>
+#include <NCollection_IndexedDataMap.hxx>
+#include <NCollection_IndexedMap.hxx>
+#include <NCollection_List.hxx>
+#include <NCollection_Sequence.hxx>
 #include <TCollection_AsciiString.hxx>
+#include <TCollection_HAsciiString.hxx>
 #include <TDataStd_Name.hxx>
+#include <TDF_Label.hxx>
 #include <TDocStd_Document.hxx>
+#include <TopTools_ShapeMapHasher.hxx>
 #include <XCAFApp_Application.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
-#include <TopTools_IndexedMapOfShape.hxx>
+#include <XSControl_TransferReader.hxx>
+#include <XSControl_WorkSession.hxx>
 #include <Geom_Line.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
 #include <gp_Dir.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepGProp.hxx>
 #include <GeomAbs_CurveType.hxx>
-#include <TDF_LabelSequence.hxx>
+#include <GProp_GProps.hxx>
 #endif
 
 namespace olp::cad {
@@ -94,18 +109,30 @@ std::string hashStepFile(const std::string& path) {
     return oss.str();
 }
 
+core::CollisionRole collisionRoleForPartName(const std::string& name) {
+    if (name.find("Clamp") != std::string::npos ||
+        name.find("Fixture") != std::string::npos ||
+        name.find("Table") != std::string::npos ||
+        name.find("Pedestal") != std::string::npos) {
+        return core::CollisionRole::Fixture;
+    }
+    if (name.find("Static_") != std::string::npos ||
+        name.find("Robot_") != std::string::npos) {
+        return core::CollisionRole::Environment;
+    }
+    return core::CollisionRole::Workpiece;
+}
+
 } // namespace
 
 bool OcctCadKernel::importStep(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
-    if (importStepBuiltin(filePath, outPartNodes)) {
+#ifdef OLP_HAS_OCCT
+    if (importStepWithOcct(filePath, outPartNodes)) {
         return true;
     }
-#ifdef OLP_HAS_OCCT
     outPartNodes.clear();
-    return importStepWithOcct(filePath, outPartNodes);
-#else
-    return false;
 #endif
+    return importStepBuiltin(filePath, outPartNodes);
 }
 
 bool OcctCadKernel::importStepBuiltin(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
@@ -440,18 +467,7 @@ bool OcctCadKernel::importStepBuiltin(const std::string& filePath, std::vector<c
         node.sourceCadFile = filePath;
         node.cadHandleId = rec.handleId;
 
-        // Classify role automatically by solid name conventions
-        if (rec.name.find("Clamp") != std::string::npos ||
-            rec.name.find("Fixture") != std::string::npos ||
-            rec.name.find("Table") != std::string::npos ||
-            rec.name.find("Pedestal") != std::string::npos) {
-            node.collisionRole = core::CollisionRole::Fixture;
-        } else if (rec.name.find("Static_") != std::string::npos ||
-                   rec.name.find("Robot_") != std::string::npos) {
-            node.collisionRole = core::CollisionRole::Environment;
-        } else {
-            node.collisionRole = core::CollisionRole::Workpiece;
-        }
+        node.collisionRole = collisionRoleForPartName(rec.name);
 
         node.renderMesh = makeBoxMesh(rec.bboxMin, rec.bboxMax);
         node.collisionMesh = node.renderMesh;
@@ -664,7 +680,186 @@ bool OcctCadKernel::importRobotStlMillimeters(const std::string& filePath, core:
     return true;
 }
 
+bool OcctCadKernel::importStepViaOcct(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
 #ifdef OLP_HAS_OCCT
+    outPartNodes.clear();
+    return importStepWithOcct(filePath, outPartNodes);
+#else
+    (void)filePath;
+    outPartNodes.clear();
+    return false;
+#endif
+}
+
+bool OcctCadKernel::importStepViaBuiltin(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
+    outPartNodes.clear();
+    return importStepBuiltin(filePath, outPartNodes);
+}
+
+#ifdef OLP_HAS_OCCT
+namespace {
+
+bool isGenericShapeName(const std::string& name) {
+    if (name.empty()) return true;
+    static const char* kGeneric[] = {
+        "SOLID", "SHELL", "FACE", "EDGE", "COMPOUND", "ASSEMBLY",
+        "COMPSOLID", "WIRE", "VERTEX", "SHAPE", "ADVANCED_FACE",
+        "CLOSED_SHELL", "OPEN_SHELL"
+    };
+    for (const char* generic : kGeneric) {
+        if (name == generic) return true;
+    }
+    if (name.rfind("=>", 0) == 0) return true;
+    bool allDigits = true;
+    for (unsigned char ch : name) {
+        if (!std::isdigit(ch)) {
+            allDigits = false;
+            break;
+        }
+    }
+    return allDigits;
+}
+
+std::string xcafLabelName(const TDF_Label& label) {
+    Handle(TDataStd_Name) nameAttr;
+    if (!label.FindAttribute(TDataStd_Name::GetID(), nameAttr)) return {};
+    return TCollection_AsciiString(nameAttr->Get()).ToCString();
+}
+
+struct NamedSolid {
+    TopoDS_Shape shape;
+    std::string name;
+    bool claimed{false};
+};
+
+void addNamedSolid(std::vector<NamedSolid>& out, const TopoDS_Shape& shape, const std::string& name) {
+    if (shape.IsNull() || isGenericShapeName(name)) return;
+    if (shape.ShapeType() == TopAbs_SOLID) {
+        out.push_back({shape, name, false});
+        return;
+    }
+    int solidCount = 0;
+    TopoDS_Shape onlySolid;
+    for (TopExp_Explorer solids(shape, TopAbs_SOLID); solids.More(); solids.Next()) {
+        ++solidCount;
+        onlySolid = solids.Current();
+    }
+    if (solidCount == 1) out.push_back({onlySolid, name, false});
+}
+
+void collectStepSolidNames(STEPCAFControl_Reader& reader, std::vector<NamedSolid>& out) {
+    const Handle(XSControl_WorkSession) session = reader.ChangeReader().WS();
+    if (session.IsNull() || session->TransferReader().IsNull()) return;
+    const Handle(Interface_InterfaceModel) model = session->Model();
+    if (model.IsNull()) return;
+    const Handle(XSControl_TransferReader)& transfer = session->TransferReader();
+    const Handle(Transfer_TransientProcess) process = session->MapReader();
+    for (int i = 1; i <= model->NbEntities(); ++i) {
+        const Handle(StepShape_SolidModel) solidEnt =
+            Handle(StepShape_SolidModel)::DownCast(model->Value(i));
+        if (solidEnt.IsNull() || solidEnt->Name().IsNull() || solidEnt->Name()->IsEmpty()) continue;
+        // HasResult() stays false for these solids after a CAF transfer, but ShapeResult()
+        // still returns the solid. Do not gate on HasResult().
+        TopoDS_Shape shape = transfer->ShapeResult(solidEnt);
+        if (shape.IsNull() && !process.IsNull()) {
+            shape = TransferBRep::ShapeResult(process, solidEnt);
+        }
+        addNamedSolid(out, shape, solidEnt->Name()->ToCString());
+    }
+}
+
+bool labelSeen(const std::vector<TDF_Label>& seen, const TDF_Label& label) {
+    for (const TDF_Label& item : seen) {
+        if (item.IsEqual(label)) return true;
+    }
+    return false;
+}
+
+void collectXcafSolidNames(const TDF_Label& label, std::vector<NamedSolid>& out, std::vector<TDF_Label>& seen) {
+    if (label.IsNull() || labelSeen(seen, label)) return;
+    seen.push_back(label);
+
+    TopoDS_Shape shape;
+    const std::string name = xcafLabelName(label);
+    if (XCAFDoc_ShapeTool::GetShape(label, shape) && !isGenericShapeName(name) &&
+        !XCAFDoc_ShapeTool::IsAssembly(label)) {
+        int solidCount = 0;
+        TopoDS_Shape onlySolid;
+        for (TopExp_Explorer solids(shape, TopAbs_SOLID); solids.More(); solids.Next()) {
+            ++solidCount;
+            onlySolid = solids.Current();
+        }
+        if (shape.ShapeType() == TopAbs_SOLID || solidCount == 1) {
+            addNamedSolid(out, shape.ShapeType() == TopAbs_SOLID ? shape : onlySolid, name);
+        }
+    }
+
+    if (XCAFDoc_ShapeTool::IsAssembly(label)) {
+        NCollection_Sequence<TDF_Label> components;
+        if (XCAFDoc_ShapeTool::GetComponents(label, components)) {
+            for (int i = 1; i <= components.Length(); ++i) {
+                collectXcafSolidNames(components.Value(i), out, seen);
+                TDF_Label referred;
+                if (XCAFDoc_ShapeTool::GetReferredShape(components.Value(i), referred)) {
+                    collectXcafSolidNames(referred, out, seen);
+                }
+            }
+        }
+    }
+
+    NCollection_Sequence<TDF_Label> subShapes;
+    if (XCAFDoc_ShapeTool::GetSubShapes(label, subShapes)) {
+        for (int i = 1; i <= subShapes.Length(); ++i) {
+            collectXcafSolidNames(subShapes.Value(i), out, seen);
+        }
+    }
+}
+
+std::string matchSolidName(const TopoDS_Shape& solid, std::vector<NamedSolid>& named) {
+    for (NamedSolid& item : named) {
+        if (item.claimed) continue;
+        if (solid.IsEqual(item.shape) || solid.IsPartner(item.shape)) {
+            item.claimed = true;
+            return item.name;
+        }
+    }
+
+    GProp_GProps solidProps;
+    BRepGProp::VolumeProperties(solid, solidProps);
+    const gp_Pnt center = solidProps.CentreOfMass();
+    const double volume = std::abs(solidProps.Mass());
+    double bestDist = 0.05;
+    NamedSolid* best = nullptr;
+    for (NamedSolid& item : named) {
+        if (item.claimed) continue;
+        GProp_GProps itemProps;
+        BRepGProp::VolumeProperties(item.shape, itemProps);
+        const double dist = center.Distance(itemProps.CentreOfMass());
+        const double itemVolume = std::abs(itemProps.Mass());
+        const double scale = std::max(1.0, volume);
+        if (dist < bestDist && std::abs(itemVolume - volume) / scale < 1e-3) {
+            bestDist = dist;
+            best = &item;
+            if (dist < 1e-6) break;
+        }
+    }
+    if (best == nullptr) return {};
+    best->claimed = true;
+    return best->name;
+}
+
+int faceIndexOf(const std::vector<TopoDS_Face>& faces, const TopoDS_Shape& shape) {
+    for (int i = 0; i < static_cast<int>(faces.size()); ++i) {
+        if (faces[static_cast<std::size_t>(i)].IsSame(shape) ||
+            faces[static_cast<std::size_t>(i)].IsEqual(shape)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+} // namespace
+
 bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
     Interface_Static::SetCVal("xstep.cascade.unit", "MM");
     Handle(XCAFApp_Application) app = XCAFApp_Application::GetApplication();
@@ -682,19 +877,23 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
     }
 
     Handle(XCAFDoc_ShapeTool) shapeTool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
-    TDF_LabelSequence roots;
+    NCollection_Sequence<TDF_Label> roots;
     shapeTool->GetFreeShapes(roots);
     const std::string fingerprint = hashStepFile(filePath);
+    std::vector<NamedSolid> namedSolids;
+    collectStepSolidNames(reader, namedSolids);
 
     for (int i = 1; i <= roots.Length(); ++i) {
         const TDF_Label label = roots.Value(i);
         const TopoDS_Shape shape = shapeTool->GetShape(label);
         if (shape.IsNull()) continue;
 
-        std::string rootName;
-        Handle(TDataStd_Name) nameAttr;
-        if (label.FindAttribute(TDataStd_Name::GetID(), nameAttr)) {
-            rootName = TCollection_AsciiString(nameAttr->Get()).ToCString();
+        std::vector<TDF_Label> seenLabels;
+        collectXcafSolidNames(label, namedSolids, seenLabels);
+        const std::string rootName = xcafLabelName(label);
+        int solidCount = 0;
+        for (TopExp_Explorer countSolids(shape, TopAbs_SOLID); countSolids.More(); countSolids.Next()) {
+            ++solidCount;
         }
 
         TopExp_Explorer solids(shape, TopAbs_SOLID);
@@ -704,24 +903,71 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
             rec.handleId = nextHandleId_++;
             rec.sourceFile = filePath;
             rec.contentHash = fingerprint;
-            rec.name = rootName.empty() ? ("OCCT_Solid_" + std::to_string(rec.handleId)) : rootName;
+            rec.name = matchSolidName(solid, namedSolids);
+            if (rec.name.empty() && solidCount == 1 && !isGenericShapeName(rootName)) {
+                rec.name = rootName;
+            }
+            if (rec.name.empty()) {
+                rec.name = "OCCT_Solid_" + std::to_string(rec.handleId);
+            }
 
-            TopTools_IndexedMapOfShape edgeMap;
+            std::vector<TopoDS_Face> faceShapes;
+            for (TopExp_Explorer faces(solid, TopAbs_FACE); faces.More(); faces.Next()) {
+                const TopoDS_Face face = TopoDS::Face(faces.Current());
+                faceShapes.push_back(face);
+                BRepAdaptor_Surface surf(face);
+                const double u0 = surf.FirstUParameter();
+                const double u1 = surf.LastUParameter();
+                const double v0 = surf.FirstVParameter();
+                const double v1 = surf.LastVParameter();
+                const double uMid = (std::isfinite(u0) && std::isfinite(u1)) ? 0.5 * (u0 + u1) : 0.0;
+                const double vMid = (std::isfinite(v0) && std::isfinite(v1)) ? 0.5 * (v0 + v1) : 0.0;
+                gp_Pnt originPnt;
+                surf.D0(uMid, vMid, originPnt);
+                BRepLProp_SLProps props(surf, uMid, vMid, 1, 1e-7);
+                core::Vec3 normal{0.0, 0.0, 1.0};
+                if (props.IsNormalDefined()) {
+                    gp_Dir n = props.Normal();
+                    if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+                    normal = {n.X(), n.Y(), n.Z()};
+                }
+                CadFaceInfo finfo;
+                finfo.faceIndex = static_cast<int>(rec.faces.size());
+                finfo.origin = {originPnt.X(), originPnt.Y(), originPnt.Z()};
+                finfo.outwardNormal = normal;
+                finfo.surfaceType = (surf.GetType() == GeomAbs_Plane) ? CadSurfaceType::Plane : CadSurfaceType::Other;
+                Bnd_Box faceBox;
+                BRepBndLib::Add(face, faceBox);
+                if (!faceBox.IsVoid()) {
+                    double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+                    faceBox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                    finfo.bboxMin = {xmin, ymin, zmin};
+                    finfo.bboxMax = {xmax, ymax, zmax};
+                }
+                rec.faces.push_back(std::move(finfo));
+            }
+
+            NCollection_IndexedDataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>, TopTools_ShapeMapHasher>
+                edgeAncestors;
+            TopExp::MapShapesAndAncestors(solid, TopAbs_EDGE, TopAbs_FACE, edgeAncestors);
+
+            NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> edgeMap;
             TopExp::MapShapes(solid, TopAbs_EDGE, edgeMap);
             for (int e = 1; e <= edgeMap.Extent(); ++e) {
                 const TopoDS_Edge edge = TopoDS::Edge(edgeMap(e));
                 if (BRep_Tool::Degenerated(edge)) continue;
                 BRepAdaptor_Curve curve(edge);
                 const double length = GCPnts_AbscissaPoint::Length(curve);
-                const gp_Pnt start = curve.Value(curve.FirstParameter());
-                const gp_Pnt end = curve.Value(curve.LastParameter());
+                gp_Pnt start = curve.Value(curve.FirstParameter());
+                gp_Pnt end = curve.Value(curve.LastParameter());
                 GCPnts_AbscissaPoint mid(curve, std::max(0.0, length * 0.5), curve.FirstParameter());
                 gp_Pnt midPt = start;
                 gp_Vec tangent(1.0, 0.0, 0.0);
                 if (mid.IsDone()) {
                     curve.D1(mid.Parameter(), midPt, tangent);
                 }
-                if (edge.Orientation() == TopAbs_REVERSED) tangent.Reverse();
+                // Curve parameter direction, not the face-loop orientation. Flipping a
+                // reversed edge starts the fillet at the other end.
 
                 CadEdgeInfo einfo;
                 einfo.edgeIndex = static_cast<int>(rec.edges.size());
@@ -731,27 +977,17 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
                 einfo.tangent = core::Vec3{tangent.X(), tangent.Y(), tangent.Z()}.normalized();
                 einfo.lengthMm = length;
                 einfo.isLinear = curve.GetType() == GeomAbs_Line;
-                rec.edges.push_back(std::move(einfo));
-            }
-
-            int faceIndex = 0;
-            for (TopExp_Explorer faces(solid, TopAbs_FACE); faces.More(); faces.Next(), ++faceIndex) {
-                const TopoDS_Face face = TopoDS::Face(faces.Current());
-                BRepAdaptor_Surface surf(face);
-                const double uMid = 0.5 * (surf.FirstUParameter() + surf.LastUParameter());
-                const double vMid = 0.5 * (surf.FirstVParameter() + surf.LastVParameter());
-                BRepLProp_SLProps props(surf, uMid, vMid, 1, 1e-7);
-                core::Vec3 normal{0.0, 0.0, 1.0};
-                if (props.IsNormalDefined()) {
-                    gp_Dir n = props.Normal();
-                    if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
-                    normal = {n.X(), n.Y(), n.Z()};
+                if (edgeAncestors.Contains(edge)) {
+                    for (const TopoDS_Shape& parent : edgeAncestors.FindFromKey(edge)) {
+                        const int faceIndex = faceIndexOf(faceShapes, parent);
+                        if (faceIndex >= 0 &&
+                            std::find(einfo.adjacentFaceIndices.begin(), einfo.adjacentFaceIndices.end(),
+                                      faceIndex) == einfo.adjacentFaceIndices.end()) {
+                            einfo.adjacentFaceIndices.push_back(faceIndex);
+                        }
+                    }
                 }
-                CadFaceInfo finfo;
-                finfo.faceIndex = faceIndex;
-                finfo.outwardNormal = normal;
-                finfo.surfaceType = (surf.GetType() == GeomAbs_Plane) ? CadSurfaceType::Plane : CadSurfaceType::Other;
-                rec.faces.push_back(std::move(finfo));
+                rec.edges.push_back(std::move(einfo));
             }
 
             Bnd_Box box;
@@ -769,7 +1005,7 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
             node.type = core::SceneNodeType::Part;
             node.sourceCadFile = filePath;
             node.cadHandleId = rec.handleId;
-            node.collisionRole = core::CollisionRole::Workpiece;
+            node.collisionRole = collisionRoleForPartName(rec.name);
             node.renderMesh = makeBoxMesh(rec.bboxMin, rec.bboxMax);
             node.collisionMesh = node.renderMesh;
             solids_[rec.handleId] = std::move(rec);

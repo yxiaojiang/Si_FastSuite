@@ -17,6 +17,13 @@ public:
     // ROS-Industrial visual/collision STL files are meters. This loads one and scales to mm.
     bool importRobotStlMillimeters(const std::string& filePath, core::TriMesh& outMesh);
 
+    // OpenCASCADE import, including files the built-in planar parser would accept.
+    // importStep prefers this path when OpenCASCADE is available.
+    bool importStepViaOcct(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes);
+
+    // Built-in planar parser. Used to compare edge order before trusting the OpenCASCADE path.
+    bool importStepViaBuiltin(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes);
+
     std::vector<CadEdgeInfo> getEdges(int cadHandleId) const override;
     std::vector<CadFaceInfo> getFaces(int cadHandleId) const override;
     std::vector<int> getAdjacentFaces(int cadHandleId, int edgeIndex) const override;

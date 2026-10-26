@@ -1,5 +1,15 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-26：平面场景改由 OCCT 导入
+
+1. **[DONE] 焊缝边序。** 腹板和前箱壁的边集合与内置解析相同。第 3 条焊缝的端点、方向和角平分线一致。方向沿曲线参数；按面环反向会把起弧换到另一头。`importStep` 在有 OCCT 时先走 OCCT。`build-full` 的 `olp_tests` 四十四项通过，主程序仍把起点收到 32 mm 后退出码 0。
+2. **未完成，转入活跃计划**：插补过程中的焊枪扫掠碰撞。视口、3D PDF 和 ROBOGUIDE 仍未开始。
+
+## 2026-10-26：OCCT 读出每个实体的名字
+
+1. **[DONE] OCCT 装配实体名。** `importStepWithOcct` 用 `MANIFOLD_SOLID_BREP` 的名字认每一块实体。整场景十二个名字（含 `FANUC_M10iA_Static_Base`）和 T 型接头四块板都对得上。实体名为空时，单实体文件退回产品名。`build-full` 的 `olp_tests` 三十八项通过。平面整场景仍先走内置解析。
+2. **未完成，转入活跃计划**：对过边序后再决定平面场景是否改走 OCCT。ROBOGUIDE、客户实景和 3D PDF 熔断仍未开始。
+
 ## 2026-10-25 夜：演示焊缝起点躲开夹具
 
 1. **[DONE] 夹具干涉。** 默认 5 mm 起弧时，喷嘴球吃进 `Table_Clamp_Block_1`。没有放宽退出码，也没有改角平分线。`extendStartTrimUntilTorchClears` 把起点收到 32 mm，安全间隙 5 mm 满足。`build-full` 测试 35 项通过，主程序退出码 0。
