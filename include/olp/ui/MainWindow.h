@@ -31,12 +31,20 @@ public:
 
     void selectSceneNode(const std::string& nodeId);
     void selectOperation(const std::string& operationId);
-    void selectTarget(const std::string& targetId, const std::string& operationId);
+    void selectTarget(const std::string& targetId, const std::string& operationId = "");
     const std::string& selectedSceneNodeId() const noexcept { return selectedSceneNodeId_; }
     const std::string& selectedOperationId() const noexcept { return selectedOperationId_; }
     const std::string& selectedTargetId() const noexcept { return selectedTargetId_; }
     int addSelectionListener(std::function<void()> listener);
     void removeSelectionListener(int listenerId);
+
+    // M08: Target navigation & toolpath editing
+    bool stepTarget(bool forward, bool wrap = false);
+    bool generateOperationFromSelectedSeam(const core::ToolpathGenParams* params = nullptr);
+    bool smoothTargetOrientations(
+        const std::string& operationId = "",
+        const std::string& startTargetId = "",
+        const std::string& endTargetId = "");
 
     void noteSampleRun(int exitCode, int frameCount, double cycleTimeSec, double weldTimeSec) noexcept;
     int lastSampleExitCode() const noexcept { return lastSampleExitCode_; }

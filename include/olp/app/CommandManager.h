@@ -25,6 +25,7 @@ public:
     const core::SceneNode* findSceneNode(const std::string& nodeId) const;
     core::SeamDefinition* findSeam(const std::string& seamId);
     const core::SeamDefinition* findSeam(const std::string& seamId) const;
+    core::Transform4d computeUFrameInWorld(int uframeNumber = 1) const;
 };
 
 // M01: Abstract Command Interface (all document mutations MUST go through commands)
@@ -101,6 +102,82 @@ private:
     bool mutated_{false};
 
     static void applyReversed(std::vector<core::Target>& targets);
+};
+
+// M08: Generate Operation from Seam Command (creates or regenerates Operation from SeamDefinition)
+class GenerateOperationFromSeamCommand final : public ICommand {
+public:
+    GenerateOperationFromSeamCommand(
+        ProjectDocument& doc,
+        std::string seamId,
+        const core::ToolpathGenParams* params = nullptr,
+        std::string programId = "");
+
+    void execute() override;
+    void undo() override;
+    std::string description() const override;
+    bool didMutate() const noexcept override { return mutated_; }
+    const std::string& operationId() const noexcept { return operationId_; }
+
+private:
+    ProjectDocument& doc_;
+    std::string seamId_;
+    std::string programId_;
+    bool hasCustomParams_{false};
+    core::ToolpathGenParams customParams_{};
+
+    std::string operationId_{};
+    bool isNewOperation_{false};
+    core::Operation beforeOp_{};
+    bool beforeSeamProgrammed_{false};
+    bool beforeDirty_{false};
+    bool mutated_{false};
+    bool initialized_{false};
+    bool createdController_{false};
+};
+
+// M08: Regenerate Operation Targets Command
+class RegenerateOperationTargetsCommand final : public ICommand {
+public:
+    RegenerateOperationTargetsCommand(ProjectDocument& doc, std::string operationId);
+
+    void execute() override;
+    void undo() override;
+    std::string description() const override { return "Regenerate Operation Targets (" + operationId_ + ")"; }
+    bool didMutate() const noexcept override { return mutated_; }
+
+private:
+    ProjectDocument& doc_;
+    std::string operationId_;
+    std::vector<core::Target> beforeTargets_{};
+    bool beforeDirty_{false};
+    bool initialized_{false};
+    bool mutated_{false};
+};
+
+// M08: Smooth Target Orientations Command (Undoable SLERP orientation smoothing)
+class SmoothTargetOrientationsCommand final : public ICommand {
+public:
+    SmoothTargetOrientationsCommand(
+        ProjectDocument& doc,
+        std::string operationId,
+        std::string startTargetId = "",
+        std::string endTargetId = "");
+
+    void execute() override;
+    void undo() override;
+    std::string description() const override;
+    bool didMutate() const noexcept override { return mutated_; }
+
+private:
+    ProjectDocument& doc_;
+    std::string operationId_;
+    std::string startTargetId_;
+    std::string endTargetId_;
+    std::vector<core::Target> beforeTargets_{};
+    bool beforeDirty_{false};
+    bool initialized_{false};
+    bool mutated_{false};
 };
 
 // M01: Undo / Redo Command Stack Manager

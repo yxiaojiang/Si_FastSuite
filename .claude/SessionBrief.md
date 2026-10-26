@@ -6,27 +6,31 @@
 
 ## 1. 当前目标
 
-切线连续边链自动扩展（`findTangentContinuousEdgeChain`）与复合曲率焊缝生成（`buildSeamFromEdgeChain`，含封闭环切线连续闭合校验、非平面母材动态点面投影外法向计算与母材角平分线局部姿态）已全部落地，经独立审计深度复核并修复全部 P1/P2 级几何与命令对称性隐患，通过 130 项自动化验证与端到端工位校验。下一步推进 M08 路径生成与编辑：焊缝到操作路径生成、切入切出段（Approach/Retract）配置、姿态 SLERP 插值与逐点导航。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
+M08（路径生成与编辑：单段非闭合直线智能退化与闭环/多段链保留离散采样、切入切出段沿 -Z 退避与速度运动类型配置、多点姿态 SLERP 插值及命令封装、主窗口程序树/路径点表/视口 Gizmo/逆解预览联动与前后单步导航）已全部落地，通过 163 项自动化测试（含新增 Test 15 全部子项）与端到端 `--verify` 校验全绿。下一步推进 M09 工艺事件与路径微调（弧焊参数 Arc Start[n]/Arc End[n] 关联、自转角扫描优化、局部姿态交互编辑）。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
 
 ## 2. 这轮已经落地的事实
 
-1. **切线连续边链扩展（M07 Edge Chaining）**：
-   - 算法 `findTangentContinuousEdgeChain` 基于 `BRepAdaptor_Curve` 与 3D 几何端点距离（$\le 0.05\text{ mm}$）匹配邻接边，彻底消除 STEP 拓扑定向 `TopAbs_REVERSED` 引起的端点交换与偏角计算反转缺陷。
-   - 严格进行最小偏转角贪心检索（$\theta \le \theta_{\text{max}}$），保证曲线光滑连接；双向扩展（前向+后向）在重构链条时自动纠正反向边的局部参数与切线方向。
-   - 全面支持单段自闭合圆环（如 `Workpiece_PipeFlange_DN15` 的 360° 圆环焊缝）与多段封闭多边形闭合检测（`isClosed = true`），并在首尾合拢处校验出射/入射切线夹角（$\le \theta_{\text{max}}$），杜绝水滴形尖角伪闭环。在方管工件 `Workpiece_SquareTube_80x80x5` 上成功识别 32 组直线与倒角圆弧平滑衔接链。
+1. **焊缝到操作（Seam -> Operation）智能路径生成（M08）**：
+   - 修正 `generateOperationTargets`：建立严格的单段直线共线与切线一致性判定（`!seam.isClosed && seam.edgeChain.size() <= 1` 且各采样点共线弦偏距 $\le 0.05\text{ mm}$、切线一致性 $\ge 0.98$），仅真正直线在 `endpointsOnlyForLine = true` 时退化为首尾两点（4 目标点）；曲线、多段复合边链与闭合环焊缝保留完整弧长离散采样点（`WELD_START`、`WELD_VIA_*`、`WELD_END`）。
+   - 切入段（`APPROACH`）与切出段（`RETRACT`）严格沿焊枪 $-Z$ 轴（焊丝反向）按 `approachDistMm` 与 `retractDistMm` 退避，并在 `ToolpathGenParams` 中支持独立配置运动类型（`approachMotion`/`retractMotion`）与速度（`retractSpeedMmPerSec`）。
 
-2. **复合曲率焊缝与动态曲面角平分线姿态生成（`buildSeamFromEdgeChain`）**：
-   - 全局累计弧长参数化映射到各个局部子边，准确处理反向边逆序采样；保存 `SeamDefinition::isClosed` 状态，闭合环默认零首尾裁剪。
-   - 升级 `OcctCadKernel::evaluateFaceOutwardNormal`：缓存 `TopoDS_Face` 拓扑面，对圆柱/圆锥/圆环/B样条等非平面母材，在每个弧长采样点处通过 `ShapeAnalysis_Surface::ValueOfUV` 与 `BRepLProp_SLProps` 动态求取局部外法向（含 `TopAbs_REVERSED` 修正），使环焊缝与圆角过渡段的角平分线姿态随圆周同步旋转；邻接面缺失时按拓扑最近邻回退。
-   - 升级 `OcctCadKernel::evaluateEdgeAtArcLength`：复用预计算的曲线弧长并采用 `GCPnts_AbscissaPoint` 积分求值，异常时在底层曲线参数域内降级求导，杜绝闭合环退化。
-   - 严格保证所有采样点三维正交基右手系（$\det([X, Y, Z]) = 1.0 \pm 10^{-7}$）与累计弧长单调递增。
+2. **多点姿态球形线性插值（SLERP Orientation Interpolation）**：
+   - 在 `MathTypes.h` 中实现 `Mat3::slerp(R1, R2, t)`；在 `SeamAndToolpathAlgo` 中实现 `interpolateOrientationsSlerp`。
+   - 提取首尾两点相对于基准姿态的局部相对偏转 $\Delta R_A$、$\Delta R_B$，沿累计弧长比例 $s$ 进行高精度 SLERP 球形线性插值（中点误差 $< 10^{-6\circ} \ll 0.1^\circ$），使焊枪在曲线/折线焊缝上平滑连续过渡。
+   - 封装 `SmoothTargetOrientationsCommand`，将被插值点标记为 `userModified = true` 并更新 `userDeltaOffset`，保证在路径重算时稳定继承用户平滑结果，并支持完整 Undo/Redo 与 `isDirty` 对称恢复。
 
-3. **命令封装与撤销重做支持**：
-   - `CreateSeamFromPickedEdgeCommand` 在 `chain.edges.size() > 1 || chain.isClosed` 时自动走复合链/闭环焊缝生成，并拦截同一边链的重复拾取（No-op 不入栈），保证单次 `undo()` 严格一对一移除焊缝并恢复 `beforeDirty_`。
+3. **命令化封装与生命周期管理**：
+   - 封装 `GenerateOperationFromSeamCommand` 与 `RegenerateOperationTargetsCommand`，自动创建/重算操作序列，标记 `seam.programmed = true`，并在撤销时严格一对一回滚、恢复未编程状态与 `beforeDirty_`。
+   - 在 `ProjectDocument` 中增加 `computeUFrameInWorld` 统一坐标系求值。
 
-4. **审计与自动化测试状态**：
-   - 新增与扩充 Test 14 自动化测试（覆盖 SquareTube 连续边链、PipeFlange 闭环检测、真 3D 空间圆环跨度、圆柱/圆锥母材法向随圆周动态旋转、姿态正交性、单调采样及重复拾取幂等 + Undo/Redo 全闭环）。
-   - `build-full` 下 `olp_tests.exe` 全部 130 项测试通过，退出码 0。
+4. **UI 编程工作台联动与快捷键前后单步导航**：
+   - `MainWindow` 扩展 `stepTarget(bool forward, bool wrap)`、`generateOperationFromSelectedSeam()`、`smoothTargetOrientations()`。
+   - `OcctViewport` 新增 `attachMainWindow` 接口，无缝监听选择变更并在目标点切换时自动将 `TcpGizmo` 挂载到当前目标点（`activeTargetId` 100% 联动）。
+   - `ShellWindow` 启用并绑定“生成路径”与“SLERP平滑”工具栏按钮，绑定 `[` 与 `]` 键盘快捷键用于前后单步导航；目标点切换时联动高亮程序树对应操作、高亮路径点表对应行并自动滚动居中，并在该点具备有效逆解缓存时同步更新机器人关节预览与点动滑块。
+
+5. **自动化测试与验收（Test 15）**：
+   - 新增 Test 15 验证单段直线生成 4 点、圆环/链焊缝保留完整 `WELD_VIA` 序列、命令 Undo/Redo 对称性、SLERP 单调平滑过渡与中点零角误差、单步前后切换与视口/逆解预览联动。
+   - `build-full` 下 `olp_tests.exe` 全部 163 项测试通过，退出码 0。
    - `SiFastSuiteOLP.exe --verify` 运行 5 个阶段完整通过，退出码 0。
 
 ## 3. 未关闭风险
@@ -37,10 +41,8 @@
 
 ## 4. 下一步
 
-1. 实现由 `SeamDefinition` 生成完整 `Operation` 焊接指令序列（参数化步长/弦高误差、直线段自动退化为 L 端点两点）。
-2. 自动生成焊枪法向反向退避的切入点（Approach）与切出点（Retract），支持独立速度与运动类型配置。
-3. 实现多点姿态 SLERP 插值（选定首尾两点对中间点姿态沿弧长球形线性插值）。
-4. 主窗口程序树与路径点表格联动与快捷键前后单步导航。
+1. 推进 M09：工艺事件与路径微调（焊接工艺参数表 Arc Start[n]/Arc End[n] 关联、自转角扫描优化、局部姿态交互微调与冲突检测）。
+2. 推进 M10：机器人运动学与奇异点检测（关节限位、奇异区域警示、构型配置字检查）。
 
 ## 5. 索引
 

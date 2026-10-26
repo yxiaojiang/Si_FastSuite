@@ -409,9 +409,40 @@ void SeamAndToolpathAlgo::generateOperationTargets(
     const core::Transform4d worldToUFrame = uframeInWorld.inverse();
     const auto& params = inOutOperation.genParams;
 
-    // Select active seam frames (if linear and endpointsOnlyForLine, use first & last)
+    // Determine whether seam is a single non-closed straight line segment
+    bool isSingleStraightLine = (!seam.isClosed && seam.edgeChain.size() <= 1 && seam.sampledFrames.size() >= 2);
+    if (isSingleStraightLine) {
+        const auto& fFront = seam.sampledFrames.front();
+        const auto& fBack = seam.sampledFrames.back();
+        const core::Vec3 chord = fBack.position - fFront.position;
+        const double chordLen = chord.norm();
+        if (chordLen < 1e-4) {
+            isSingleStraightLine = false;
+        } else {
+            const core::Vec3 dir = chord / chordLen;
+            if (fFront.tangentX.dot(fBack.tangentX) < 0.99 || fFront.tangentX.dot(dir) < 0.98 || fBack.tangentX.dot(dir) < 0.98) {
+                isSingleStraightLine = false;
+            } else {
+                for (const auto& sf : seam.sampledFrames) {
+                    if (sf.tangentX.dot(dir) < 0.98) {
+                        isSingleStraightLine = false;
+                        break;
+                    }
+                    const core::Vec3 toPt = sf.position - fFront.position;
+                    const double distToChord = toPt.cross(dir).norm();
+                    if (distToChord > 0.05) {
+                        isSingleStraightLine = false;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Select active seam frames (if linear and endpointsOnlyForLine, use first & last;
+    // composite edge chain / curved / closed seams retain all sampled frames)
     std::vector<core::SeamSampleFrame> activeFrames;
-    if (params.endpointsOnlyForLine && seam.sampledFrames.size() >= 2) {
+    if (params.endpointsOnlyForLine && isSingleStraightLine) {
         activeFrames.push_back(seam.sampledFrames.front());
         activeFrames.push_back(seam.sampledFrames.back());
     } else {
@@ -444,8 +475,8 @@ void SeamAndToolpathAlgo::generateOperationTargets(
         tApp.id = inOutOperation.id + "_T_APPROACH";
         tApp.name = "APPROACH";
         tApp.role = core::TargetRole::APPROACH;
-        tApp.motion = core::MotionType::J;
-        tApp.speedValue = 50.0; // 50%
+        tApp.motion = params.approachMotion;
+        tApp.speedValue = (params.approachMotion == core::MotionType::J) ? 50.0 : params.approachSpeedMmPerSec;
         tApp.termination = core::TerminationType::CNT;
         tApp.cntValue = 50;
         tApp.poseInUFrame = startWeldPoseUF;
@@ -513,8 +544,8 @@ void SeamAndToolpathAlgo::generateOperationTargets(
         tRet.id = inOutOperation.id + "_T_RETRACT";
         tRet.name = "RETRACT";
         tRet.role = core::TargetRole::RETRACT;
-        tRet.motion = core::MotionType::L;
-        tRet.speedValue = params.approachSpeedMmPerSec;
+        tRet.motion = params.retractMotion;
+        tRet.speedValue = (params.retractMotion == core::MotionType::J) ? 50.0 : params.retractSpeedMmPerSec;
         tRet.termination = core::TerminationType::CNT;
         tRet.cntValue = 50;
         tRet.poseInUFrame = endWeldPoseUF;
@@ -528,6 +559,119 @@ void SeamAndToolpathAlgo::generateOperationTargets(
     }
 
     inOutOperation.targets = std::move(newTargets);
+}
+
+bool SeamAndToolpathAlgo::interpolateOrientationsSlerp(
+    core::Operation& inOutOperation,
+    const std::string& startTargetId,
+    const std::string& endTargetId,
+    const core::SeamDefinition* seam,
+    const core::Transform4d& uframeInWorld) {
+    auto& targets = inOutOperation.targets;
+    if (targets.size() < 3) {
+        return false;
+    }
+
+    int idxStart = -1;
+    int idxEnd = -1;
+
+    if (!startTargetId.empty()) {
+        for (size_t i = 0; i < targets.size(); ++i) {
+            if (targets[i].id == startTargetId) {
+                idxStart = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    if (!endTargetId.empty()) {
+        for (size_t i = 0; i < targets.size(); ++i) {
+            if (targets[i].id == endTargetId) {
+                idxEnd = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+
+    if (idxStart < 0) {
+        for (size_t i = 0; i < targets.size(); ++i) {
+            if (targets[i].role == core::TargetRole::WELD_START ||
+                targets[i].role == core::TargetRole::WELD_VIA) {
+                idxStart = static_cast<int>(i);
+                break;
+            }
+        }
+        if (idxStart < 0) {
+            idxStart = (targets.front().role == core::TargetRole::APPROACH && targets.size() > 1) ? 1 : 0;
+        }
+    }
+
+    if (idxEnd < 0) {
+        for (int i = static_cast<int>(targets.size()) - 1; i >= 0; --i) {
+            if (targets[static_cast<size_t>(i)].role == core::TargetRole::WELD_END ||
+                targets[static_cast<size_t>(i)].role == core::TargetRole::WELD_VIA) {
+                idxEnd = i;
+                break;
+            }
+        }
+        if (idxEnd < 0) {
+            idxEnd = (targets.back().role == core::TargetRole::RETRACT && targets.size() > 1)
+                ? static_cast<int>(targets.size()) - 2
+                : static_cast<int>(targets.size()) - 1;
+        }
+    }
+
+    if (idxStart >= idxEnd || (idxEnd - idxStart) < 2) {
+        return false;
+    }
+
+    auto computeBaseRotAtTarget = [&](const core::Target& t) -> core::Mat3 {
+        if (t.userModified) {
+            return t.poseInUFrame.rot * t.userDeltaOffset.rot.transposed();
+        }
+        return t.poseInUFrame.rot;
+    };
+
+    const auto& tA = targets[static_cast<size_t>(idxStart)];
+    const auto& tB = targets[static_cast<size_t>(idxEnd)];
+
+    const core::Mat3 baseRotA = computeBaseRotAtTarget(tA);
+    const core::Mat3 baseRotB = computeBaseRotAtTarget(tB);
+
+    core::Mat3 deltaA = baseRotA.transposed() * tA.poseInUFrame.rot;
+    core::Mat3 deltaB = baseRotB.transposed() * tB.poseInUFrame.rot;
+    if (tA.userModified) {
+        deltaA = tA.userDeltaOffset.rot;
+    }
+    if (tB.userModified) {
+        deltaB = tB.userDeltaOffset.rot;
+    }
+
+    const double sA = tA.arcLengthRatio;
+    const double sB = tB.arcLengthRatio;
+
+    bool updatedAny = false;
+    for (int i = idxStart + 1; i < idxEnd; ++i) {
+        auto& t = targets[static_cast<size_t>(i)];
+        double tau = 0.0;
+        if (std::abs(sB - sA) > 1e-6) {
+            tau = (t.arcLengthRatio - sA) / (sB - sA);
+        } else {
+            tau = static_cast<double>(i - idxStart) / static_cast<double>(idxEnd - idxStart);
+        }
+        if (tau < 0.0) tau = 0.0;
+        if (tau > 1.0) tau = 1.0;
+
+        const core::Mat3 interpolatedDelta = core::Mat3::slerp(deltaA, deltaB, tau);
+        const core::Mat3 baseRot = computeBaseRotAtTarget(t);
+
+        t.poseInUFrame.rot = baseRot * interpolatedDelta;
+        t.userDeltaOffset.rot = interpolatedDelta;
+        t.userModified = true;
+        t.cache.valid = false;
+        updatedAny = true;
+    }
+
+    return updatedAny;
 }
 
 bool SeamAndToolpathAlgo::extendStartTrimUntilTorchClears(

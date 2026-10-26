@@ -1585,6 +1585,251 @@ void testTangentContinuousEdgeChaining() {
 #endif
 }
 
+void testSeamToOperationAndSlerpStepping() {
+    std::cout << "\n--- Test 15: M08 Seam-to-Operation Generation, SLERP Orientation Smoothing & Target Stepping ---\n";
+
+    // 1. Verify single straight line thins to 4 points vs closed ring / composite chain retains all points
+    olp::core::SeamDefinition seamLine;
+    seamLine.id = "seam_line";
+    seamLine.name = "StraightLineSeam";
+    seamLine.isClosed = false;
+    olp::core::TopologicalSignature sigLine;
+    sigLine.topologyIndex = 1;
+    seamLine.edgeChain = {sigLine};
+    for (int i = 0; i < 5; ++i) {
+        seamLine.sampledFrames.push_back(straightSample(i * 25.0)); // 0, 25, 50, 75, 100 mm
+    }
+
+    olp::core::Operation opLine;
+    opLine.id = "op_line";
+    opLine.genParams.endpointsOnlyForLine = true;
+    opLine.genParams.approachDistMm = 40.0;
+    opLine.genParams.retractDistMm = 35.0;
+    olp::algo::SeamAndToolpathAlgo::generateOperationTargets(seamLine, olp::core::Transform4d::identity(), opLine);
+
+    check(opLine.targets.size() == 4,
+          "Single straight line with endpointsOnlyForLine=true generates exactly 4 points",
+          "count=" + std::to_string(opLine.targets.size()));
+    if (opLine.targets.size() == 4) {
+        check(opLine.targets[0].role == olp::core::TargetRole::APPROACH &&
+              opLine.targets[1].role == olp::core::TargetRole::WELD_START &&
+              opLine.targets[2].role == olp::core::TargetRole::WELD_END &&
+              opLine.targets[3].role == olp::core::TargetRole::RETRACT,
+              "Target roles for line: APPROACH, WELD_START, WELD_END, RETRACT");
+        const double appDist = (opLine.targets[0].poseInUFrame.pos -
+            (opLine.targets[1].poseInUFrame.pos - opLine.targets[1].poseInUFrame.rot.colZ() * 40.0)).norm();
+        const double retDist = (opLine.targets[3].poseInUFrame.pos -
+            (opLine.targets[2].poseInUFrame.pos - opLine.targets[2].poseInUFrame.rot.colZ() * 35.0)).norm();
+        check(appDist < 1e-4 && retDist < 1e-4,
+              "APPROACH and RETRACT retreat along -Z_tcp by approachDistMm and retractDistMm");
+    }
+
+    // Closed loop seam
+    olp::core::SeamDefinition seamClosed;
+    seamClosed.id = "seam_closed";
+    seamClosed.name = "ClosedRingSeam";
+    seamClosed.isClosed = true;
+    for (int i = 0; i < 8; ++i) {
+        const double angle = i * (2.0 * olp::core::kPi / 8.0);
+        olp::core::SeamSampleFrame sf;
+        sf.arcLengthMm = i * 20.0;
+        sf.position = {50.0 * std::cos(angle), 50.0 * std::sin(angle), 0.0};
+        sf.tangentX = {-std::sin(angle), std::cos(angle), 0.0};
+        sf.frame = olp::core::Transform4d::fromTranslation(sf.position.x, sf.position.y, sf.position.z);
+        seamClosed.sampledFrames.push_back(sf);
+    }
+
+    olp::core::Operation opClosed;
+    opClosed.id = "op_closed";
+    opClosed.genParams.endpointsOnlyForLine = true;
+    olp::algo::SeamAndToolpathAlgo::generateOperationTargets(seamClosed, olp::core::Transform4d::identity(), opClosed);
+
+    check(opClosed.targets.size() == 10,
+          "Closed ring seam preserves all 8 sampled points (1 APPROACH + 8 weld + 1 RETRACT = 10 targets)",
+          "count=" + std::to_string(opClosed.targets.size()));
+    bool hasVia = false;
+    for (const auto& t : opClosed.targets) {
+        if (t.role == olp::core::TargetRole::WELD_VIA) hasVia = true;
+    }
+    check(hasVia, "Closed ring seam contains WELD_VIA intermediate targets sequence");
+
+    // Multi-edge chain seam
+    olp::core::SeamDefinition seamChain;
+    seamChain.id = "seam_chain";
+    seamChain.name = "MultiEdgeChainSeam";
+    seamChain.isClosed = false;
+    olp::core::TopologicalSignature sig1, sig2;
+    sig1.topologyIndex = 1; sig2.topologyIndex = 2;
+    seamChain.edgeChain = {sig1, sig2};
+    for (int i = 0; i < 5; ++i) {
+        seamChain.sampledFrames.push_back(straightSample(i * 20.0));
+    }
+    olp::core::Operation opChain;
+    opChain.id = "op_chain";
+    opChain.genParams.endpointsOnlyForLine = true;
+    olp::algo::SeamAndToolpathAlgo::generateOperationTargets(seamChain, olp::core::Transform4d::identity(), opChain);
+    check(opChain.targets.size() == 7,
+          "Multi-edge chain seam preserves all sampled points (not thinned by endpointsOnlyForLine)",
+          "count=" + std::to_string(opChain.targets.size()));
+
+    // 2. GenerateOperationFromSeamCommand Undo/Redo and dirty symmetry
+    olp::app::ProjectDocument doc;
+    olp::app::CommandManager cmdMgr;
+    doc.seams.push_back(seamLine);
+    doc.isDirty = false;
+
+    check(!doc.isDirty && !doc.seams.front().programmed && doc.controllers.empty(),
+          "Initial state: clean dirty state, programmed=false, controllers empty");
+
+    auto genCmd = std::make_unique<olp::app::GenerateOperationFromSeamCommand>(doc, seamLine.id);
+    const std::string createdOpId = genCmd->operationId();
+    cmdMgr.executeCommand(std::move(genCmd));
+
+    check(doc.isDirty, "GenerateOperationFromSeamCommand marks doc.isDirty = true");
+    check(doc.seams.front().programmed, "seam.programmed marked true after generation");
+    check(!doc.controllers.empty() && !doc.controllers.front().programs.empty(),
+          "Controller and program created automatically");
+    const auto* createdOp = doc.findOperation(createdOpId);
+    check(createdOp != nullptr && createdOp->targets.size() == 4,
+          "Created operation has 4 targets for straight line seam");
+
+    // Undo
+    cmdMgr.undo();
+    check(!doc.isDirty, "Undo restores doc.isDirty = false");
+    check(!doc.seams.front().programmed, "Undo restores seam.programmed = false");
+    check(doc.findOperation(createdOpId) == nullptr, "Undo removes created operation");
+
+    // Redo
+    cmdMgr.redo();
+    check(doc.isDirty, "Redo marks doc.isDirty = true");
+    check(doc.seams.front().programmed, "Redo restores seam.programmed = true");
+    check(doc.findOperation(createdOpId) != nullptr, "Redo restores created operation");
+
+    // 3. SLERP Orientation Interpolation & SmoothTargetOrientationsCommand
+    olp::core::Operation slerpOp;
+    slerpOp.id = "slerp_op";
+    slerpOp.name = "SlerpOp";
+    slerpOp.seamId = seamLine.id;
+
+    for (int i = 0; i < 5; ++i) {
+        olp::core::Target t;
+        t.id = "slerp_T_" + std::to_string(i);
+        t.arcLengthRatio = i * 0.25;
+        t.role = (i == 0) ? olp::core::TargetRole::WELD_START :
+                 ((i == 4) ? olp::core::TargetRole::WELD_END : olp::core::TargetRole::WELD_VIA);
+        t.poseInUFrame.rot = olp::core::Mat3::identity();
+        t.poseInUFrame.pos = {i * 25.0, 0.0, 0.0};
+        slerpOp.targets.push_back(t);
+    }
+    doc.controllers.front().programs.front().operations.push_back(slerpOp);
+    doc.isDirty = false;
+
+    // Tilt end target by 40 degrees around X axis
+    const double tiltAngleDeg = 40.0;
+    auto* opInDoc = doc.findOperation("slerp_op");
+    check(opInDoc != nullptr, "Found slerp_op in document");
+    if (opInDoc != nullptr) {
+        opInDoc->targets.back().poseInUFrame.rot = olp::core::Mat3::rotX(olp::core::deg2rad(tiltAngleDeg));
+        opInDoc->targets.back().userDeltaOffset.rot = olp::core::Mat3::rotX(olp::core::deg2rad(tiltAngleDeg));
+        opInDoc->targets.back().userModified = true;
+
+        auto smoothCmd = std::make_unique<olp::app::SmoothTargetOrientationsCommand>(
+            doc, "slerp_op", opInDoc->targets.front().id, opInDoc->targets.back().id);
+        cmdMgr.executeCommand(std::move(smoothCmd));
+
+        check(doc.isDirty, "SmoothTargetOrientationsCommand marks document dirty");
+
+        const auto& tMid = opInDoc->targets[2]; // ratio 0.5 -> expected 20 deg
+        const auto& tQ1 = opInDoc->targets[1];  // ratio 0.25 -> expected 10 deg
+        const auto& tQ3 = opInDoc->targets[3];  // ratio 0.75 -> expected 30 deg
+
+        check(tMid.userModified && tQ1.userModified && tQ3.userModified,
+              "Intermediate targets marked userModified = true after SLERP");
+
+        const auto expectedMidRot = olp::core::Mat3::rotX(olp::core::deg2rad(20.0));
+        const double midErrDeg = olp::core::rad2deg(tMid.poseInUFrame.rot.angularDistanceRad(expectedMidRot));
+        check(midErrDeg < 0.1,
+              "Midpoint orientation error < 0.1 deg (actual: " + std::to_string(midErrDeg) + " deg)");
+
+        const auto expectedQ1Rot = olp::core::Mat3::rotX(olp::core::deg2rad(10.0));
+        const double q1ErrDeg = olp::core::rad2deg(tQ1.poseInUFrame.rot.angularDistanceRad(expectedQ1Rot));
+        const auto expectedQ3Rot = olp::core::Mat3::rotX(olp::core::deg2rad(30.0));
+        const double q3ErrDeg = olp::core::rad2deg(tQ3.poseInUFrame.rot.angularDistanceRad(expectedQ3Rot));
+        check(q1ErrDeg < 0.1 && q3ErrDeg < 0.1,
+              "Intermediate targets scale monotonically with arcLengthRatio (10 deg and 30 deg)");
+
+        // Undo SLERP
+        cmdMgr.undo();
+        check(!opInDoc->targets[2].userModified,
+              "Undo restores intermediate targets to un-modified state");
+        check(doc.isDirty == false, "Undo restores clean dirty state");
+
+        // Redo SLERP
+        cmdMgr.redo();
+        check(opInDoc->targets[2].userModified,
+              "Redo re-applies SLERP interpolation to intermediate targets");
+        check(doc.isDirty == true, "Redo marks document dirty again");
+    }
+
+    // 4. Target stepping navigation & OcctViewport linkage & IK preview
+    olp::ui::MainWindow win;
+    olp::core::ControllerUnit winCu;
+    winCu.id = "cu_win";
+    olp::core::Program winProg;
+    winProg.id = "prog_win";
+    olp::core::Operation winOp;
+    winOp.id = "op_step";
+    for (int i = 0; i < 3; ++i) {
+        olp::core::Target t;
+        t.id = "step_T_" + std::to_string(i + 1);
+        t.name = "P" + std::to_string(i + 1);
+        if (i == 1) {
+            t.cache.valid = true;
+            t.cache.jointsRad = {0.15, -0.25, 0.35, -0.45, 0.55, -0.65};
+        }
+        winOp.targets.push_back(t);
+    }
+    winProg.operations.push_back(winOp);
+    winCu.programs.push_back(winProg);
+    win.document().controllers.push_back(winCu);
+
+    olp::core::SceneNode robotNode;
+    robotNode.id = "robot_node";
+    robotNode.type = olp::core::SceneNodeType::Robot;
+    win.document().sceneNodes.push_back(robotNode);
+
+    olp::ui::OcctViewport viewport(win.document(), win.commandManager(), &win.cadKernel());
+    viewport.attachMainWindow(&win);
+
+    win.selectOperation("op_step");
+
+    // Step to first target
+    bool step1 = win.stepTarget(true);
+    check(step1 && win.selectedTargetId() == "step_T_1",
+          "stepTarget(true) from none selects first target (step_T_1)");
+    check(viewport.activeTargetId() == "step_T_1",
+          "Viewport activeTargetId links to win.selectedTargetId() (step_T_1)");
+
+    // Step to second target (with IK valid cache)
+    bool step2 = win.stepTarget(true);
+    check(step2 && win.selectedTargetId() == "step_T_2",
+          "stepTarget(true) advances to second target (step_T_2)");
+    check(viewport.activeTargetId() == "step_T_2",
+          "Viewport activeTargetId advances to step_T_2");
+
+    const auto* rNode = win.document().findSceneNode("robot_node");
+    check(rNode != nullptr && std::abs(rNode->currentJointsRad[0] - 0.15) < 1e-4 &&
+          std::abs(rNode->currentJointsRad[4] - 0.55) < 1e-4,
+          "Selecting target with valid IK cache updates robot sceneNode joint angles");
+
+    // Step back to first target
+    bool stepBack = win.stepTarget(false);
+    check(stepBack && win.selectedTargetId() == "step_T_1",
+          "stepTarget(false) navigates back to previous target (step_T_1)");
+    check(viewport.activeTargetId() == "step_T_1",
+          "Viewport activeTargetId synchronizes back to step_T_1");
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1615,6 +1860,7 @@ int main(int argc, char* argv[]) {
     testBRepMeshRenderingAndEdgePicking();
     testTcpGizmoMountAndInteraction();
     testTangentContinuousEdgeChaining();
+    testSeamToOperationAndSlerpStepping();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

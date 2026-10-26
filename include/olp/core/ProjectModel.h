@@ -247,6 +247,9 @@ struct ToolpathGenParams {
     double approachSpeedMmPerSec{200.0};
     double weldSpeedMmPerSec{10.0};
     int weldScheduleNumber{1};
+    MotionType approachMotion{MotionType::J};
+    MotionType retractMotion{MotionType::L};
+    double retractSpeedMmPerSec{200.0};
 };
 
 struct Operation {

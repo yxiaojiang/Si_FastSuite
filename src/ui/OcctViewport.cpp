@@ -5,6 +5,7 @@
 #include <windows.h>
 #endif
 #include "olp/ui/OcctViewport.h"
+#include "olp/ui/MainWindow.h"
 #include "olp/cad/OcctCadKernel.h"
 
 #ifdef OLP_HAS_QT6
@@ -179,6 +180,10 @@ OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMg
 }
 
 OcctViewport::~OcctViewport() {
+    if (attachedWin_ != nullptr && winSelectionListenerId_ >= 0) {
+        attachedWin_->removeSelectionListener(winSelectionListenerId_);
+        winSelectionListenerId_ = -1;
+    }
     clearTargetGizmo();
 #if defined(OLP_HAS_OCCT) && defined(_WIN32)
     if (view_ != nullptr) {
@@ -204,9 +209,34 @@ OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMg
     : doc_(doc), cmdMgr_(cmdMgr), cadKernel_(cadKernel), tcpGizmo_(doc, cmdMgr), view_(std::make_unique<ViewState>()) {}
 
 OcctViewport::~OcctViewport() {
+    if (attachedWin_ != nullptr && winSelectionListenerId_ >= 0) {
+        attachedWin_->removeSelectionListener(winSelectionListenerId_);
+        winSelectionListenerId_ = -1;
+    }
     clearTargetGizmo();
 }
 #endif
+
+void OcctViewport::attachMainWindow(MainWindow* win) {
+    if (attachedWin_ != nullptr && winSelectionListenerId_ >= 0) {
+        attachedWin_->removeSelectionListener(winSelectionListenerId_);
+        winSelectionListenerId_ = -1;
+    }
+    attachedWin_ = win;
+    if (attachedWin_ != nullptr) {
+        winSelectionListenerId_ = attachedWin_->addSelectionListener([this]() {
+            if (attachedWin_ != nullptr) {
+                const std::string& targetId = attachedWin_->selectedTargetId();
+                if (targetId != activeTargetId_) {
+                    setTargetGizmo(targetId);
+                }
+            }
+        });
+        if (!attachedWin_->selectedTargetId().empty()) {
+            setTargetGizmo(attachedWin_->selectedTargetId());
+        }
+    }
+}
 
 void OcctViewport::setSelectionMode(SelectionSubShapeMode mode) {
     selectionMode_ = mode;

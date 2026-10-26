@@ -1,4 +1,5 @@
 #include "olp/app/CommandManager.h"
+#include "olp/algo/SeamAndToolpathAlgo.h"
 #include <algorithm>
 
 namespace olp::app {
@@ -93,6 +94,15 @@ const core::SeamDefinition* ProjectDocument::findSeam(const std::string& seamId)
         }
     }
     return nullptr;
+}
+
+core::Transform4d ProjectDocument::computeUFrameInWorld(int uframeNumber) const {
+    for (const auto& node : sceneNodes) {
+        if (node.type == core::SceneNodeType::Frame && node.uframeNumber == uframeNumber) {
+            return node.localTransform;
+        }
+    }
+    return core::Transform4d::identity();
 }
 
 // ------------------------------------------------------------------------------
@@ -272,6 +282,298 @@ void ReverseOperationPathCommand::applyReversed(std::vector<core::Target>& targe
         // push angle does not silently become a drag angle of the opposite sign.
         t.poseInUFrame.rot = t.poseInUFrame.rot * core::Mat3::rotZ(core::kPi);
     }
+}
+
+// ------------------------------------------------------------------------------
+// GenerateOperationFromSeamCommand
+// ------------------------------------------------------------------------------
+GenerateOperationFromSeamCommand::GenerateOperationFromSeamCommand(
+    ProjectDocument& doc,
+    std::string seamId,
+    const core::ToolpathGenParams* params,
+    std::string programId)
+    : doc_(doc),
+      seamId_(std::move(seamId)),
+      programId_(std::move(programId)) {
+    if (params != nullptr) {
+        hasCustomParams_ = true;
+        customParams_ = *params;
+    }
+    // Determine operationId up front so operationId() accessor is valid immediately
+    for (const auto& cu : doc_.controllers) {
+        for (const auto& prog : cu.programs) {
+            for (const auto& op : prog.operations) {
+                if (op.seamId == seamId_) {
+                    operationId_ = op.id;
+                    isNewOperation_ = false;
+                    return;
+                }
+            }
+        }
+    }
+    operationId_ = "op_" + seamId_;
+    isNewOperation_ = true;
+}
+
+void GenerateOperationFromSeamCommand::execute() {
+    core::SeamDefinition* seam = doc_.findSeam(seamId_);
+    if (!seam) {
+        mutated_ = false;
+        return;
+    }
+
+    if (!initialized_) {
+        beforeDirty_ = doc_.isDirty;
+        beforeSeamProgrammed_ = seam->programmed;
+
+        const core::Operation* existingOp = nullptr;
+        for (const auto& cu : doc_.controllers) {
+            for (const auto& prog : cu.programs) {
+                for (const auto& op : prog.operations) {
+                    if (op.seamId == seamId_) {
+                        existingOp = &op;
+                        break;
+                    }
+                }
+                if (existingOp) break;
+            }
+            if (existingOp) break;
+        }
+
+        if (existingOp != nullptr) {
+            isNewOperation_ = false;
+            operationId_ = existingOp->id;
+            beforeOp_ = *existingOp;
+        } else {
+            isNewOperation_ = true;
+            operationId_ = "op_" + seamId_;
+        }
+        initialized_ = true;
+    }
+
+    if (isNewOperation_) {
+        if (doc_.controllers.empty()) {
+            core::ControllerUnit cu;
+            cu.id = "cu_1";
+            cu.name = "FANUC_R30iB_Plus";
+            doc_.controllers.push_back(std::move(cu));
+            createdController_ = true;
+        }
+        if (doc_.controllers[0].programs.empty()) {
+            core::Program p;
+            p.id = "prog_1";
+            p.name = "WELD_001";
+            doc_.controllers[0].programs.push_back(std::move(p));
+        }
+
+        core::Program* targetProg = nullptr;
+        if (!programId_.empty()) {
+            for (auto& cu : doc_.controllers) {
+                for (auto& p : cu.programs) {
+                    if (p.id == programId_) {
+                        targetProg = &p;
+                        break;
+                    }
+                }
+                if (targetProg) break;
+            }
+        }
+        if (targetProg == nullptr) {
+            targetProg = &doc_.controllers[0].programs[0];
+        }
+
+        core::Operation op;
+        op.id = operationId_;
+        op.name = "Op_" + seam->name;
+        op.seamId = seam->id;
+        op.exemptionPartIds = {seam->face1PartId, seam->face2PartId};
+        if (hasCustomParams_) {
+            op.genParams = customParams_;
+        }
+
+        const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(targetProg->uframeNumber);
+        algo::SeamAndToolpathAlgo::generateOperationTargets(*seam, uframeInWorld, op);
+
+        targetProg->operations.push_back(std::move(op));
+    } else {
+        core::Operation* op = doc_.findOperation(operationId_);
+        if (!op) {
+            mutated_ = false;
+            return;
+        }
+        if (hasCustomParams_) {
+            op->genParams = customParams_;
+        }
+        int uframeNum = 1;
+        for (const auto& cu : doc_.controllers) {
+            for (const auto& p : cu.programs) {
+                for (const auto& checkOp : p.operations) {
+                    if (checkOp.id == operationId_) {
+                        uframeNum = p.uframeNumber;
+                        break;
+                    }
+                }
+            }
+        }
+        const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(uframeNum);
+        algo::SeamAndToolpathAlgo::generateOperationTargets(*seam, uframeInWorld, *op);
+    }
+
+    seam->programmed = true;
+    doc_.isDirty = true;
+    mutated_ = true;
+}
+
+void GenerateOperationFromSeamCommand::undo() {
+    if (!mutated_) return;
+
+    core::SeamDefinition* seam = doc_.findSeam(seamId_);
+    if (seam) {
+        seam->programmed = beforeSeamProgrammed_;
+    }
+
+    if (isNewOperation_) {
+        for (auto& cu : doc_.controllers) {
+            for (auto& prog : cu.programs) {
+                auto it = std::remove_if(prog.operations.begin(), prog.operations.end(),
+                    [&](const core::Operation& o) { return o.id == operationId_; });
+                if (it != prog.operations.end()) {
+                    prog.operations.erase(it, prog.operations.end());
+                }
+            }
+        }
+        if (createdController_) {
+            doc_.controllers.pop_back();
+        }
+    } else {
+        core::Operation* op = doc_.findOperation(operationId_);
+        if (op) {
+            *op = beforeOp_;
+        }
+    }
+
+    doc_.isDirty = beforeDirty_;
+}
+
+std::string GenerateOperationFromSeamCommand::description() const {
+    return (isNewOperation_ ? "Generate Operation from Seam (" : "Regenerate Operation from Seam (") + seamId_ + ")";
+}
+
+// ------------------------------------------------------------------------------
+// RegenerateOperationTargetsCommand
+// ------------------------------------------------------------------------------
+RegenerateOperationTargetsCommand::RegenerateOperationTargetsCommand(
+    ProjectDocument& doc, std::string operationId)
+    : doc_(doc), operationId_(std::move(operationId)) {}
+
+void RegenerateOperationTargetsCommand::execute() {
+    core::Operation* op = doc_.findOperation(operationId_);
+    if (!op || op->seamId.empty()) {
+        mutated_ = false;
+        return;
+    }
+    core::SeamDefinition* seam = doc_.findSeam(op->seamId);
+    if (!seam) {
+        mutated_ = false;
+        return;
+    }
+
+    if (!initialized_) {
+        beforeTargets_ = op->targets;
+        beforeDirty_ = doc_.isDirty;
+        initialized_ = true;
+    }
+
+    int uframeNum = 1;
+    for (const auto& cu : doc_.controllers) {
+        for (const auto& p : cu.programs) {
+            for (const auto& checkOp : p.operations) {
+                if (checkOp.id == operationId_) {
+                    uframeNum = p.uframeNumber;
+                    break;
+                }
+            }
+        }
+    }
+    const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(uframeNum);
+    algo::SeamAndToolpathAlgo::generateOperationTargets(*seam, uframeInWorld, *op);
+
+    seam->programmed = true;
+    doc_.isDirty = true;
+    mutated_ = true;
+}
+
+void RegenerateOperationTargetsCommand::undo() {
+    if (!mutated_) return;
+    core::Operation* op = doc_.findOperation(operationId_);
+    if (op) {
+        op->targets = beforeTargets_;
+    }
+    doc_.isDirty = beforeDirty_;
+}
+
+// ------------------------------------------------------------------------------
+// SmoothTargetOrientationsCommand
+// ------------------------------------------------------------------------------
+SmoothTargetOrientationsCommand::SmoothTargetOrientationsCommand(
+    ProjectDocument& doc,
+    std::string operationId,
+    std::string startTargetId,
+    std::string endTargetId)
+    : doc_(doc),
+      operationId_(std::move(operationId)),
+      startTargetId_(std::move(startTargetId)),
+      endTargetId_(std::move(endTargetId)) {}
+
+void SmoothTargetOrientationsCommand::execute() {
+    core::Operation* op = doc_.findOperation(operationId_);
+    if (!op) {
+        mutated_ = false;
+        return;
+    }
+
+    if (!initialized_) {
+        beforeTargets_ = op->targets;
+        beforeDirty_ = doc_.isDirty;
+        initialized_ = true;
+    }
+
+    const core::SeamDefinition* seam = doc_.findSeam(op->seamId);
+    int uframeNum = 1;
+    for (const auto& cu : doc_.controllers) {
+        for (const auto& p : cu.programs) {
+            for (const auto& checkOp : p.operations) {
+                if (checkOp.id == operationId_) {
+                    uframeNum = p.uframeNumber;
+                    break;
+                }
+            }
+        }
+    }
+    const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(uframeNum);
+
+    const bool ok = algo::SeamAndToolpathAlgo::interpolateOrientationsSlerp(
+        *op, startTargetId_, endTargetId_, seam, uframeInWorld);
+    if (!ok) {
+        mutated_ = false;
+        return;
+    }
+
+    doc_.isDirty = true;
+    mutated_ = true;
+}
+
+void SmoothTargetOrientationsCommand::undo() {
+    if (!mutated_) return;
+    core::Operation* op = doc_.findOperation(operationId_);
+    if (op) {
+        op->targets = beforeTargets_;
+    }
+    doc_.isDirty = beforeDirty_;
+}
+
+std::string SmoothTargetOrientationsCommand::description() const {
+    return "Smooth Target Orientations (" + operationId_ + ")";
 }
 
 // ------------------------------------------------------------------------------

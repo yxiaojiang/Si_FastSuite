@@ -134,6 +134,9 @@ struct Mat3 {
         if (cosTheta < -1.0) cosTheta = -1.0;
         return std::acos(cosTheta);
     }
+
+    // M08: Spherical linear interpolation between two rotation matrices
+    static Mat3 slerp(const Mat3& R1, const Mat3& R2, double t) noexcept;
 };
 
 struct Quat {
@@ -227,6 +230,12 @@ struct Quat {
         }.normalized();
     }
 };
+
+inline Mat3 Mat3::slerp(const Mat3& R1, const Mat3& R2, double t) noexcept {
+    const Quat q1 = Quat::fromMat3(R1);
+    const Quat q2 = Quat::fromMat3(R2);
+    return Quat::slerp(q1, q2, t).toMat3();
+}
 
 // FANUC Cartesian Pose (X, Y, Z in mm; W, P, R in degrees: R = Rz(R) * Ry(P) * Rx(W))
 struct WprPose {

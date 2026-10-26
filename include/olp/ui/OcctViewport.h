@@ -14,6 +14,8 @@
 
 namespace olp::ui {
 
+class MainWindow;
+
 enum class SelectionSubShapeMode {
     Object = 0, // TopAbs_SHAPE / solid level
     Vertex = 1, // TopAbs_VERTEX
@@ -81,6 +83,9 @@ public:
         multiTargetProvider_ = std::move(provider);
     }
 
+    void attachMainWindow(MainWindow* win);
+    MainWindow* attachedMainWindow() const noexcept { return attachedWin_; }
+
     void setEdgePickedCallback(std::function<void(const PickedEdge&)> cb) { edgePickedCb_ = std::move(cb); }
     const std::optional<PickedEdge>& lastPickedEdge() const noexcept { return lastPickedEdge_; }
     void clearPickedEdge() noexcept { lastPickedEdge_.reset(); }
@@ -127,6 +132,8 @@ private:
     std::function<std::vector<std::string>()> multiTargetProvider_{};
     std::optional<PickedEdge> lastPickedEdge_{};
     std::function<void(const PickedEdge&)> edgePickedCb_{};
+    MainWindow* attachedWin_{nullptr};
+    int winSelectionListenerId_{-1};
 };
 
 } // namespace olp::ui

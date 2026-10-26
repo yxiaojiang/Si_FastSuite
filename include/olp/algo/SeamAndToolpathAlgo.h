@@ -65,6 +65,14 @@ public:
         const core::SeamDefinition& seam,
         const core::Transform4d& uframeInWorld,
         core::Operation& inOutOperation);
+
+    // M08: Smooth intermediate target orientations between startTarget and endTarget using SLERP
+    static bool interpolateOrientationsSlerp(
+        core::Operation& inOutOperation,
+        const std::string& startTargetId = "",
+        const std::string& endTargetId = "",
+        const core::SeamDefinition* seam = nullptr,
+        const core::Transform4d& uframeInWorld = core::Transform4d::identity());
 };
 
 } // namespace olp::algo

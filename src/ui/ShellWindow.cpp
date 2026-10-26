@@ -396,10 +396,48 @@ void ShellWindow::buildChrome() {
     pickAction->setIconText(QString::fromUtf8("拾取"));
     pickAction->setCheckable(true);
     pickAction->setChecked(true);
-    auto* pathAction = disabledAction(this, QString::fromUtf8("生成路径"), QString::fromUtf8("按焊缝生成路径。") + later, IconKind::Path, pathInk);
+    auto* pathAction = new QAction(commandIcon(IconKind::Path, pathInk), QString::fromUtf8("生成路径"), this);
     pathAction->setIconText(QString::fromUtf8("路径"));
+    pathAction->setToolTip(QString::fromUtf8("由选中焊缝自动生成操作路径。"));
+    connect(pathAction, &QAction::triggered, this, [this] {
+        if (controller_.generateOperationFromSelectedSeam()) {
+            statusBar()->showMessage(QString::fromUtf8("已由焊缝生成焊接操作路径。"), 3000);
+            refreshFromDocument();
+        } else {
+            statusBar()->showMessage(QString::fromUtf8("未能生成路径：未找到焊缝定义。"), 3000);
+        }
+    });
+
+    auto* slerpAction = new QAction(commandIcon(IconKind::Path, pathInk), QString::fromUtf8("姿态平滑"), this);
+    slerpAction->setIconText(QString::fromUtf8("平滑"));
+    slerpAction->setToolTip(QString::fromUtf8("对选中操作路径多点姿态执行 SLERP 球形线性插值平滑。"));
+    connect(slerpAction, &QAction::triggered, this, [this] {
+        if (controller_.smoothTargetOrientations()) {
+            statusBar()->showMessage(QString::fromUtf8("已完成路径姿态 SLERP 平滑插值。"), 3000);
+            refreshFromDocument();
+        } else {
+            statusBar()->showMessage(QString::fromUtf8("未能执行姿态平滑：没有有效操作或中间点。"), 3000);
+        }
+    });
+
     auto* simAction = disabledAction(this, QString::fromUtf8("仿真"), QString::fromUtf8("播放机器人轨迹。") + later, IconKind::Sim, pathInk);
     auto* exportAction = disabledAction(this, QString::fromUtf8("导出"), QString::fromUtf8("导出 FANUC 程序。") + later, IconKind::Export, pathInk);
+
+    auto* prevTargetAction = new QAction(QString::fromUtf8("上一目标点"), this);
+    prevTargetAction->setShortcut(QKeySequence(Qt::Key_BracketLeft));
+    prevTargetAction->setToolTip(QString::fromUtf8("单步切换到上一个目标点 [快捷键: '[']"));
+    connect(prevTargetAction, &QAction::triggered, this, [this] {
+        controller_.stepTarget(false);
+    });
+    addAction(prevTargetAction);
+
+    auto* nextTargetAction = new QAction(QString::fromUtf8("下一目标点"), this);
+    nextTargetAction->setShortcut(QKeySequence(Qt::Key_BracketRight));
+    nextTargetAction->setToolTip(QString::fromUtf8("单步切换到下一个目标点 [快捷键: ']']"));
+    connect(nextTargetAction, &QAction::triggered, this, [this] {
+        controller_.stepTarget(true);
+    });
+    addAction(nextTargetAction);
     loadAction->setIconText(QString::fromUtf8("示例"));
     newAction->setIconText(QString::fromUtf8("新建"));
     openAction->setIconText(QString::fromUtf8("打开"));
@@ -425,7 +463,7 @@ void ShellWindow::buildChrome() {
         {layoutAction_, olpAction_}));
     ribbonLayout->addWidget(groupDivider(ribbon));
     ribbonLayout->addWidget(commandGroup(ribbon, QString::fromUtf8("编程"),
-        {pickAction, pathAction, simAction, exportAction}));
+        {pickAction, pathAction, slerpAction, simAction, exportAction}));
     ribbonLayout->addWidget(groupDivider(ribbon));
     ribbonLayout->addWidget(commandGroup(ribbon, QString::fromUtf8("视图"), {fitAction}));
     ribbonLayout->addStretch(1);
@@ -435,6 +473,7 @@ void ShellWindow::buildChrome() {
     toolbar->addWidget(ribbon);
 
     viewport_ = new OcctViewport(controller_.document(), controller_.commandManager(), &controller_.cadKernel(), this);
+    viewport_->attachMainWindow(&controller_);
     setCentralWidget(viewport_);
 
     connect(pickAction, &QAction::toggled, this, [this](bool checked) {
@@ -882,6 +921,40 @@ void ShellWindow::applySelection() {
         showPropertiesForTarget(QString::fromStdString(controller_.selectedTargetId()));
         if (viewport_ != nullptr) {
             viewport_->setTargetGizmo(controller_.selectedTargetId());
+        }
+        syncJogFromRobot();
+
+        if (targetTable_ != nullptr) {
+            const bool wasRefreshing = refreshing_;
+            refreshing_ = true;
+            for (int r = 0; r < targetTable_->rowCount(); ++r) {
+                auto* item = targetTable_->item(r, 0);
+                if (item != nullptr && item->data(Qt::UserRole).toString().toStdString() == controller_.selectedTargetId()) {
+                    targetTable_->selectRow(r);
+                    targetTable_->scrollToItem(item);
+                    break;
+                }
+            }
+            refreshing_ = wasRefreshing;
+        }
+
+        if (programTree_ != nullptr && !controller_.selectedOperationId().empty()) {
+            const bool wasRefreshing = refreshing_;
+            refreshing_ = true;
+            for (int i = 0; i < programTree_->topLevelItemCount(); ++i) {
+                auto* top = programTree_->topLevelItem(i);
+                for (int j = 0; j < top->childCount(); ++j) {
+                    auto* progItem = top->child(j);
+                    for (int k = 0; k < progItem->childCount(); ++k) {
+                        auto* opItem = progItem->child(k);
+                        if (opItem->data(0, Qt::UserRole + 1).toString().toStdString() == controller_.selectedOperationId()) {
+                            programTree_->setCurrentItem(opItem);
+                            break;
+                        }
+                    }
+                }
+            }
+            refreshing_ = wasRefreshing;
         }
         return;
     }
