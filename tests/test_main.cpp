@@ -1771,6 +1771,58 @@ void testSeamToOperationAndSlerpStepping() {
         check(doc.isDirty == true, "Redo marks document dirty again");
     }
 
+    // M08-003 regression: Zero-change SLERP does not pollute Undo stack or userModified
+    olp::core::Operation zeroOp;
+    zeroOp.id = "zero_slerp_op";
+    zeroOp.seamId = seamLine.id;
+    for (int i = 0; i < 4; ++i) {
+        olp::core::Target t;
+        t.id = "zero_T_" + std::to_string(i);
+        t.arcLengthRatio = i / 3.0;
+        t.role = (i == 0) ? olp::core::TargetRole::WELD_START :
+                 ((i == 3) ? olp::core::TargetRole::WELD_END : olp::core::TargetRole::WELD_VIA);
+        t.poseInUFrame.rot = olp::core::Mat3::identity();
+        zeroOp.targets.push_back(t);
+    }
+    doc.controllers.front().programs.front().operations.push_back(zeroOp);
+    const size_t undoCountBeforeZeroSlerp = cmdMgr.undoCount();
+    auto noChangeCmd = std::make_unique<olp::app::SmoothTargetOrientationsCommand>(
+        doc, "zero_slerp_op");
+    cmdMgr.executeCommand(std::move(noChangeCmd));
+    check(cmdMgr.undoCount() == undoCountBeforeZeroSlerp,
+          "Zero-change SLERP command is rejected by didMutate() gate and not stacked");
+    const auto* zeroOpCheck = doc.findOperation("zero_slerp_op");
+    check(zeroOpCheck != nullptr && !zeroOpCheck->targets[1].userModified && !zeroOpCheck->targets[2].userModified,
+          "Intermediate targets remain !userModified after zero-change SLERP");
+
+    // M08-004 regression: RegenerateOperationTargetsCommand undo restores seam.programmed and doc.isDirty
+    olp::core::SeamDefinition seamRegen = seamLine;
+    seamRegen.id = "seam_regen";
+    seamRegen.programmed = false;
+    doc.seams.push_back(seamRegen);
+    doc.isDirty = false;
+
+    olp::core::Operation opRegen;
+    opRegen.id = "op_regen";
+    opRegen.seamId = "seam_regen";
+    doc.controllers.front().programs.front().operations.push_back(opRegen);
+
+    const size_t undoCountBeforeRegen = cmdMgr.undoCount();
+    auto regenCmd = std::make_unique<olp::app::RegenerateOperationTargetsCommand>(doc, "op_regen");
+    cmdMgr.executeCommand(std::move(regenCmd));
+
+    check(cmdMgr.undoCount() == undoCountBeforeRegen + 1, "RegenerateOperationTargetsCommand executed and stacked");
+    check(doc.isDirty, "RegenerateOperationTargetsCommand marks doc.isDirty = true");
+    check(doc.findSeam("seam_regen")->programmed, "RegenerateOperationTargetsCommand marks seam.programmed = true");
+
+    cmdMgr.undo();
+    check(!doc.isDirty, "Undo RegenerateOperationTargetsCommand restores doc.isDirty = false");
+    check(!doc.findSeam("seam_regen")->programmed, "Undo RegenerateOperationTargetsCommand restores seam.programmed = false");
+
+    cmdMgr.redo();
+    check(doc.isDirty, "Redo RegenerateOperationTargetsCommand re-marks doc.isDirty = true");
+    check(doc.findSeam("seam_regen")->programmed, "Redo RegenerateOperationTargetsCommand restores seam.programmed = true");
+
     // 4. Target stepping navigation & OcctViewport linkage & IK preview
     olp::ui::MainWindow win;
     olp::core::ControllerUnit winCu;
@@ -1790,6 +1842,17 @@ void testSeamToOperationAndSlerpStepping() {
         winOp.targets.push_back(t);
     }
     winProg.operations.push_back(winOp);
+
+    // M08-005 regression: second operation to verify cross-operation selectTarget resolution
+    olp::core::Operation winOp2;
+    winOp2.id = "op_step2";
+    for (int i = 0; i < 2; ++i) {
+        olp::core::Target t;
+        t.id = "op2_T_" + std::to_string(i + 1);
+        t.name = "OP2_P" + std::to_string(i + 1);
+        winOp2.targets.push_back(t);
+    }
+    winProg.operations.push_back(winOp2);
     winCu.programs.push_back(winProg);
     win.document().controllers.push_back(winCu);
 
@@ -1828,6 +1891,14 @@ void testSeamToOperationAndSlerpStepping() {
           "stepTarget(false) navigates back to previous target (step_T_1)");
     check(viewport.activeTargetId() == "step_T_1",
           "Viewport activeTargetId synchronizes back to step_T_1");
+
+    // M08-005 regression check: cross-operation target selection with default operationId
+    win.selectTarget("op2_T_2");
+    check(win.selectedTargetId() == "op2_T_2", "selectTarget successfully updates selectedTargetId to op2_T_2");
+    check(win.selectedOperationId() == "op_step2",
+          "selectTarget with default operationId correctly resolves owning operationId to op_step2");
+    check(viewport.activeTargetId() == "op2_T_2",
+          "Viewport activeTargetId synchronizes to op2_T_2 across operations");
 }
 
 } // namespace

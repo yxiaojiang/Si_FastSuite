@@ -317,7 +317,7 @@ GenerateOperationFromSeamCommand::GenerateOperationFromSeamCommand(
 
 void GenerateOperationFromSeamCommand::execute() {
     core::SeamDefinition* seam = doc_.findSeam(seamId_);
-    if (!seam) {
+    if (!seam || seam->sampledFrames.empty()) {
         mutated_ = false;
         return;
     }
@@ -364,6 +364,7 @@ void GenerateOperationFromSeamCommand::execute() {
             p.id = "prog_1";
             p.name = "WELD_001";
             doc_.controllers[0].programs.push_back(std::move(p));
+            createdProgram_ = true;
         }
 
         core::Program* targetProg = nullptr;
@@ -442,6 +443,9 @@ void GenerateOperationFromSeamCommand::undo() {
                 }
             }
         }
+        if (createdProgram_ && !doc_.controllers.empty() && !doc_.controllers[0].programs.empty()) {
+            doc_.controllers[0].programs.pop_back();
+        }
         if (createdController_) {
             doc_.controllers.pop_back();
         }
@@ -479,7 +483,9 @@ void RegenerateOperationTargetsCommand::execute() {
     }
 
     if (!initialized_) {
+        seamId_ = op->seamId;
         beforeTargets_ = op->targets;
+        beforeSeamProgrammed_ = seam->programmed;
         beforeDirty_ = doc_.isDirty;
         initialized_ = true;
     }
@@ -508,6 +514,10 @@ void RegenerateOperationTargetsCommand::undo() {
     core::Operation* op = doc_.findOperation(operationId_);
     if (op) {
         op->targets = beforeTargets_;
+    }
+    core::SeamDefinition* seam = doc_.findSeam(seamId_);
+    if (seam) {
+        seam->programmed = beforeSeamProgrammed_;
     }
     doc_.isDirty = beforeDirty_;
 }

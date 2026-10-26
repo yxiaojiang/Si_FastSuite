@@ -33,3 +33,13 @@
 - **现状**：客户实景导入与 3D PDF 交互式工位报告输出处于排期后置阶段，五天熔断机制未正式开始计时。
 - **触发阶段**：M14 报告导出与工程交付阶段。
 - **验收条件**：支持输出内嵌 3D 模型的工程报告 PDF 或一键 Web 预览包。
+
+---
+
+## UI-001 [OPEN] 主工具栏“姿态平滑”按钮支持 `targetTable_` 多选局部区间插值（P2）
+
+- **来源轮次**：`M08-TOOLPATH-EDIT-001` Round 1 审核（2026-10-26）。
+- **位置**：`src/ui/ShellWindow.cpp:411-421`。
+- **现状**：底层 `SeamAndToolpathAlgo::interpolateOrientationsSlerp` 与 `SmoothTargetOrientationsCommand` 已支持传入局部起止点 `startTargetId`、`endTargetId`，但 `ShellWindow` 工具栏 `slerpAction` 点击时目前固定调用无参 `controller_.smoothTargetOrientations()`（默认对整条焊缝首尾焊接点插值），尚未读取 `targetTable_` 中用户框选的多行起止目标点。
+- **触发阶段**：M09 路径点表格编辑与局部姿态交互微调阶段。
+- **验收条件**：当用户在 `targetTable_` 中选中 $\ge 2$ 行焊接目标点并点击“姿态平滑”时，自动提取选中行的首尾 `targetId` 执行局部区间 SLERP 插值。

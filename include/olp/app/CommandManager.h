@@ -134,6 +134,7 @@ private:
     bool mutated_{false};
     bool initialized_{false};
     bool createdController_{false};
+    bool createdProgram_{false};
 };
 
 // M08: Regenerate Operation Targets Command
@@ -149,7 +150,9 @@ public:
 private:
     ProjectDocument& doc_;
     std::string operationId_;
+    std::string seamId_{};
     std::vector<core::Target> beforeTargets_{};
+    bool beforeSeamProgrammed_{false};
     bool beforeDirty_{false};
     bool initialized_{false};
     bool mutated_{false};

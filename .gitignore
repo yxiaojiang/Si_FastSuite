@@ -34,6 +34,7 @@ compile_commands.json
 vcpkg_installed/
 
 # Logs and temporary files
+temps/
 *.log
 *.tmp
 *.bak

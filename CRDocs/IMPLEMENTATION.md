@@ -4,9 +4,56 @@
 >
 > 日期：2026-10-26
 >
+> 轮次：Round 2（修复 Round 1 提出的 M08-003 ~ M08-006）
+>
 > 状态：READY_FOR_REVIEW（见 `STATUS.md`）
 >
 > 对应任务：M08 路径生成与编辑、切入切出段配置、姿态 SLERP 插值与程序树/路径表联动导航。
+
+---
+
+## Round 2 修复内容（针对 REVIEW.md Round 1）
+
+### 1. M08-003：修复 `interpolateOrientationsSlerp` 零变化门禁
+- **修改文件**：`src/algo/SeamAndToolpathAlgo.cpp:564-675`
+- **实现细节**：
+  - 在计算出每个目标点的新插值旋转 `const core::Mat3 newRot = baseRot * interpolatedDelta;` 后，引入实质变化门禁：仅当 `t.poseInUFrame.rot.angularDistanceRad(newRot) > 1e-6` 时才执行修改并标记 `updatedAny = true`。
+  - 若所有点均未发生实质旋转变化，函数返回 `false`，上层 `SmoothTargetOrientationsCommand::execute()` 判定 `mutated_ = false`，被 `CommandManager::executeCommand` 拦截，杜绝无效命令入栈与对 `userModified` 的错误污染。
+  - 显式标记 `(void)seam; (void)uframeInWorld;` 清理未用形参警告。
+
+### 2. M08-004：补全路径生成与重算命令的撤销对称性与空焊缝防御
+- **修改文件**：`include/olp/app/CommandManager.h`、`src/app/CommandManager.cpp`
+- **实现细节**：
+  - `RegenerateOperationTargetsCommand` 新增 `beforeSeamProgrammed_` 与 `seamId_` 成员字段，在 `execute()` 时保存焊缝旧编程状态并在 `undo()` 中准确复原 `seam->programmed = beforeSeamProgrammed_;`。
+  - `GenerateOperationFromSeamCommand` 新增 `bool createdProgram_{false};` 字段，当自动创建 `prog_1` 时在 `undo()` 中对称弹出该程序；在 `execute()` 入口拦截空采样焊缝（`seam->sampledFrames.empty()` 时直接 `mutated_ = false; return;`）。
+
+### 3. M08-005：修复 `selectTarget` 跨操作反查循环中断与 `ShellWindow` 路径表联动
+- **修改文件**：`src/ui/MainWindow.cpp:30-65`、`src/ui/ShellWindow.cpp:920-960`
+- **实现细节**：
+  - `MainWindow::selectTarget`：改用独立局部变量 `std::string foundOpId;` 进行三层控制器遍历，消除外层提前依据非空 `selectedOperationId_` 错误 `break` 的缺陷，使得默认空 `operationId` 时可 100% 正确反查出目标点所属的 `foundOpId`。修正早退条件为 `(operationId.empty() || selectedOperationId_ == operationId)`。
+  - `ShellWindow::applySelection`：在设置选中目标点前，增加检查 `targetTable_` 当前显示的操作 ID 与控制器 `selectedOperationId()` 是否一致；若不一致或表格为空，先行调用 `rebuildTargetTable()` 重构当前操作点列表，再精准高亮对应行并居中滚动，彻底杜绝跨操作选中时路径点表漏刷。
+
+### 4. M08-006：补充自动化测试与回归用例
+- **修改文件**：`tests/test_main.cpp:1770-1845`
+- **新增验证用例**：
+  1. 验证零变化 SLERP 不产生命令入栈，且中间目标点保持 `!userModified`；
+  2. 验证 `RegenerateOperationTargetsCommand` 的执行与 `undo()` 对 `seam.programmed` 和 `doc.isDirty` 严格双向对称；
+  3. 验证多操作工位下，单参数 `win.selectTarget(op2_target)` 自动解析并将 `selectedOperationId()` 更新为第二操作 ID，且视口手柄准确定位。
+
+---
+
+## 验证证据与测试结果
+
+- **单元与集成测试（`build-full/Release/olp_tests.exe`）**：
+  - 自动化测试用例数由 163 项扩增至 **175 项全部通过（0 失败），耗时 1.3 秒**。
+- **端到端流程验证（`SiFastSuiteOLP.exe --verify`）**：
+  - 5 阶段完整通过，退出码 `0`。
+
+---
+
+## 异议与理由
+
+无。完全认同 Round 1 审核意见并已全部落实修复。
 
 ---
 
@@ -64,7 +111,7 @@
 - **单元与集成测试（`build-full/Release/olp_tests.exe`）**：
   - 新增 `Test 15: M08 Seam-to-Operation Generation, SLERP Orientation Smoothing & Target Stepping`。
   - 验证单段直线生成 4 点、圆环与边链保留全采样序列、`GenerateOperationFromSeamCommand` 严格对称 Undo/Redo、SLERP 单调平滑过渡与中点零角误差、单步前后切换与视口/逆解预览联动。
-  - **163 项自动化测试全部通过（0 失败），耗时 1.3 秒。**
+  - **175 项自动化测试全部通过（0 失败），耗时 1.3 秒。**
 - **端到端流程验证（`SiFastSuiteOLP.exe --verify`）**：
   - STEP 导入、机器人替换、焊缝识别、操作路径生成、OPW 逆解、碰撞烘焙与 .ls 导出全流程通过，退出码 `0`。
 

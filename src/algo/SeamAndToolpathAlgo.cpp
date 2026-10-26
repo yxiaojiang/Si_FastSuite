@@ -567,6 +567,9 @@ bool SeamAndToolpathAlgo::interpolateOrientationsSlerp(
     const std::string& endTargetId,
     const core::SeamDefinition* seam,
     const core::Transform4d& uframeInWorld) {
+    (void)seam;
+    (void)uframeInWorld;
+
     auto& targets = inOutOperation.targets;
     if (targets.size() < 3) {
         return false;
@@ -663,12 +666,15 @@ bool SeamAndToolpathAlgo::interpolateOrientationsSlerp(
 
         const core::Mat3 interpolatedDelta = core::Mat3::slerp(deltaA, deltaB, tau);
         const core::Mat3 baseRot = computeBaseRotAtTarget(t);
+        const core::Mat3 newRot = baseRot * interpolatedDelta;
 
-        t.poseInUFrame.rot = baseRot * interpolatedDelta;
-        t.userDeltaOffset.rot = interpolatedDelta;
-        t.userModified = true;
-        t.cache.valid = false;
-        updatedAny = true;
+        if (t.poseInUFrame.rot.angularDistanceRad(newRot) > 1e-6) {
+            t.poseInUFrame.rot = newRot;
+            t.userDeltaOffset.rot = interpolatedDelta;
+            t.userModified = true;
+            t.cache.valid = false;
+            updatedAny = true;
+        }
     }
 
     return updatedAny;

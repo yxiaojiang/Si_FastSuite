@@ -927,6 +927,20 @@ void ShellWindow::applySelection() {
         if (targetTable_ != nullptr) {
             const bool wasRefreshing = refreshing_;
             refreshing_ = true;
+            bool needsRebuild = (targetTable_->rowCount() == 0);
+            if (!needsRebuild) {
+                auto* firstItem = targetTable_->item(0, 0);
+                if (firstItem != nullptr) {
+                    const std::string tableOpId = firstItem->data(Qt::UserRole + 1).toString().toStdString();
+                    if (!controller_.selectedOperationId().empty() && tableOpId != controller_.selectedOperationId()) {
+                        needsRebuild = true;
+                    }
+                }
+            }
+            if (needsRebuild) {
+                rebuildTargetTable();
+            }
+
             for (int r = 0; r < targetTable_->rowCount(); ++r) {
                 auto* item = targetTable_->item(r, 0);
                 if (item != nullptr && item->data(Qt::UserRole).toString().toStdString() == controller_.selectedTargetId()) {

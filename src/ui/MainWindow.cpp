@@ -28,27 +28,31 @@ void MainWindow::selectOperation(const std::string& operationId) {
 }
 
 void MainWindow::selectTarget(const std::string& targetId, const std::string& operationId) {
-    if (selectedTargetId_ == targetId && (!operationId.empty() && selectedOperationId_ == operationId) && selectedSceneNodeId_.empty()) {
+    if (selectedTargetId_ == targetId && (operationId.empty() || selectedOperationId_ == operationId) && selectedSceneNodeId_.empty()) {
         return;
     }
     selectedTargetId_ = targetId;
     if (!operationId.empty()) {
         selectedOperationId_ = operationId;
     } else if (!targetId.empty()) {
+        std::string foundOpId;
         for (const auto& cu : doc_.controllers) {
             for (const auto& prog : cu.programs) {
                 for (const auto& op : prog.operations) {
                     for (const auto& t : op.targets) {
                         if (t.id == targetId) {
-                            selectedOperationId_ = op.id;
+                            foundOpId = op.id;
                             break;
                         }
                     }
-                    if (!selectedOperationId_.empty()) break;
+                    if (!foundOpId.empty()) break;
                 }
-                if (!selectedOperationId_.empty()) break;
+                if (!foundOpId.empty()) break;
             }
-            if (!selectedOperationId_.empty()) break;
+            if (!foundOpId.empty()) break;
+        }
+        if (!foundOpId.empty()) {
+            selectedOperationId_ = foundOpId;
         }
     }
     selectedSceneNodeId_.clear();
