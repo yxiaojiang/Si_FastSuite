@@ -17,9 +17,11 @@
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepLProp_SLProps.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
+#include <Poly_Triangulation.hxx>
 #include <STEPCAFControl_Reader.hxx>
 #include <STEPControl_Reader.hxx>
 #include <ShapeAnalysis_Surface.hxx>
@@ -633,18 +635,131 @@ bool OcctCadKernel::evaluateFaceOutwardNormal(
     return true;
 }
 
+#ifdef OLP_HAS_OCCT
+static void extractTrianglesFromShape(const TopoDS_Shape& shape, core::TriMesh& outMesh) {
+    outMesh.vertices.clear();
+    outMesh.triangles.clear();
+    for (TopExp_Explorer faces(shape, TopAbs_FACE); faces.More(); faces.Next()) {
+        const TopoDS_Face face = TopoDS::Face(faces.Current());
+        TopLoc_Location loc;
+        const Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+        if (tri.IsNull()) continue;
+        const gp_Trsf trsf = loc.Transformation();
+        const uint32_t baseIdx = static_cast<uint32_t>(outMesh.vertices.size());
+        const int nbNodes = tri->NbNodes();
+        for (int i = 1; i <= nbNodes; ++i) {
+            gp_Pnt p = tri->Node(i).Transformed(trsf);
+            outMesh.vertices.push_back({p.X(), p.Y(), p.Z()});
+        }
+        const bool reversed = (face.Orientation() == TopAbs_REVERSED) ^ trsf.IsNegative();
+        const int nbTriangles = tri->NbTriangles();
+        for (int i = 1; i <= nbTriangles; ++i) {
+            int n1 = 0, n2 = 0, n3 = 0;
+            tri->Triangle(i).Get(n1, n2, n3);
+            if (reversed) std::swap(n1, n2);
+            outMesh.triangles.push_back({
+                baseIdx + static_cast<uint32_t>(n1 - 1),
+                baseIdx + static_cast<uint32_t>(n2 - 1),
+                baseIdx + static_cast<uint32_t>(n3 - 1)
+            });
+        }
+    }
+}
+#endif
+
 bool OcctCadKernel::tessellate(
     int cadHandleId,
-    double /*fineDeflectionMm*/,
-    double /*coarseDeflectionMm*/,
+    double fineDeflectionMm,
+    double coarseDeflectionMm,
     core::TriMesh& outRenderMesh,
     core::TriMesh& outCollisionMesh) const {
     auto it = solids_.find(cadHandleId);
     if (it == solids_.end()) return false;
+
+#ifdef OLP_HAS_OCCT
+    auto shapeIt = shapes_.find(cadHandleId);
+    if (shapeIt != shapes_.end() && !shapeIt->second.IsNull()) {
+        const TopoDS_Shape& shape = shapeIt->second;
+        const double fineDef = fineDeflectionMm > 0.0 ? fineDeflectionMm : 0.2;
+        const double coarseDef = coarseDeflectionMm > 0.0 ? coarseDeflectionMm : 2.0;
+
+        BRepTools::Clean(shape);
+        BRepMesh_IncrementalMesh coarseMesh(shape, coarseDef);
+        coarseMesh.Perform();
+        extractTrianglesFromShape(shape, outCollisionMesh);
+
+        BRepTools::Clean(shape);
+        BRepMesh_IncrementalMesh fineMesh(shape, fineDef);
+        fineMesh.Perform();
+        extractTrianglesFromShape(shape, outRenderMesh);
+
+        outRenderMesh.bboxMin = it->second.bboxMin;
+        outRenderMesh.bboxMax = it->second.bboxMax;
+        outCollisionMesh.bboxMin = it->second.bboxMin;
+        outCollisionMesh.bboxMax = it->second.bboxMax;
+        return true;
+    }
+#else
+    (void)fineDeflectionMm;
+    (void)coarseDeflectionMm;
+#endif
+
     outRenderMesh = makeBoxMesh(it->second.bboxMin, it->second.bboxMax);
     outCollisionMesh = outRenderMesh;
     return true;
 }
+
+#ifdef OLP_HAS_OCCT
+TopoDS_Shape OcctCadKernel::getShape(int cadHandleId) const {
+    auto it = shapes_.find(cadHandleId);
+    if (it != shapes_.end()) {
+        return it->second;
+    }
+    return TopoDS_Shape();
+}
+
+TopoDS_Edge OcctCadKernel::getEdgeShape(int cadHandleId, int edgeIndex) const {
+    auto it = edgeShapes_.find(cadHandleId);
+    if (it != edgeShapes_.end() && edgeIndex >= 0 && edgeIndex < static_cast<int>(it->second.size())) {
+        return it->second[edgeIndex];
+    }
+    return TopoDS_Edge();
+}
+
+int OcctCadKernel::findEdgeIndex(int cadHandleId, const TopoDS_Edge& edge) const {
+    if (edge.IsNull()) return -1;
+    auto it = edgeShapes_.find(cadHandleId);
+    if (it == edgeShapes_.end()) return -1;
+    const auto& list = it->second;
+    const TopoDS_Shape strippedEdge = edge.Located(TopLoc_Location());
+    for (size_t i = 0; i < list.size(); ++i) {
+        if (list[i].IsSame(edge) || list[i].IsPartner(edge) || list[i].IsSame(strippedEdge)) {
+            return static_cast<int>(i);
+        }
+    }
+    try {
+        const TopoDS_Edge localEdge = TopoDS::Edge(strippedEdge);
+        BRepAdaptor_Curve curve(localEdge);
+        const double len = GCPnts_AbscissaPoint::Length(curve);
+        GCPnts_AbscissaPoint mid(curve, std::max(0.0, len * 0.5), curve.FirstParameter());
+        gp_Pnt midPtVal = curve.Value(curve.FirstParameter());
+        if (mid.IsDone()) {
+            midPtVal = curve.Value(mid.Parameter());
+        }
+        core::Vec3 midPt{midPtVal.X(), midPtVal.Y(), midPtVal.Z()};
+        auto recIt = solids_.find(cadHandleId);
+        if (recIt != solids_.end()) {
+            for (size_t i = 0; i < recIt->second.edges.size(); ++i) {
+                const auto& einfo = recIt->second.edges[i];
+                if (std::abs(einfo.lengthMm - len) < 0.2 && (einfo.midPt - midPt).norm() < 1.0) {
+                    return static_cast<int>(i);
+                }
+            }
+        }
+    } catch (...) {}
+    return -1;
+}
+#endif
 
 core::TopologicalSignature OcctCadKernel::computeEdgeSignature(
     int cadHandleId,
@@ -953,6 +1068,7 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
 
             NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> edgeMap;
             TopExp::MapShapes(solid, TopAbs_EDGE, edgeMap);
+            std::vector<TopoDS_Edge> edgeList;
             for (int e = 1; e <= edgeMap.Extent(); ++e) {
                 const TopoDS_Edge edge = TopoDS::Edge(edgeMap(e));
                 if (BRep_Tool::Degenerated(edge)) continue;
@@ -988,6 +1104,7 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
                     }
                 }
                 rec.edges.push_back(std::move(einfo));
+                edgeList.push_back(edge);
             }
 
             Bnd_Box box;
@@ -1006,9 +1123,12 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
             node.sourceCadFile = filePath;
             node.cadHandleId = rec.handleId;
             node.collisionRole = collisionRoleForPartName(rec.name);
-            node.renderMesh = makeBoxMesh(rec.bboxMin, rec.bboxMax);
-            node.collisionMesh = node.renderMesh;
+
+            shapes_[rec.handleId] = solid;
+            edgeShapes_[rec.handleId] = std::move(edgeList);
             solids_[rec.handleId] = std::move(rec);
+
+            tessellate(node.cadHandleId, 0.2, 2.0, node.renderMesh, node.collisionMesh);
             outPartNodes.push_back(std::move(node));
         }
     }

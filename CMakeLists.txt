@@ -132,6 +132,7 @@ if(Qt6_FOUND)
     target_sources(olp_ui PRIVATE
         src/ui/ShellWindow.cpp
         include/olp/ui/ShellWindow.h
+        include/olp/ui/OcctViewport.h
     )
 endif()
 target_include_directories(olp_ui PUBLIC

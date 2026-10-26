@@ -7,12 +7,17 @@
 #include "olp/device/RobotModel.h"
 #include "olp/io/FanucLsPostProcessor.h"
 #include "olp/ui/MainWindow.h"
+#include "olp/ui/OcctViewport.h"
 #include "olp/ui/TcpGizmo.h"
 
 #ifdef OLP_HAS_QT6
 #include "olp/ui/ShellWindow.h"
 #include <QApplication>
 #include <QStringList>
+#endif
+
+#ifdef OLP_HAS_OCCT
+#include <TopoDS.hxx>
 #endif
 
 #include <algorithm>
@@ -1115,10 +1120,7 @@ void testMainWindowZones() {
 #ifdef OLP_QT_PLUGINS
     qputenv("QT_PLUGIN_PATH", OLP_QT_PLUGINS);
 #endif
-    int argc = 1;
-    char exe[] = "olp_tests";
-    char* argv[] = {exe, nullptr};
-    QApplication app(argc, argv);
+    // QApplication is created in main()
     olp::ui::MainWindow window;
     olp::ui::ShellWindow shell(window);
     shell.show();
@@ -1162,26 +1164,140 @@ void testMainWindowZones() {
 #endif
 }
 
+void testBRepMeshRenderingAndEdgePicking() {
+    std::cout << "\n--- Test 12: B-Rep Mesh Rendering and Workpiece Edge Picking ---\n";
+    olp::cad::OcctCadKernel cad;
+    const std::string fullCellStep =
+        std::string(OLP_SOURCE_DIR) + "/SampleScenes/Scene2_Full_Workcell_STEP/Full_Welding_Cell_With_Robot.step";
+
+    std::vector<olp::core::SceneNode> parts;
+    bool ok = cad.importStep(fullCellStep, parts);
+    check(ok, "Import STEP for B-Rep mesh rendering and edge picking");
+
+    int boxWallHandle = -1;
+    const olp::core::SceneNode* boxWallNode = nullptr;
+    for (const auto& p : parts) {
+        if (p.name.find("Workpiece_BoxWall_Front") != std::string::npos) {
+            boxWallHandle = p.cadHandleId;
+            boxWallNode = &p;
+            break;
+        }
+    }
+    check(boxWallHandle > 0 && boxWallNode != nullptr, "Located Workpiece_BoxWall_Front in imported parts");
+
+#ifdef OLP_HAS_OCCT
+    // 1. Verify real TopoDS_Shape is available from OcctCadKernel
+    const TopoDS_Shape shape = cad.getShape(boxWallHandle);
+    check(!shape.IsNull(), "OcctCadKernel::getShape returns valid TopoDS_Shape for workpiece");
+
+    // 2. Verify tessellate generates real B-Rep mesh (fine render mesh and coarse collision mesh)
+    olp::core::TriMesh renderMesh, collisionMesh;
+    const bool tessOk = cad.tessellate(boxWallHandle, 0.2, 2.0, renderMesh, collisionMesh);
+    check(tessOk, "OcctCadKernel::tessellate succeeds for B-Rep solid");
+    check(renderMesh.vertices.size() >= 8 && renderMesh.triangles.size() >= 12,
+          "Tessellated render mesh contains actual 3D triangulation (triangles=" +
+          std::to_string(renderMesh.triangles.size()) + ")");
+    check(collisionMesh.triangles.size() > 0,
+          "Tessellated collision mesh contains coarse triangulation (triangles=" +
+          std::to_string(collisionMesh.triangles.size()) + ")");
+
+    // 3. Verify Edge shape queries and findEdgeIndex round-trip
+    const auto edges = cad.getEdges(boxWallHandle);
+    check(edges.size() >= 4, "Workpiece has expected CAD edge count (" + std::to_string(edges.size()) + ")");
+    constexpr int kEdgeIdx = 3;
+    const TopoDS_Edge edgeShape = cad.getEdgeShape(boxWallHandle, kEdgeIdx);
+    check(!edgeShape.IsNull(), "OcctCadKernel::getEdgeShape returns valid TopoDS_Edge");
+    const int resolvedIdx = cad.findEdgeIndex(boxWallHandle, edgeShape);
+    check(resolvedIdx == kEdgeIdx, "findEdgeIndex round-trip matches edge index (" +
+          std::to_string(resolvedIdx) + " == " + std::to_string(kEdgeIdx) + ")");
+    gp_Trsf dummyTrsf;
+    dummyTrsf.SetTranslation(gp_Vec(100.0, 200.0, 300.0));
+    const TopoDS_Edge transformedEdge = TopoDS::Edge(edgeShape.Moved(TopLoc_Location(dummyTrsf)));
+    const int resolvedTransformedIdx = cad.findEdgeIndex(boxWallHandle, transformedEdge);
+    check(resolvedTransformedIdx == kEdgeIdx, "findEdgeIndex matches transformed edge via topological partner");
+
+    // 4. Verify OcctViewport edge selection and callback
+    olp::app::ProjectDocument doc;
+    doc.sceneNodes = parts;
+    olp::app::CommandManager cmdMgr(50);
+    olp::ui::OcctViewport viewport(doc, cmdMgr, &cad);
+
+    bool callbackFired = false;
+    olp::ui::PickedEdge callbackEdge{};
+    viewport.setEdgePickedCallback([&](const olp::ui::PickedEdge& pe) {
+        callbackFired = true;
+        callbackEdge = pe;
+    });
+
+    viewport.setSelectionMode(olp::ui::SelectionSubShapeMode::Edge);
+    check(viewport.selectionMode() == olp::ui::SelectionSubShapeMode::Edge,
+          "OcctViewport selection mode set to Edge");
+
+    viewport.setDisplayMode(olp::ui::ViewportDisplayMode::ShadedWithEdges);
+    check(viewport.displayMode() == olp::ui::ViewportDisplayMode::ShadedWithEdges,
+          "OcctViewport display mode set to ShadedWithEdges");
+
+    // Sync scene and select edge
+    viewport.syncScene();
+    const bool selectOk = viewport.selectEdge(boxWallHandle, kEdgeIdx);
+    check(selectOk && callbackFired, "OcctViewport::selectEdge triggers edge-picked callback");
+    check(viewport.lastPickedEdge().has_value() && viewport.lastPickedEdge()->edgeIndex == kEdgeIdx,
+          "OcctViewport records picked edge index in lastPickedEdge");
+    check(callbackEdge.lengthMm > 1.0,
+          "Picked edge records valid length (" + std::to_string(callbackEdge.lengthMm) + " mm)");
+
+    // 5. Verify CreateSeamFromPickedEdgeCommand Undo/Redo
+    doc.isDirty = false;
+    const size_t initialSeamCount = doc.seams.size();
+    auto createSeamCmd = std::make_unique<olp::app::CreateSeamFromPickedEdgeCommand>(
+        doc, cad, boxWallHandle, kEdgeIdx, 50.0);
+    cmdMgr.executeCommand(std::move(createSeamCmd));
+
+    check(doc.seams.size() == initialSeamCount + 1, "CreateSeamFromPickedEdgeCommand adds seam to document");
+    check(doc.isDirty, "CreateSeamFromPickedEdgeCommand marks document dirty");
+    check(cmdMgr.canUndo(), "Command pushed to Undo stack");
+
+    // Sync scene to verify viewport renders new seam
+    viewport.syncScene();
+
+    cmdMgr.undo();
+    check(doc.seams.size() == initialSeamCount, "Undo CreateSeamFromPickedEdgeCommand restores seam list");
+    check(!doc.isDirty, "Undo restores clean document dirty state");
+
+    cmdMgr.redo();
+    check(doc.seams.size() == initialSeamCount + 1, "Redo CreateSeamFromPickedEdgeCommand restores created seam");
+    check(doc.isDirty, "Redo marks document dirty again");
+#endif
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+#ifdef OLP_HAS_QT6
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+#ifdef OLP_QT_PLUGINS
+    qputenv("QT_PLUGIN_PATH", OLP_QT_PLUGINS);
+#endif
+    QApplication app(argc, argv);
+#endif
     std::cout << "====================================================================\n";
     std::cout << "  Running SiFastSuite OLP Automated Verification Suite\n";
     std::cout << "====================================================================\n";
 
-    testWprAndGimbalLock();
-    testUrdfAndStlLoading();
-    testOpwKinematics100Samples();
-    testSchemeAFullWorkcellImport();
-    testOcctPerSolidNames();
-    testOcctWeldEdgeMatchesBuiltin();
-    testTJointCrossPartSeamAndCollisionExemption();
-    testGizmoAndUndoRedo100Steps();
-    testFanucLsGeneration();
-    testPathEditsAndCommandGates();
-    testSweepCollisionBetweenClearTargets();
-    testApproachTransitClearsWall();
-    testMainWindowZones();
+     testWprAndGimbalLock();
+     testUrdfAndStlLoading();
+     testOpwKinematics100Samples();
+     testSchemeAFullWorkcellImport();
+     testOcctPerSolidNames();
+     testOcctWeldEdgeMatchesBuiltin();
+     testTJointCrossPartSeamAndCollisionExemption();
+     testGizmoAndUndoRedo100Steps();
+     testFanucLsGeneration();
+     testPathEditsAndCommandGates();
+  testSweepCollisionBetweenClearTargets();
+     testApproachTransitClearsWall();
+     testMainWindowZones();
+    testBRepMeshRenderingAndEdgePicking();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

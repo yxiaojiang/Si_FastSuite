@@ -98,4 +98,31 @@ private:
     bool mutated_{false};
 };
 
+class CreateSeamFromPickedEdgeCommand final : public ICommand {
+public:
+    CreateSeamFromPickedEdgeCommand(
+        ProjectDocument& doc,
+        cad::ICadKernel& cadKernel,
+        int sourceCadHandleId,
+        int edgeIndex,
+        double sampleStepMm = 50.0);
+
+    void execute() override;
+    void undo() override;
+    std::string description() const override;
+    bool didMutate() const noexcept override { return mutated_; }
+    const std::string& createdSeamId() const noexcept { return createdSeamId_; }
+
+private:
+    ProjectDocument& doc_;
+    cad::ICadKernel& cadKernel_;
+    int sourceCadHandleId_{-1};
+    int edgeIndex_{-1};
+    double sampleStepMm_{50.0};
+    core::SeamDefinition createdSeam_{};
+    std::string createdSeamId_{};
+    bool beforeDirty_{false};
+    bool mutated_{false};
+};
+
 } // namespace olp::app

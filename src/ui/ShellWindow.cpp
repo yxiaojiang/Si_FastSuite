@@ -2,6 +2,7 @@
 
 #include "olp/ui/OcctViewport.h"
 
+#include <QAction>
 #include <QActionGroup>
 #include <QApplication>
 #include <QDockWidget>
@@ -391,8 +392,10 @@ void ShellWindow::buildChrome() {
         }
     });
     viewMenu->addAction(fitAction);
-    auto* pickAction = disabledAction(this, QString::fromUtf8("拾取"), QString::fromUtf8("拾取焊缝边。") + later, IconKind::Pick, pathInk);
+    auto* pickAction = new QAction(commandIcon(IconKind::Pick, pathInk), QString::fromUtf8("拾取"), this);
     pickAction->setIconText(QString::fromUtf8("拾取"));
+    pickAction->setCheckable(true);
+    pickAction->setChecked(true);
     auto* pathAction = disabledAction(this, QString::fromUtf8("生成路径"), QString::fromUtf8("按焊缝生成路径。") + later, IconKind::Path, pathInk);
     pathAction->setIconText(QString::fromUtf8("路径"));
     auto* simAction = disabledAction(this, QString::fromUtf8("仿真"), QString::fromUtf8("播放机器人轨迹。") + later, IconKind::Sim, pathInk);
@@ -431,8 +434,23 @@ void ShellWindow::buildChrome() {
     toolbar->setMovable(false);
     toolbar->addWidget(ribbon);
 
-    viewport_ = new OcctViewport(controller_.document(), controller_.commandManager(), this);
+    viewport_ = new OcctViewport(controller_.document(), controller_.commandManager(), &controller_.cadKernel(), this);
     setCentralWidget(viewport_);
+
+    connect(pickAction, &QAction::toggled, this, [this](bool checked) {
+        if (viewport_ != nullptr) {
+            viewport_->setSelectionMode(checked ? SelectionSubShapeMode::Edge : SelectionSubShapeMode::Object);
+        }
+    });
+
+    connect(viewport_, &OcctViewport::edgePicked, this, [this](const QString& nodeId, int cadHandleId, int edgeIndex) {
+        controller_.selectSceneNode(nodeId.toStdString());
+        statusBar()->showMessage(QString::fromUtf8("Picked edge %1: handle %2, edge %3").arg(nodeId).arg(cadHandleId).arg(edgeIndex), 5000);
+    });
+
+    connect(viewport_, &OcctViewport::sceneNodePicked, this, [this](const QString& nodeId) {
+        controller_.selectSceneNode(nodeId.toStdString());
+    });
 
     sceneTree_ = new QTreeWidget();
     sceneTree_->setHeaderLabels({QString::fromUtf8("名称"), QString::fromUtf8("类型"), QString::fromUtf8("角色")});

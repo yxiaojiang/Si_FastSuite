@@ -2,6 +2,12 @@
 
 #include "olp/cad/ICadKernel.h"
 #include <unordered_map>
+#include <vector>
+
+#ifdef OLP_HAS_OCCT
+#include <TopoDS_Shape.hxx>
+#include <TopoDS_Edge.hxx>
+#endif
 
 namespace olp::cad {
 
@@ -58,6 +64,12 @@ public:
         int cadHandleId,
         int edgeIndex) const override;
 
+#ifdef OLP_HAS_OCCT
+    TopoDS_Shape getShape(int cadHandleId) const;
+    int findEdgeIndex(int cadHandleId, const TopoDS_Edge& edge) const;
+    TopoDS_Edge getEdgeShape(int cadHandleId, int edgeIndex) const;
+#endif
+
 private:
     struct SolidRecord {
         int handleId{-1};
@@ -72,6 +84,10 @@ private:
 
     int nextHandleId_{1};
     std::unordered_map<int, SolidRecord> solids_{};
+#ifdef OLP_HAS_OCCT
+    std::unordered_map<int, TopoDS_Shape> shapes_{};
+    std::unordered_map<int, std::vector<TopoDS_Edge>> edgeShapes_{};
+#endif
 
     static double pointToFaceBoxDistance(const core::Vec3& pt, const CadFaceInfo& face) noexcept;
     bool importStepBuiltin(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes);

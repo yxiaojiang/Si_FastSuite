@@ -1,4 +1,11 @@
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 #include "olp/ui/OcctViewport.h"
+#include "olp/cad/OcctCadKernel.h"
 
 #ifdef OLP_HAS_QT6
 #include <QFocusEvent>
@@ -11,31 +18,36 @@
 #include <QWheelEvent>
 #endif
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 #ifdef OLP_HAS_OCCT
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <Aspect_DisplayConnection.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <OpenGl_GraphicDriver.hxx>
+#include <Poly_Triangulation.hxx>
+#include <Prs3d_Drawer.hxx>
+#include <Prs3d_LineAspect.hxx>
 #include <Quantity_Color.hxx>
 #include <Standard_Failure.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Shape.hxx>
 #include <V3d_TypeOfOrientation.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
 #include <WNT_Window.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Trsf.hxx>
 #endif
 
 namespace olp::ui {
@@ -48,10 +60,16 @@ struct OcctViewport::ViewState {
 #ifdef _WIN32
     HWND renderHwnd{nullptr};
 #endif
+    std::unordered_map<const AIS_InteractiveObject*, std::string> aisToNodeId{};
+    std::unordered_map<std::string, Handle(AIS_Shape)> nodeIdToAis{};
+    std::vector<Handle(AIS_Shape)> seamAisObjects{};
+    Handle(AIS_Shape) highlightEdgeAis{};
 #endif
 #ifdef OLP_HAS_QT6
     bool rotating{false};
     bool panning{false};
+    bool isClick{false};
+    QPoint pressPos{};
     QPoint lastPos{};
 #endif
 };
@@ -135,7 +153,10 @@ void syncOcctRenderWindowSize(HWND parentHwnd, HWND renderHwnd) {
 
 #ifdef OLP_HAS_QT6
 OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMgr, QWidget* parent)
-    : QWidget(parent), doc_(doc), tcpGizmo_(doc, cmdMgr), view_(std::make_unique<ViewState>()) {
+    : OcctViewport(doc, cmdMgr, nullptr, parent) {}
+
+OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMgr, cad::ICadKernel* cadKernel, QWidget* parent)
+    : QWidget(parent), doc_(doc), cmdMgr_(cmdMgr), cadKernel_(cadKernel), tcpGizmo_(doc, cmdMgr), view_(std::make_unique<ViewState>()) {
     setAttribute(Qt::WA_DontCreateNativeAncestors);
     setAttribute(Qt::WA_NativeWindow);
     setAttribute(Qt::WA_OpaquePaintEvent);
@@ -156,6 +177,10 @@ OcctViewport::~OcctViewport() {
         if (view_->renderHwnd != nullptr) {
             SetWindowLongPtrW(view_->renderHwnd, GWLP_USERDATA, 0);
         }
+        view_->highlightEdgeAis.Nullify();
+        view_->seamAisObjects.clear();
+        view_->nodeIdToAis.clear();
+        view_->aisToNodeId.clear();
         view_->view.Nullify();
         view_->context.Nullify();
         view_->viewer.Nullify();
@@ -167,11 +192,22 @@ OcctViewport::~OcctViewport() {
 #endif
 }
 #else
-OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMgr)
-    : doc_(doc), tcpGizmo_(doc, cmdMgr), view_(std::make_unique<ViewState>()) {}
+OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMgr, cad::ICadKernel* cadKernel)
+    : doc_(doc), cmdMgr_(cmdMgr), cadKernel_(cadKernel), tcpGizmo_(doc, cmdMgr), view_(std::make_unique<ViewState>()) {}
 
 OcctViewport::~OcctViewport() = default;
 #endif
+
+void OcctViewport::setSelectionMode(SelectionSubShapeMode mode) {
+    selectionMode_ = mode;
+    updateSelectionModes();
+    redrawView();
+}
+
+void OcctViewport::setDisplayMode(ViewportDisplayMode mode) {
+    displayMode_ = mode;
+    syncScene();
+}
 
 void OcctViewport::redrawView() {
 #ifdef OLP_HAS_OCCT
@@ -213,27 +249,117 @@ void OcctViewport::fitAll() {
 #endif
 }
 
+void OcctViewport::updateSelectionModes() {
+#ifdef OLP_HAS_OCCT
+    if (view_ == nullptr || view_->context.IsNull()) {
+        return;
+    }
+    view_->context->SetPixelTolerance(5);
+    for (const auto& [objPtr, nodeId] : view_->aisToNodeId) {
+        auto it = view_->nodeIdToAis.find(nodeId);
+        if (it == view_->nodeIdToAis.end() || it->second.IsNull()) {
+            continue;
+        }
+        const Handle(AIS_Shape)& aisShape = it->second;
+        const core::SceneNode* node = doc_.findSceneNode(nodeId);
+        if (node == nullptr) {
+            continue;
+        }
+
+        view_->context->Deactivate(aisShape);
+        if (selectionMode_ == SelectionSubShapeMode::Edge) {
+            // Activate edge picking primarily on workpiece parts
+            if (node->collisionRole == core::CollisionRole::Workpiece) {
+                view_->context->Activate(aisShape, AIS_Shape::SelectionMode(TopAbs_EDGE), false);
+            }
+        } else if (selectionMode_ == SelectionSubShapeMode::Face) {
+            if (node->collisionRole == core::CollisionRole::Workpiece || node->collisionRole == core::CollisionRole::Fixture) {
+                view_->context->Activate(aisShape, AIS_Shape::SelectionMode(TopAbs_FACE), false);
+            }
+        } else if (selectionMode_ == SelectionSubShapeMode::Vertex) {
+            if (node->collisionRole == core::CollisionRole::Workpiece) {
+                view_->context->Activate(aisShape, AIS_Shape::SelectionMode(TopAbs_VERTEX), false);
+            }
+        } else if (selectionMode_ == SelectionSubShapeMode::Object) {
+            view_->context->Activate(aisShape, AIS_Shape::SelectionMode(TopAbs_SHAPE), false);
+        }
+    }
+#endif
+}
+
 void OcctViewport::syncScene() {
 #ifdef OLP_HAS_OCCT
     if (view_ == nullptr || view_->context.IsNull()) {
         return;
     }
     view_->context->RemoveAll(false);
+    view_->aisToNodeId.clear();
+    view_->nodeIdToAis.clear();
+    view_->seamAisObjects.clear();
+    view_->highlightEdgeAis.Nullify();
+
+    auto* occtKernel = dynamic_cast<cad::OcctCadKernel*>(cadKernel_);
     int shown = 0;
+
     for (const auto& node : doc_.sceneNodes) {
         if (!node.visible || node.collisionRole == core::CollisionRole::Ignored) {
             continue;
         }
-        const core::Vec3& lo = node.renderMesh.bboxMin;
-        const core::Vec3& hi = node.renderMesh.bboxMax;
-        if ((hi - lo).norm() < 1.0) {
-            continue;
+
+        TopoDS_Shape shape;
+        if (occtKernel != nullptr && node.cadHandleId > 0) {
+            shape = occtKernel->getShape(node.cadHandleId);
         }
-        const gp_Pnt cornerMin(std::min(lo.x, hi.x), std::min(lo.y, hi.y), std::min(lo.z, hi.z));
-        const gp_Pnt cornerMax(std::max(lo.x, hi.x), std::max(lo.y, hi.y), std::max(lo.z, hi.z));
-        const TopoDS_Shape box = BRepPrimAPI_MakeBox(cornerMin, cornerMax).Shape();
-        Handle(AIS_Shape) displayed = new AIS_Shape(box);
-        Quantity_NameOfColor color = Quantity_NOC_GRAY;
+
+        Handle(AIS_Shape) displayed;
+        if (!shape.IsNull()) {
+            // Real CAD B-Rep shape presentation
+            displayed = new AIS_Shape(shape);
+        } else if (node.renderMesh.vertices.size() >= 3 && !node.renderMesh.triangles.empty()) {
+            // Tessellated triangle mesh fallback
+            const int nbNodes = static_cast<int>(node.renderMesh.vertices.size());
+            const int nbTri = static_cast<int>(node.renderMesh.triangles.size());
+            Handle(Poly_Triangulation) tri = new Poly_Triangulation(nbNodes, nbTri, false);
+            for (int i = 0; i < nbNodes; ++i) {
+                const auto& v = node.renderMesh.vertices[i];
+                tri->SetNode(i + 1, gp_Pnt(v.x, v.y, v.z));
+            }
+            for (int i = 0; i < nbTri; ++i) {
+                const auto& t = node.renderMesh.triangles[i];
+                tri->SetTriangle(i + 1, Poly_Triangle(
+                    static_cast<int>(t[0] + 1),
+                    static_cast<int>(t[1] + 1),
+                    static_cast<int>(t[2] + 1)));
+            }
+            TopoDS_Face face;
+            BRep_Builder bb;
+            bb.MakeFace(face);
+            bb.UpdateFace(face, tri);
+            displayed = new AIS_Shape(face);
+        } else {
+            // Bounding box representation fallback
+            const core::Vec3& lo = node.renderMesh.bboxMin;
+            const core::Vec3& hi = node.renderMesh.bboxMax;
+            if ((hi - lo).norm() < 1.0) {
+                continue;
+            }
+            const gp_Pnt cornerMin(std::min(lo.x, hi.x), std::min(lo.y, hi.y), std::min(lo.z, hi.z));
+            const gp_Pnt cornerMax(std::max(lo.x, hi.x), std::max(lo.y, hi.y), std::max(lo.z, hi.z));
+            displayed = new AIS_Shape(BRepPrimAPI_MakeBox(cornerMin, cornerMax).Shape());
+        }
+
+        // Apply local node transform
+        gp_Trsf trsf;
+        const auto& r = node.localTransform.rot.m;
+        const auto& p = node.localTransform.pos;
+        trsf.SetValues(
+            r[0][0], r[0][1], r[0][2], p.x,
+            r[1][0], r[1][1], r[1][2], p.y,
+            r[2][0], r[2][1], r[2][2], p.z);
+        displayed->SetLocalTransformation(trsf);
+
+        // Color coding by role
+        Quantity_NameOfColor color = Quantity_NOC_GRAY50;
         if (node.collisionRole == core::CollisionRole::Workpiece) {
             color = Quantity_NOC_STEELBLUE;
         } else if (node.collisionRole == core::CollisionRole::Fixture) {
@@ -242,12 +368,48 @@ void OcctViewport::syncScene() {
             color = Quantity_NOC_GOLDENROD;
         }
         displayed->SetColor(color);
-        displayed->SetTransparency(0.15);
+        displayed->SetTransparency(0.0);
+
+        // Display mode styling
+        if (displayMode_ == ViewportDisplayMode::ShadedWithEdges) {
+            displayed->SetDisplayMode(AIS_Shaded);
+            displayed->Attributes()->SetFaceBoundaryDraw(true);
+            displayed->Attributes()->SetupOwnFaceBoundaryAspect();
+            displayed->Attributes()->FaceBoundaryAspect()->SetColor(Quantity_NOC_BLACK);
+            displayed->Attributes()->FaceBoundaryAspect()->SetWidth(1.0);
+        } else if (displayMode_ == ViewportDisplayMode::Shaded) {
+            displayed->SetDisplayMode(AIS_Shaded);
+            displayed->Attributes()->SetFaceBoundaryDraw(false);
+        } else {
+            displayed->SetDisplayMode(AIS_WireFrame);
+        }
+
         view_->context->Display(displayed, false);
-        view_->context->SetDisplayMode(displayed, 1, false);
+        view_->aisToNodeId[displayed.get()] = node.id;
+        view_->nodeIdToAis[node.id] = displayed;
         ++shown;
     }
+
+    // Render defined weld seams in 3D
+    for (const auto& seam : doc_.seams) {
+        if (seam.sampledFrames.size() >= 2) {
+            BRepBuilderAPI_MakePolygon poly;
+            for (const auto& sf : seam.sampledFrames) {
+                poly.Add(gp_Pnt(sf.position.x, sf.position.y, sf.position.z));
+            }
+            if (poly.IsDone()) {
+                Handle(AIS_Shape) seamAis = new AIS_Shape(poly.Shape());
+                seamAis->SetColor(Quantity_NOC_CYAN);
+                seamAis->SetWidth(3.0);
+                view_->context->Display(seamAis, false);
+                view_->seamAisObjects.push_back(seamAis);
+            }
+        }
+    }
+
+    updateSelectionModes();
     view_->context->UpdateCurrentViewer();
+
     if (!fitted_ && shown > 0) {
         fitAll();
         if (!view_->view.IsNull()) {
@@ -259,6 +421,178 @@ void OcctViewport::syncScene() {
     }
 #else
     (void)doc_;
+#endif
+}
+
+bool OcctViewport::performPicking(int pixelX, int pixelY) {
+#ifdef OLP_HAS_OCCT
+    if (view_ == nullptr || view_->context.IsNull() || view_->view.IsNull()) {
+        return false;
+    }
+    view_->context->MoveTo(pixelX, pixelY, view_->view, false);
+    view_->context->SelectDetected();
+
+    view_->context->InitSelected();
+    if (!view_->context->MoreSelected()) {
+        clearPickedEdge();
+        return false;
+    }
+
+    Handle(AIS_InteractiveObject) pickedObj = view_->context->SelectedInteractive();
+    std::string nodeId{};
+    auto it = view_->aisToNodeId.find(pickedObj.get());
+    if (it != view_->aisToNodeId.end()) {
+        nodeId = it->second;
+    }
+    if (nodeId.empty()) {
+        return false;
+    }
+
+    const core::SceneNode* node = doc_.findSceneNode(nodeId);
+    if (node == nullptr) {
+        return false;
+    }
+
+    if (selectionMode_ == SelectionSubShapeMode::Edge && view_->context->HasSelectedShape()) {
+        TopoDS_Shape pickedSub = view_->context->SelectedShape();
+        if (pickedSub.ShapeType() == TopAbs_EDGE) {
+            const TopoDS_Edge edge = TopoDS::Edge(pickedSub);
+            int edgeIdx = -1;
+            if (auto* occtKernel = dynamic_cast<cad::OcctCadKernel*>(cadKernel_)) {
+                edgeIdx = occtKernel->findEdgeIndex(node->cadHandleId, edge);
+            }
+            if (edgeIdx >= 0) {
+                PickedEdge info{};
+                info.nodeId = nodeId;
+                info.cadHandleId = node->cadHandleId;
+                info.edgeIndex = edgeIdx;
+                if (cadKernel_ != nullptr) {
+                    const auto edges = cadKernel_->getEdges(node->cadHandleId);
+                    if (edgeIdx < static_cast<int>(edges.size())) {
+                        const auto& e = edges[edgeIdx];
+                        info.startPt = e.startPt;
+                        info.endPt = e.endPt;
+                        info.midPt = e.midPt;
+                        info.tangent = e.tangent;
+                        info.lengthMm = e.lengthMm;
+                        info.isLinear = e.isLinear;
+                    }
+                }
+                lastPickedEdge_ = info;
+
+                // Visual highlight on the picked edge
+                if (!view_->highlightEdgeAis.IsNull()) {
+                    view_->context->Remove(view_->highlightEdgeAis, false);
+                    view_->highlightEdgeAis.Nullify();
+                }
+                view_->highlightEdgeAis = new AIS_Shape(edge);
+                view_->highlightEdgeAis->SetColor(Quantity_NOC_MAGENTA1);
+                view_->highlightEdgeAis->SetWidth(4.0);
+                view_->context->Display(view_->highlightEdgeAis, false);
+
+                if (edgePickedCb_) {
+                    edgePickedCb_(info);
+                }
+#ifdef OLP_HAS_QT6
+                Q_EMIT edgePicked(QString::fromStdString(nodeId), node->cadHandleId, edgeIdx);
+#endif
+                view_->view->Redraw();
+                return true;
+            }
+        }
+    }
+
+#ifdef OLP_HAS_QT6
+    Q_EMIT sceneNodePicked(QString::fromStdString(nodeId));
+#endif
+    view_->view->Redraw();
+    return true;
+#else
+    (void)pixelX;
+    (void)pixelY;
+    return false;
+#endif
+}
+
+bool OcctViewport::pickAt(int pixelX, int pixelY) {
+    return performPicking(pixelX, pixelY);
+}
+
+bool OcctViewport::selectEdge(int cadHandleId, int edgeIndex) {
+#ifdef OLP_HAS_OCCT
+    if (cadKernel_ == nullptr) {
+        return false;
+    }
+    const core::SceneNode* targetNode = nullptr;
+    for (const auto& node : doc_.sceneNodes) {
+        if (node.cadHandleId == cadHandleId) {
+            targetNode = &node;
+            break;
+        }
+    }
+    if (targetNode == nullptr) {
+        return false;
+    }
+
+    const auto edges = cadKernel_->getEdges(cadHandleId);
+    if (edgeIndex < 0 || edgeIndex >= static_cast<int>(edges.size())) {
+        return false;
+    }
+    const auto& e = edges[edgeIndex];
+
+    PickedEdge info{};
+    info.nodeId = targetNode->id;
+    info.cadHandleId = cadHandleId;
+    info.edgeIndex = edgeIndex;
+    info.startPt = e.startPt;
+    info.endPt = e.endPt;
+    info.midPt = e.midPt;
+    info.tangent = e.tangent;
+    info.lengthMm = e.lengthMm;
+    info.isLinear = e.isLinear;
+    lastPickedEdge_ = info;
+
+    if (view_ != nullptr && !view_->context.IsNull()) {
+        auto* occtKernel = dynamic_cast<cad::OcctCadKernel*>(cadKernel_);
+        if (occtKernel != nullptr) {
+            const TopoDS_Edge edgeShape = occtKernel->getEdgeShape(cadHandleId, edgeIndex);
+            if (!edgeShape.IsNull()) {
+                if (!view_->highlightEdgeAis.IsNull()) {
+                    view_->context->Remove(view_->highlightEdgeAis, false);
+                    view_->highlightEdgeAis.Nullify();
+                }
+                view_->highlightEdgeAis = new AIS_Shape(edgeShape);
+                view_->highlightEdgeAis->SetColor(Quantity_NOC_MAGENTA1);
+                view_->highlightEdgeAis->SetWidth(4.0);
+
+                gp_Trsf trsf;
+                const auto& r = targetNode->localTransform.rot.m;
+                const auto& p = targetNode->localTransform.pos;
+                trsf.SetValues(
+                    r[0][0], r[0][1], r[0][2], p.x,
+                    r[1][0], r[1][1], r[1][2], p.y,
+                    r[2][0], r[2][1], r[2][2], p.z);
+                view_->highlightEdgeAis->SetLocalTransformation(trsf);
+
+                view_->context->Display(view_->highlightEdgeAis, false);
+                if (!view_->view.IsNull()) {
+                    view_->view->Redraw();
+                }
+            }
+        }
+    }
+
+    if (edgePickedCb_) {
+        edgePickedCb_(info);
+    }
+#ifdef OLP_HAS_QT6
+    Q_EMIT edgePicked(QString::fromStdString(targetNode->id), cadHandleId, edgeIndex);
+#endif
+    return true;
+#else
+    (void)cadHandleId;
+    (void)edgeIndex;
+    return false;
 #endif
 }
 
@@ -367,8 +701,9 @@ void OcctViewport::mousePressEvent(QMouseEvent* event) {
     const int x = view_->lastPos.x();
     const int y = view_->lastPos.y();
     if (event->button() == Qt::LeftButton) {
+        view_->pressPos = view_->lastPos;
+        view_->isClick = true;
         view_->view->StartRotation(x, y);
-        view_->rotating = true;
     } else if (event->button() == Qt::MiddleButton || event->button() == Qt::RightButton) {
         view_->panning = true;
     }
@@ -386,10 +721,21 @@ void OcctViewport::mouseMoveEvent(QMouseEvent* event) {
     const QPoint pos(
         static_cast<int>(std::lround(event->position().x() * dpr)),
         static_cast<int>(std::lround(event->position().y() * dpr)));
-    if (view_->rotating) {
-        view_->view->Rotation(pos.x(), pos.y());
+    if (event->buttons() & Qt::LeftButton) {
+        if (view_->isClick && (pos - view_->pressPos).manhattanLength() > 4) {
+            view_->isClick = false;
+            view_->rotating = true;
+        }
+        if (view_->rotating) {
+            view_->view->Rotation(pos.x(), pos.y());
+        }
     } else if (view_->panning) {
         view_->view->Pan(pos.x() - view_->lastPos.x(), view_->lastPos.y() - pos.y());
+    } else {
+        // Pre-selection hover dynamic highlighting
+        if (!view_->context.IsNull()) {
+            view_->context->MoveTo(pos.x(), pos.y(), view_->view, true);
+        }
     }
     view_->lastPos = pos;
 #else
@@ -401,7 +747,12 @@ void OcctViewport::mouseReleaseEvent(QMouseEvent* event) {
 #ifdef OLP_HAS_OCCT
     if (view_ != nullptr) {
         if (event->button() == Qt::LeftButton) {
-            view_->rotating = false;
+            if (view_->rotating) {
+                view_->rotating = false;
+            } else if (view_->isClick) {
+                view_->isClick = false;
+                performPicking(view_->lastPos.x(), view_->lastPos.y());
+            }
         } else if (event->button() == Qt::MiddleButton || event->button() == Qt::RightButton) {
             view_->panning = false;
         }

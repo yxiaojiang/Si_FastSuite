@@ -1,4 +1,5 @@
 #include "olp/app/WorkcellLayoutService.h"
+#include "olp/algo/SeamAndToolpathAlgo.h"
 #include <algorithm>
 
 namespace olp::app {
@@ -179,6 +180,63 @@ void DefineUFrameCommand::undo() {
     if (!mutated_) return;
     doc_.sceneNodes = beforeNodes_;
     doc_.isDirty = beforeDirty_;
+}
+
+CreateSeamFromPickedEdgeCommand::CreateSeamFromPickedEdgeCommand(
+    ProjectDocument& doc,
+    cad::ICadKernel& cadKernel,
+    int sourceCadHandleId,
+    int edgeIndex,
+    double sampleStepMm)
+    : doc_(doc),
+      cadKernel_(cadKernel),
+      sourceCadHandleId_(sourceCadHandleId),
+      edgeIndex_(edgeIndex),
+      sampleStepMm_(sampleStepMm) {}
+
+void CreateSeamFromPickedEdgeCommand::execute() {
+    mutated_ = false;
+    beforeDirty_ = doc_.isDirty;
+
+    if (!createdSeamId_.empty()) {
+        doc_.seams.push_back(createdSeam_);
+        doc_.isDirty = true;
+        mutated_ = true;
+        return;
+    }
+
+    std::vector<int> workpieceHandles;
+    for (const auto& node : doc_.sceneNodes) {
+        if (node.visible && node.collisionRole == core::CollisionRole::Workpiece && node.cadHandleId > 0) {
+            workpieceHandles.push_back(node.cadHandleId);
+        }
+    }
+    auto seamOpt = algo::SeamAndToolpathAlgo::buildSeamFromPickedEdge(
+        cadKernel_, sourceCadHandleId_, edgeIndex_, workpieceHandles, sampleStepMm_);
+    if (!seamOpt.has_value()) {
+        return;
+    }
+    createdSeam_ = *seamOpt;
+    createdSeamId_ = createdSeam_.id;
+    doc_.seams.push_back(createdSeam_);
+    doc_.isDirty = true;
+    mutated_ = true;
+}
+
+void CreateSeamFromPickedEdgeCommand::undo() {
+    if (!mutated_ || createdSeamId_.empty()) {
+        return;
+    }
+    auto it = std::remove_if(doc_.seams.begin(), doc_.seams.end(),
+        [&](const core::SeamDefinition& s) { return s.id == createdSeamId_; });
+    if (it != doc_.seams.end()) {
+        doc_.seams.erase(it, doc_.seams.end());
+        doc_.isDirty = beforeDirty_;
+    }
+}
+
+std::string CreateSeamFromPickedEdgeCommand::description() const {
+    return "Create Seam from Edge (" + std::to_string(sourceCadHandleId_) + ":" + std::to_string(edgeIndex_) + ")";
 }
 
 } // namespace olp::app
