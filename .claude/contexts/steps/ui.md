@@ -8,3 +8,4 @@
 
 5. **类边界。** `MainWindow` 继续做文档、命令、选择集和最近一次仿真缓存，不持有 Qt 视口。`ShellWindow` 只做窗口。`OcctViewport` 由壳创建，接上后删掉占位控件。`ShellWindow.h` 不再包含 `SampleSession.h`。选择集是 `MainWindow` 上的 id 列表，不新建 `SelectionManager`。文档变更继续用 `CommandManager` 的回调，改成可以挂多个监听，不新建事件总线类。点动和属性的写入走现有命令；滑块拖动和 Gizmo 拖动只预览，松手才入栈。
 6. **M08 编程工作台与目标点单步联动。** `OcctViewport` 通过 `attachMainWindow` 监听控制器选择变更，选中目标点时自动挂载 `TcpGizmo`；`MainWindow` 提供 `stepTarget` 单步前后导航（绑定键盘 `[` 与 `]`），切换目标点时自动联动程序树当前操作高亮、路径点表当前行高亮并滚动居中、视口手柄挂载，并在目标点具有有效逆解缓存（`cache.valid`）时同步更新机器人连杆位姿与点动面板关节角度。工具栏新增“生成路径”与“SLERP平滑”交互按钮。
+7. **局部区间 SLERP 插值（UI-001）、路径点表双击就地编辑与 TCP Z 自转步进面板（M09）。** `ShellWindow` 中姿态平滑检测表格多选，选定 $\ge 2$ 点时自动调用局部区间 SLERP 插值（区间外部点保持不变），单选或未选回退全局；表格扩展至 7 列，支持就地编辑运动、速度、平滑度与工艺事件并使用 `parseSpeedCellText` 解析；引入 `RefreshGuard` 深度计数与 `inItemChanged_` 配合 `QTimer::singleShot(0, ...)` 递延重构，彻底杜绝当前 WidgetItem 在信号派发中被销毁；属性面板集成 TCP Z 自转快捷步进按钮（$\pm 1^\circ, \pm 5^\circ, \pm 15^\circ$）与自定义旋转。

@@ -150,8 +150,31 @@ struct FanucConfig {
 };
 
 // ------------------------------------------------------------------------------
-// M09: Process Events & Target Data Model (Section 4.3)
+// M09: Welding Process Schedule Definition & Process Events (Section 4.3)
 // ------------------------------------------------------------------------------
+struct WeldScheduleDefinition {
+    int scheduleNumber{1};                 // Condition number: 1..32
+    double currentAmps{180.0};             // Preset current (A)
+    double voltageVolts{22.0};             // Preset voltage (V)
+    double wireFeedSpeedMPerMin{6.0};      // Wire feed speed (m/min)
+    double weldSpeedCmPerMin{50.0};        // Welding speed (cm/min)
+    double weldSpeedMmPerSec{500.0 / 60.0}; // Welding speed (mm/s)
+    double gasFlowRateLPerMin{15.0};       // Shielding gas flow rate (L/min)
+    std::string description{"Standard MAG Mild Steel"};
+
+    double getWeldSpeedMmPerSec() const noexcept {
+        return (weldSpeedCmPerMin * 10.0) / 60.0;
+    }
+    void setWeldSpeedMmPerSec(double mmPerSec) noexcept {
+        weldSpeedMmPerSec = mmPerSec;
+        weldSpeedCmPerMin = (mmPerSec * 60.0) / 10.0;
+    }
+    void setWeldSpeedCmPerMin(double cmPerMin) noexcept {
+        weldSpeedCmPerMin = cmPerMin;
+        weldSpeedMmPerSec = (cmPerMin * 10.0) / 60.0;
+    }
+};
+
 enum class ProcessEventType {
     ArcStart,
     ArcEnd,
@@ -165,6 +188,16 @@ struct ProcessEvent {
     int scheduleNumber{1};   // e.g. Arc Start[1], Arc End[1]
     double paramValue{0.0};
     std::string comment{};
+
+    bool operator==(const ProcessEvent& o) const noexcept {
+        return type == o.type &&
+               scheduleNumber == o.scheduleNumber &&
+               std::abs(paramValue - o.paramValue) < 1e-4 &&
+               comment == o.comment;
+    }
+    bool operator!=(const ProcessEvent& o) const noexcept {
+        return !(*this == o);
+    }
 };
 
 enum class TargetRole {
@@ -226,6 +259,7 @@ struct Target {
 
     // Rule 2: Coexistence of auto-generation & manual edits
     bool userModified{false};
+    bool processModified{false};
     double arcLengthRatio{0.0};
     Transform4d userDeltaOffset{};
 

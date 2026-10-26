@@ -14,10 +14,21 @@ class QPlainTextEdit;
 class QSlider;
 class QTableWidget;
 class QTreeWidget;
+class QWidget;
 
 namespace olp::ui {
 
 class OcctViewport;
+
+// M09: Speed cell parser and formatter helpers
+struct ParsedSpeedCell {
+    double speedValue{0.0};
+    bool useWeldSpeed{false};
+    bool valid{false};
+};
+
+ParsedSpeedCell parseSpeedCellText(const QString& rawText, double fallbackSpeed = 0.0);
+QString formatSpeedCellText(const core::Target& target);
 
 // M01 shell: two workbenches and the dock zones. The center view is OcctViewport.
 class ShellWindow : public QMainWindow {
@@ -50,6 +61,7 @@ private:
     void fillIssues();
     void applySelection();
     void syncJogFromRobot();
+    std::vector<std::string> selectedTargetIdsFromTable() const;
 
     MainWindow& controller_;
     std::function<void()> loader_{};
@@ -62,6 +74,7 @@ private:
     QTableWidget* targetTable_{nullptr};
     QListWidget* issueList_{nullptr};
     QPlainTextEdit* propertyText_{nullptr};
+    QWidget* spinTuningWidget_{nullptr};
     QLabel* jogReadout_{nullptr};
     QSlider* jogSliders_[6]{};
     QLabel* timelineLabel_{nullptr};
@@ -78,7 +91,15 @@ private:
     QAction* olpAction_{nullptr};
     QAction* undoAction_{nullptr};
     QAction* redoAction_{nullptr};
-    bool refreshing_{false};
+    struct RefreshGuard {
+        int& depth;
+        explicit RefreshGuard(int& d) : depth(d) { ++depth; }
+        ~RefreshGuard() { --depth; }
+    };
+
+    int refreshDepth_{0};
+    bool isRefreshing() const noexcept { return refreshDepth_ > 0; }
+    bool inItemChanged_{false};
 };
 
 } // namespace olp::ui

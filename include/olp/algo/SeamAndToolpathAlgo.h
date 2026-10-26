@@ -73,6 +73,11 @@ public:
         const std::string& endTargetId = "",
         const core::SeamDefinition* seam = nullptr,
         const core::Transform4d& uframeInWorld = core::Transform4d::identity());
+
+    // M09: Rotate Target TCP orientation around its local Z axis by angleRad (torch spin tuning)
+    static bool rotateTargetAroundTcpZ(
+        core::Target& target,
+        double angleRad);
 };
 
 } // namespace olp::algo

@@ -17,10 +17,14 @@
 #include <QPen>
 #include <QPixmap>
 #include <QPolygonF>
+#include <QDoubleSpinBox>
+#include <QGroupBox>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QSlider>
 #include <QStatusBar>
 #include <QTableWidget>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -257,6 +261,59 @@ const core::Target* findTargetById(const app::ProjectDocument& doc, const std::s
 
 } // namespace
 
+QString formatSpeedCellText(const core::Target& target) {
+    if (target.useWeldSpeed) {
+        return QString("WELD_SPEED (%1 mm/s)").arg(target.speedValue, 0, 'f', 0);
+    }
+    if (target.motion == core::MotionType::J) {
+        return QString("%1%").arg(target.speedValue, 0, 'f', 0);
+    }
+    return QString("%1 mm/s").arg(target.speedValue, 0, 'f', 0);
+}
+
+ParsedSpeedCell parseSpeedCellText(const QString& rawText, double fallbackSpeed) {
+    ParsedSpeedCell res;
+    const QString text = rawText.trimmed();
+    if (text.isEmpty()) {
+        return res;
+    }
+
+    const bool hasWeld = text.contains("weld", Qt::CaseInsensitive);
+    const bool isCmMin = text.contains("cm/min", Qt::CaseInsensitive);
+
+    QString clean = text;
+    clean = clean.remove("WELD_SPEED", Qt::CaseInsensitive)
+                 .remove("cm/min", Qt::CaseInsensitive)
+                 .remove("mm/s", Qt::CaseInsensitive)
+                 .remove("%")
+                 .remove("(")
+                 .remove(")")
+                 .remove("[")
+                 .remove("]")
+                 .trimmed();
+
+    bool ok = false;
+    double v = clean.toDouble(&ok);
+    if (!ok && clean.isEmpty() && hasWeld) {
+        res.useWeldSpeed = true;
+        res.speedValue = (fallbackSpeed > 0.0) ? fallbackSpeed : 10.0;
+        res.valid = true;
+        return res;
+    }
+
+    if (ok && v > 0.0) {
+        if (isCmMin) {
+            v = (v * 10.0) / 60.0; // cm/min -> mm/s
+        }
+        res.speedValue = v;
+        res.useWeldSpeed = hasWeld;
+        res.valid = true;
+        return res;
+    }
+
+    return res;
+}
+
 ShellWindow::ShellWindow(MainWindow& controller, QWidget* parent)
     : QMainWindow(parent), controller_(controller) {
     QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
@@ -264,6 +321,10 @@ ShellWindow::ShellWindow(MainWindow& controller, QWidget* parent)
     resize(1440, 900);
     buildChrome();
     documentListenerId_ = controller_.commandManager().addDocumentChangedListener([this] {
+        if (inItemChanged_) {
+            QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
+            return;
+        }
         refreshFromDocument();
     });
     selectionListenerId_ = controller_.addSelectionListener([this] { applySelection(); });
@@ -412,11 +473,26 @@ void ShellWindow::buildChrome() {
     slerpAction->setIconText(QString::fromUtf8("平滑"));
     slerpAction->setToolTip(QString::fromUtf8("对选中操作路径多点姿态执行 SLERP 球形线性插值平滑。"));
     connect(slerpAction, &QAction::triggered, this, [this] {
-        if (controller_.smoothTargetOrientations()) {
-            statusBar()->showMessage(QString::fromUtf8("已完成路径姿态 SLERP 平滑插值。"), 3000);
+        const auto selectedIds = selectedTargetIdsFromTable();
+        bool ok = false;
+        if (selectedIds.size() >= 2) {
+            ok = controller_.smoothTargetOrientations(selectedIds.front(), selectedIds.back());
+        } else {
+            ok = controller_.smoothTargetOrientations();
+        }
+
+        if (ok) {
+            if (selectedIds.size() >= 2) {
+                statusBar()->showMessage(
+                    QString::fromUtf8("已完成局部区间 [%1 -> %2] 路径姿态 SLERP 平滑插值。")
+                        .arg(QString::fromStdString(selectedIds.front()))
+                        .arg(QString::fromStdString(selectedIds.back())), 3000);
+            } else {
+                statusBar()->showMessage(QString::fromUtf8("已完成路径姿态 SLERP 平滑插值。"), 3000);
+            }
             refreshFromDocument();
         } else {
-            statusBar()->showMessage(QString::fromUtf8("未能执行姿态平滑：没有有效操作或中间点。"), 3000);
+            statusBar()->showMessage(QString::fromUtf8("未能执行姿态平滑：没有有效操作或中间点（无姿态变化）。"), 3000);
         }
     });
 
@@ -504,20 +580,7 @@ void ShellWindow::buildChrome() {
     });
 
     viewport_->setMultiTargetProvider([this]() -> std::vector<std::string> {
-        std::vector<std::string> ids;
-        if (targetTable_ != nullptr) {
-            const auto selectedItems = targetTable_->selectedItems();
-            std::set<std::string> uniqueIds;
-            for (auto* item : selectedItems) {
-                if (item != nullptr && item->column() == 0) {
-                    const std::string id = item->data(Qt::UserRole).toString().toStdString();
-                    if (!id.empty() && uniqueIds.insert(id).second) {
-                        ids.push_back(id);
-                    }
-                }
-            }
-        }
-        return ids;
+        return selectedTargetIdsFromTable();
     });
 
     sceneTree_ = new QTreeWidget();
@@ -525,7 +588,7 @@ void ShellWindow::buildChrome() {
     sceneTree_->header()->setStretchLastSection(true);
     sceneDock_ = makeDock(this, QString::fromUtf8("场景"), sceneTree_);
     connect(sceneTree_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
-        if (current == nullptr || refreshing_) {
+        if (current == nullptr || isRefreshing()) {
             return;
         }
         const QString nodeId = current->data(0, Qt::UserRole).toString();
@@ -538,7 +601,7 @@ void ShellWindow::buildChrome() {
     programTree_->setHeaderLabels({QString::fromUtf8("程序"), QString::fromUtf8("说明")});
     programDock_ = makeDock(this, QString::fromUtf8("程序"), programTree_);
     connect(programTree_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
-        if (current == nullptr || refreshing_) {
+        if (current == nullptr || isRefreshing()) {
             return;
         }
         const QString kind = current->data(0, Qt::UserRole).toString();
@@ -548,20 +611,22 @@ void ShellWindow::buildChrome() {
         }
     });
 
-    targetTable_ = new QTableWidget(0, 5);
+    targetTable_ = new QTableWidget(0, 7);
     targetTable_->setHorizontalHeaderLabels({
         QString::fromUtf8("名称"),
         QString::fromUtf8("运动"),
         QString::fromUtf8("速度"),
+        QString::fromUtf8("平滑度"),
+        QString::fromUtf8("工艺事件"),
         QString::fromUtf8("状态"),
         QString::fromUtf8("间隙 mm")
     });
     targetTable_->horizontalHeader()->setStretchLastSection(true);
     targetTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    targetTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    targetTable_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
     targetDock_ = makeDock(this, QString::fromUtf8("路径点"), targetTable_);
     connect(targetTable_, &QTableWidget::currentCellChanged, this, [this](int row, int, int, int) {
-        if (row < 0 || refreshing_) {
+        if (row < 0 || isRefreshing()) {
             return;
         }
         auto* item = targetTable_->item(row, 0);
@@ -571,10 +636,197 @@ void ShellWindow::buildChrome() {
                 item->data(Qt::UserRole + 1).toString().toStdString());
         }
     });
+    connect(targetTable_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+        if (item == nullptr || isRefreshing()) {
+            return;
+        }
+        const int row = item->row();
+        const int col = item->column();
+        auto* nameItem = targetTable_->item(row, 0);
+        if (nameItem == nullptr) return;
+        const std::string targetId = nameItem->data(Qt::UserRole).toString().toStdString();
+        if (targetId.empty()) return;
+
+        const auto* target = controller_.document().findTarget(targetId);
+        if (target == nullptr) return;
+
+        app::TargetProcessParams params;
+        const QString text = item->text().trimmed();
+
+        if (col == 1) { // 运动: J or L
+            if (text.compare("J", Qt::CaseInsensitive) == 0) {
+                params.motion = core::MotionType::J;
+            } else if (text.compare("L", Qt::CaseInsensitive) == 0) {
+                params.motion = core::MotionType::L;
+            } else {
+                QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
+                return;
+            }
+        } else if (col == 2) { // 速度: e.g. "200", "200 mm/s", "50%", "50 cm/min", "WELD_SPEED (80 mm/s)"
+            const auto parsed = parseSpeedCellText(text, target->speedValue);
+            if (parsed.valid) {
+                params.speedValue = parsed.speedValue;
+                params.useWeldSpeed = parsed.useWeldSpeed;
+            } else {
+                QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
+                return;
+            }
+        } else if (col == 3) { // 平滑度 / 终止类型: FINE or CNT [n]
+            if (text.compare("FINE", Qt::CaseInsensitive) == 0) {
+                params.termination = core::TerminationType::FINE;
+                params.cntValue = 0;
+            } else if (text.startsWith("CNT", Qt::CaseInsensitive)) {
+                params.termination = core::TerminationType::CNT;
+                QString numStr = text.mid(3).trimmed();
+                bool ok = false;
+                int val = numStr.toInt(&ok);
+                params.cntValue = ok ? std::clamp(val, 0, 100) : 50;
+            } else {
+                bool ok = false;
+                int val = text.toInt(&ok);
+                if (ok) {
+                    params.termination = core::TerminationType::CNT;
+                    params.cntValue = std::clamp(val, 0, 100);
+                } else {
+                    QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
+                    return;
+                }
+            }
+        } else if (col == 4) { // 工艺事件
+            if (text.startsWith("Arc Start", Qt::CaseInsensitive) || text.startsWith("ArcStart", Qt::CaseInsensitive)) {
+                int sched = 1;
+                int lbracket = text.indexOf('[');
+                int rbracket = text.indexOf(']');
+                if (lbracket >= 0 && rbracket > lbracket) {
+                    bool ok = false;
+                    int s = text.mid(lbracket + 1, rbracket - lbracket - 1).toInt(&ok);
+                    if (ok && s >= 1 && s <= 32) sched = s;
+                }
+                params.events = std::vector<core::ProcessEvent>{{core::ProcessEventType::ArcStart, sched, 0.0, ""}};
+            } else if (text.startsWith("Arc End", Qt::CaseInsensitive) || text.startsWith("ArcEnd", Qt::CaseInsensitive)) {
+                int sched = 1;
+                int lbracket = text.indexOf('[');
+                int rbracket = text.indexOf(']');
+                if (lbracket >= 0 && rbracket > lbracket) {
+                    bool ok = false;
+                    int s = text.mid(lbracket + 1, rbracket - lbracket - 1).toInt(&ok);
+                    if (ok && s >= 1 && s <= 32) sched = s;
+                }
+                params.events = std::vector<core::ProcessEvent>{{core::ProcessEventType::ArcEnd, sched, 0.0, ""}};
+            } else if (text == "-" || text.isEmpty() || text.compare("None", Qt::CaseInsensitive) == 0) {
+                params.events = std::vector<core::ProcessEvent>{};
+            } else {
+                QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
+                return;
+            }
+        } else {
+            return;
+        }
+
+        struct ItemChangeScope {
+            bool& flag;
+            explicit ItemChangeScope(bool& f) : flag(f) { flag = true; }
+            ~ItemChangeScope() { flag = false; }
+        } itemScope(inItemChanged_);
+
+        if (controller_.modifyTargetProcessParams(targetId, params)) {
+            statusBar()->showMessage(QString::fromUtf8("已更新目标点工艺参数。"), 3000);
+        } else {
+            QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
+        }
+    });
 
     propertyText_ = new QPlainTextEdit();
     propertyText_->setReadOnly(true);
-    propertyDock_ = makeDock(this, QString::fromUtf8("属性"), propertyText_);
+
+    auto* propertyContainer = new QWidget();
+    auto* propLayout = new QVBoxLayout(propertyContainer);
+    propLayout->setContentsMargins(4, 4, 4, 4);
+    propLayout->setSpacing(6);
+    propLayout->addWidget(propertyText_, 1);
+
+    spinTuningWidget_ = new QGroupBox(QString::fromUtf8("焊枪自转角微调 (TCP Z 自转)"));
+    auto* spinLayout = new QVBoxLayout(spinTuningWidget_);
+    spinLayout->setContentsMargins(6, 6, 6, 6);
+    spinLayout->setSpacing(4);
+
+    // Row 1: Fast step buttons
+    auto* stepBtnLayout = new QHBoxLayout();
+    stepBtnLayout->setSpacing(4);
+    const std::vector<std::pair<QString, double>> stepAngles = {
+        {"-15°", -15.0},
+        {"-5°", -5.0},
+        {"-1°", -1.0},
+        {"+1°", +1.0},
+        {"+5°", +5.0},
+        {"+15°", +15.0}
+    };
+    for (const auto& [lbl, deg] : stepAngles) {
+        auto* btn = new QPushButton(lbl);
+        btn->setToolTip(QString::fromUtf8("绕焊枪 TCP 本地 Z 轴自转 %1").arg(lbl));
+        connect(btn, &QPushButton::clicked, this, [this, deg] {
+            const auto selectedIds = selectedTargetIdsFromTable();
+            std::vector<std::string> ids = selectedIds;
+            if (ids.empty() && !controller_.selectedTargetId().empty()) {
+                ids.push_back(controller_.selectedTargetId());
+            }
+            if (ids.empty()) return;
+            if (controller_.rotateTargetsTcpZ(ids, core::deg2rad(deg))) {
+                statusBar()->showMessage(QString::fromUtf8("已将目标点绕 TCP Z 轴自转 %1°").arg(deg, 0, 'f', 1), 3000);
+                refreshFromDocument();
+            }
+        });
+        stepBtnLayout->addWidget(btn);
+    }
+    spinLayout->addLayout(stepBtnLayout);
+
+    // Row 2: Custom spinbox and step rotation
+    auto* customLayout = new QHBoxLayout();
+    auto* angleSpin = new QDoubleSpinBox();
+    angleSpin->setRange(0.1, 180.0);
+    angleSpin->setValue(10.0);
+    angleSpin->setSuffix("°");
+    angleSpin->setSingleStep(1.0);
+
+    auto* ccwBtn = new QPushButton(QString::fromUtf8("逆时针 ⟲"));
+    connect(ccwBtn, &QPushButton::clicked, this, [this, angleSpin] {
+        const auto selectedIds = selectedTargetIdsFromTable();
+        std::vector<std::string> ids = selectedIds;
+        if (ids.empty() && !controller_.selectedTargetId().empty()) {
+            ids.push_back(controller_.selectedTargetId());
+        }
+        if (ids.empty()) return;
+        const double deg = -angleSpin->value();
+        if (controller_.rotateTargetsTcpZ(ids, core::deg2rad(deg))) {
+            statusBar()->showMessage(QString::fromUtf8("已将目标点绕 TCP Z 轴自转 %1°").arg(deg, 0, 'f', 1), 3000);
+            refreshFromDocument();
+        }
+    });
+
+    auto* cwBtn = new QPushButton(QString::fromUtf8("顺时针 ⟳"));
+    connect(cwBtn, &QPushButton::clicked, this, [this, angleSpin] {
+        const auto selectedIds = selectedTargetIdsFromTable();
+        std::vector<std::string> ids = selectedIds;
+        if (ids.empty() && !controller_.selectedTargetId().empty()) {
+            ids.push_back(controller_.selectedTargetId());
+        }
+        if (ids.empty()) return;
+        const double deg = angleSpin->value();
+        if (controller_.rotateTargetsTcpZ(ids, core::deg2rad(deg))) {
+            statusBar()->showMessage(QString::fromUtf8("已将目标点绕 TCP Z 轴自转 +%1°").arg(deg, 0, 'f', 1), 3000);
+            refreshFromDocument();
+        }
+    });
+
+    customLayout->addWidget(angleSpin);
+    customLayout->addWidget(ccwBtn);
+    customLayout->addWidget(cwBtn);
+    spinLayout->addLayout(customLayout);
+
+    propLayout->addWidget(spinTuningWidget_);
+    spinTuningWidget_->setVisible(false);
+
+    propertyDock_ = makeDock(this, QString::fromUtf8("属性"), propertyContainer);
 
     auto* jogBody = new QWidget();
     auto* jogLayout = new QVBoxLayout(jogBody);
@@ -597,7 +849,7 @@ void ShellWindow::buildChrome() {
         row->addWidget(slider, 1);
         jogLayout->addLayout(row);
         connect(slider, &QSlider::valueChanged, this, [this](int) {
-            if (refreshing_) {
+            if (isRefreshing()) {
                 return;
             }
             QStringList parts;
@@ -709,10 +961,10 @@ void ShellWindow::loadSample() {
 }
 
 void ShellWindow::refreshFromDocument() {
-    if (refreshing_) {
+    if (isRefreshing()) {
         return;
     }
-    refreshing_ = true;
+    RefreshGuard guard(refreshDepth_);
     rebuildSceneTree();
     rebuildProgramTree();
     rebuildTargetTable();
@@ -722,7 +974,6 @@ void ShellWindow::refreshFromDocument() {
     if (viewport_ != nullptr) {
         viewport_->syncScene();
     }
-    refreshing_ = false;
     applySelection();
 }
 
@@ -805,6 +1056,7 @@ void ShellWindow::rebuildProgramTree() {
 }
 
 void ShellWindow::rebuildTargetTable() {
+    RefreshGuard guard(refreshDepth_);
     targetTable_->setRowCount(0);
     const core::Operation* operation = nullptr;
     const std::string& selected = controller_.selectedOperationId();
@@ -829,20 +1081,47 @@ void ShellWindow::rebuildTargetTable() {
         auto* name = new QTableWidgetItem(QString::fromStdString(target.name));
         name->setData(Qt::UserRole, QString::fromStdString(target.id));
         name->setData(Qt::UserRole + 1, QString::fromStdString(operation->id));
+        name->setFlags(name->flags() & ~Qt::ItemIsEditable);
         targetTable_->setItem(row, 0, name);
+
         targetTable_->setItem(row, 1, new QTableWidgetItem(motionText(target.motion)));
-        const QString speed = target.motion == core::MotionType::J
-            ? QString("%1%").arg(target.speedValue, 0, 'f', 0)
-            : QString("%1 mm/s").arg(target.speedValue, 0, 'f', 0);
-        targetTable_->setItem(row, 2, new QTableWidgetItem(speed));
-        targetTable_->setItem(row, 3, new QTableWidgetItem(statusText(target.cache.status)));
-        targetTable_->setItem(row, 4, new QTableWidgetItem(
-            QString::number(target.cache.minClearanceMm, 'f', 1)));
+
+        targetTable_->setItem(row, 2, new QTableWidgetItem(formatSpeedCellText(target)));
+
+        const QString term = (target.termination == core::TerminationType::FINE)
+            ? QString("FINE")
+            : QString("CNT %1").arg(target.cntValue);
+        targetTable_->setItem(row, 3, new QTableWidgetItem(term));
+
+        QString evStr = "-";
+        for (const auto& ev : target.events) {
+            if (ev.type == core::ProcessEventType::ArcStart) {
+                evStr = QString("Arc Start[%1]").arg(ev.scheduleNumber);
+                break;
+            } else if (ev.type == core::ProcessEventType::ArcEnd) {
+                evStr = QString("Arc End[%1]").arg(ev.scheduleNumber);
+                break;
+            }
+        }
+        targetTable_->setItem(row, 4, new QTableWidgetItem(evStr));
+
+        auto* statusItem = new QTableWidgetItem(statusText(target.cache.status));
+        statusItem->setFlags(statusItem->flags() & ~Qt::ItemIsEditable);
+        targetTable_->setItem(row, 5, statusItem);
+
+        auto* clearanceItem = new QTableWidgetItem(
+            QString::number(target.cache.minClearanceMm, 'f', 1));
+        clearanceItem->setFlags(clearanceItem->flags() & ~Qt::ItemIsEditable);
+        targetTable_->setItem(row, 6, clearanceItem);
+
         ++row;
     }
 }
 
 void ShellWindow::showPropertiesForScene(const QString& nodeId) {
+    if (spinTuningWidget_) {
+        spinTuningWidget_->setVisible(false);
+    }
     if (nodeId.isEmpty()) {
         return;
     }
@@ -864,6 +1143,9 @@ void ShellWindow::showPropertiesForScene(const QString& nodeId) {
 }
 
 void ShellWindow::showPropertiesForTarget(const QString& targetId) {
+    if (spinTuningWidget_) {
+        spinTuningWidget_->setVisible(true);
+    }
     const auto* target = findTargetById(controller_.document(), targetId.toStdString());
     if (target == nullptr) {
         return;
@@ -874,8 +1156,18 @@ void ShellWindow::showPropertiesForTarget(const QString& targetId) {
     text.precision(1);
     text << target->name << "\n"
          << "运动  " << motionText(target->motion).toStdString() << "\n"
-         << "速度  " << target->speedValue << "\n"
-         << "状态  " << statusText(target->cache.status).toStdString() << "\n"
+         << "速度  " << (target->useWeldSpeed ? "WELD_SPEED (" + std::to_string(static_cast<int>(target->speedValue)) + " mm/s)" : std::to_string(static_cast<int>(target->speedValue))) << "\n"
+         << "平滑度  " << (target->termination == core::TerminationType::FINE ? "FINE" : "CNT " + std::to_string(target->cntValue)) << "\n";
+    if (!target->events.empty()) {
+        for (const auto& ev : target->events) {
+            if (ev.type == core::ProcessEventType::ArcStart) {
+                text << "工艺事件  Arc Start[" << ev.scheduleNumber << "]\n";
+            } else if (ev.type == core::ProcessEventType::ArcEnd) {
+                text << "工艺事件  Arc End[" << ev.scheduleNumber << "]\n";
+            }
+        }
+    }
+    text << "状态  " << statusText(target->cache.status).toStdString() << "\n"
          << "间隙 mm  " << target->cache.minClearanceMm << "\n"
          << "UFRAME 位置 mm  " << wpr.x << "  " << wpr.y << "  " << wpr.z << "\n"
          << "UFRAME 姿态 WPR °  " << wpr.wDeg << "  " << wpr.pDeg << "  " << wpr.rDeg << "\n";
@@ -925,8 +1217,7 @@ void ShellWindow::applySelection() {
         syncJogFromRobot();
 
         if (targetTable_ != nullptr) {
-            const bool wasRefreshing = refreshing_;
-            refreshing_ = true;
+            RefreshGuard guard(refreshDepth_);
             bool needsRebuild = (targetTable_->rowCount() == 0);
             if (!needsRebuild) {
                 auto* firstItem = targetTable_->item(0, 0);
@@ -949,12 +1240,10 @@ void ShellWindow::applySelection() {
                     break;
                 }
             }
-            refreshing_ = wasRefreshing;
         }
 
         if (programTree_ != nullptr && !controller_.selectedOperationId().empty()) {
-            const bool wasRefreshing = refreshing_;
-            refreshing_ = true;
+            RefreshGuard guard(refreshDepth_);
             for (int i = 0; i < programTree_->topLevelItemCount(); ++i) {
                 auto* top = programTree_->topLevelItem(i);
                 for (int j = 0; j < top->childCount(); ++j) {
@@ -968,7 +1257,6 @@ void ShellWindow::applySelection() {
                     }
                 }
             }
-            refreshing_ = wasRefreshing;
         }
         return;
     }
@@ -982,10 +1270,10 @@ void ShellWindow::applySelection() {
     if (controller_.selectedOperationId().empty()) {
         return;
     }
-    const bool wasRefreshing = refreshing_;
-    refreshing_ = true;
-    rebuildTargetTable();
-    refreshing_ = wasRefreshing;
+    {
+        RefreshGuard guard(refreshDepth_);
+        rebuildTargetTable();
+    }
     for (const auto& cu : controller_.document().controllers) {
         for (const auto& program : cu.programs) {
             for (const auto& op : program.operations) {
@@ -1025,6 +1313,28 @@ void ShellWindow::syncJogFromRobot() {
     if (jogReadout_ != nullptr) {
         jogReadout_->setText(QString::fromUtf8("场景机器人：") + parts.join("  "));
     }
+}
+
+std::vector<std::string> ShellWindow::selectedTargetIdsFromTable() const {
+    std::vector<std::string> ids;
+    if (targetTable_ == nullptr) return ids;
+
+    std::set<int> rowSet;
+    const auto selectedIndexes = targetTable_->selectionModel() ? targetTable_->selectionModel()->selectedIndexes() : QModelIndexList();
+    for (const auto& idx : selectedIndexes) {
+        rowSet.insert(idx.row());
+    }
+
+    for (int r : rowSet) {
+        auto* item = targetTable_->item(r, 0);
+        if (item != nullptr) {
+            const std::string id = item->data(Qt::UserRole).toString().toStdString();
+            if (!id.empty()) {
+                ids.push_back(id);
+            }
+        }
+    }
+    return ids;
 }
 
 } // namespace olp::ui

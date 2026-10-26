@@ -365,12 +365,20 @@ void SeamAndToolpathAlgo::generateOperationTargets(
     struct SavedUserModification {
         core::TargetRole role{core::TargetRole::VIA};
         double ratio{0.0};
+        bool poseModified{false};
         core::Transform4d deltaOffset{};
+        bool processModified{false};
+        core::MotionType motion{core::MotionType::L};
+        double speedValue{200.0};
+        bool useWeldSpeed{false};
+        core::TerminationType termination{core::TerminationType::FINE};
+        int cntValue{50};
+        std::vector<core::ProcessEvent> events{};
         bool consumed{false};
     };
     std::vector<SavedUserModification> savedMods;
     for (const auto& oldT : inOutOperation.targets) {
-        if (!oldT.userModified) continue;
+        if (!oldT.userModified && !oldT.processModified) continue;
         const bool weldRole =
             oldT.role == core::TargetRole::WELD_START ||
             oldT.role == core::TargetRole::WELD_VIA ||
@@ -379,7 +387,20 @@ void SeamAndToolpathAlgo::generateOperationTargets(
             oldT.role == core::TargetRole::APPROACH ||
             oldT.role == core::TargetRole::RETRACT;
         if (weldRole || endRole) {
-            savedMods.push_back({oldT.role, oldT.arcLengthRatio, oldT.userDeltaOffset, false});
+            SavedUserModification mod;
+            mod.role = oldT.role;
+            mod.ratio = oldT.arcLengthRatio;
+            mod.poseModified = oldT.userModified;
+            mod.deltaOffset = oldT.userDeltaOffset;
+            mod.processModified = oldT.processModified;
+            mod.motion = oldT.motion;
+            mod.speedValue = oldT.speedValue;
+            mod.useWeldSpeed = oldT.useWeldSpeed;
+            mod.termination = oldT.termination;
+            mod.cntValue = oldT.cntValue;
+            mod.events = oldT.events;
+            mod.consumed = false;
+            savedMods.push_back(std::move(mod));
         }
     }
 
@@ -477,14 +498,25 @@ void SeamAndToolpathAlgo::generateOperationTargets(
         tApp.role = core::TargetRole::APPROACH;
         tApp.motion = params.approachMotion;
         tApp.speedValue = (params.approachMotion == core::MotionType::J) ? 50.0 : params.approachSpeedMmPerSec;
-        tApp.termination = core::TerminationType::CNT;
-        tApp.cntValue = 50;
+        tApp.termination = core::TerminationType::FINE;
+        tApp.cntValue = 0;
         tApp.poseInUFrame = startWeldPoseUF;
         tApp.poseInUFrame.pos = startWeldPoseUF.pos - (startWeldPoseUF.rot.colZ() * params.approachDistMm);
         if (const auto* mod = takeEndEdit(core::TargetRole::APPROACH)) {
-            tApp.userModified = true;
-            tApp.userDeltaOffset = mod->deltaOffset;
-            tApp.poseInUFrame = tApp.poseInUFrame * mod->deltaOffset;
+            if (mod->poseModified) {
+                tApp.userModified = true;
+                tApp.userDeltaOffset = mod->deltaOffset;
+                tApp.poseInUFrame = tApp.poseInUFrame * mod->deltaOffset;
+            }
+            if (mod->processModified) {
+                tApp.processModified = true;
+                tApp.motion = mod->motion;
+                tApp.speedValue = mod->speedValue;
+                tApp.useWeldSpeed = mod->useWeldSpeed;
+                tApp.termination = mod->termination;
+                tApp.cntValue = mod->cntValue;
+                tApp.events = mod->events;
+            }
         }
         newTargets.push_back(std::move(tApp));
     }
@@ -512,6 +544,7 @@ void SeamAndToolpathAlgo::generateOperationTargets(
             tWeld.speedValue = params.approachSpeedMmPerSec;
             tWeld.useWeldSpeed = false;
             tWeld.termination = core::TerminationType::FINE;
+            tWeld.cntValue = 0;
             tWeld.events.push_back({core::ProcessEventType::ArcStart, params.weldScheduleNumber, 0.0, ""});
         } else if (isLast) {
             tWeld.name = "WELD_END";
@@ -519,6 +552,7 @@ void SeamAndToolpathAlgo::generateOperationTargets(
             tWeld.speedValue = params.weldSpeedMmPerSec;
             tWeld.useWeldSpeed = true;
             tWeld.termination = core::TerminationType::FINE;
+            tWeld.cntValue = 0;
             tWeld.events.push_back({core::ProcessEventType::ArcEnd, params.weldScheduleNumber, 0.0, ""});
         } else {
             tWeld.name = "WELD_VIA_" + std::to_string(i);
@@ -526,13 +560,24 @@ void SeamAndToolpathAlgo::generateOperationTargets(
             tWeld.speedValue = params.weldSpeedMmPerSec;
             tWeld.useWeldSpeed = true;
             tWeld.termination = core::TerminationType::CNT;
-            tWeld.cntValue = 100;
+            tWeld.cntValue = 50;
         }
 
         if (const auto* mod = takeWeldEdit(ratio)) {
-            tWeld.userModified = true;
-            tWeld.userDeltaOffset = mod->deltaOffset;
-            tWeld.poseInUFrame = tWeld.poseInUFrame * mod->deltaOffset;
+            if (mod->poseModified) {
+                tWeld.userModified = true;
+                tWeld.userDeltaOffset = mod->deltaOffset;
+                tWeld.poseInUFrame = tWeld.poseInUFrame * mod->deltaOffset;
+            }
+            if (mod->processModified) {
+                tWeld.processModified = true;
+                tWeld.motion = mod->motion;
+                tWeld.speedValue = mod->speedValue;
+                tWeld.useWeldSpeed = mod->useWeldSpeed;
+                tWeld.termination = mod->termination;
+                tWeld.cntValue = mod->cntValue;
+                tWeld.events = mod->events;
+            }
         }
 
         newTargets.push_back(std::move(tWeld));
@@ -546,14 +591,25 @@ void SeamAndToolpathAlgo::generateOperationTargets(
         tRet.role = core::TargetRole::RETRACT;
         tRet.motion = params.retractMotion;
         tRet.speedValue = (params.retractMotion == core::MotionType::J) ? 50.0 : params.retractSpeedMmPerSec;
-        tRet.termination = core::TerminationType::CNT;
-        tRet.cntValue = 50;
+        tRet.termination = core::TerminationType::FINE;
+        tRet.cntValue = 0;
         tRet.poseInUFrame = endWeldPoseUF;
         tRet.poseInUFrame.pos = endWeldPoseUF.pos - (endWeldPoseUF.rot.colZ() * params.retractDistMm);
         if (const auto* mod = takeEndEdit(core::TargetRole::RETRACT)) {
-            tRet.userModified = true;
-            tRet.userDeltaOffset = mod->deltaOffset;
-            tRet.poseInUFrame = tRet.poseInUFrame * mod->deltaOffset;
+            if (mod->poseModified) {
+                tRet.userModified = true;
+                tRet.userDeltaOffset = mod->deltaOffset;
+                tRet.poseInUFrame = tRet.poseInUFrame * mod->deltaOffset;
+            }
+            if (mod->processModified) {
+                tRet.processModified = true;
+                tRet.motion = mod->motion;
+                tRet.speedValue = mod->speedValue;
+                tRet.useWeldSpeed = mod->useWeldSpeed;
+                tRet.termination = mod->termination;
+                tRet.cntValue = mod->cntValue;
+                tRet.events = mod->events;
+            }
         }
         newTargets.push_back(std::move(tRet));
     }
@@ -721,6 +777,27 @@ bool SeamAndToolpathAlgo::extendStartTrimUntilTorchClears(
         }
     }
     return false;
+}
+
+bool SeamAndToolpathAlgo::rotateTargetAroundTcpZ(core::Target& target, double angleRad) {
+    if (std::abs(angleRad) < 1e-6) {
+        return false;
+    }
+
+    const core::Mat3 rotZ = core::Mat3::rotZ(angleRad);
+    // Multiply target orientation in UFrame on the right by rotZ to rotate around local TCP Z
+    const core::Mat3 newRot = core::Mat3::orthonormalize(target.poseInUFrame.rot * rotZ);
+    target.poseInUFrame.rot = newRot;
+
+    // TCP position is unchanged (rotating around TCP's own origin)
+    // Update userDeltaOffset = userDeltaOffset * stepDelta
+    core::Transform4d stepDelta;
+    stepDelta.rot = rotZ;
+    stepDelta.pos = {0.0, 0.0, 0.0};
+    target.userDeltaOffset = target.userDeltaOffset * stepDelta;
+    target.userModified = true;
+    target.cache.valid = false;
+    return true;
 }
 
 } // namespace olp::algo

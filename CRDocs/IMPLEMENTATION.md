@@ -1,122 +1,104 @@
-# M08-TOOLPATH-EDIT-001 — 路径生成与编辑（实现与验证交接）
+# M09-PROCESS-TUNE-001 — 工艺事件与路径微调（实现与验证交接）
 
 > 执行者：Gemini / Claude
 >
 > 日期：2026-10-26
 >
-> 轮次：Round 2（修复 Round 1 提出的 M08-003 ~ M08-006）
+> 轮次：Round 2
 >
 > 状态：READY_FOR_REVIEW（见 `STATUS.md`）
 >
-> 对应任务：M08 路径生成与编辑、切入切出段配置、姿态 SLERP 插值与程序树/路径表联动导航。
+> 对应任务：M09 焊接工艺参数模型、Arc Start[n]/Arc End[n] 工艺事件关联、CNT/FINE 终止类型配置、绕焊枪 TCP Z 轴自转角优化与局部姿态微调、解决 DEFERRED.md 中的 UI-001，以及 Round 1 审核提出的 M09-001 ~ M09-003 缺陷修复。
 
 ---
 
-## Round 2 修复内容（针对 REVIEW.md Round 1）
+## Round 1 实现内容（核对已通过）
 
-### 1. M08-003：修复 `interpolateOrientationsSlerp` 零变化门禁
-- **修改文件**：`src/algo/SeamAndToolpathAlgo.cpp:564-675`
-- **实现细节**：
-  - 在计算出每个目标点的新插值旋转 `const core::Mat3 newRot = baseRot * interpolatedDelta;` 后，引入实质变化门禁：仅当 `t.poseInUFrame.rot.angularDistanceRad(newRot) > 1e-6` 时才执行修改并标记 `updatedAny = true`。
-  - 若所有点均未发生实质旋转变化，函数返回 `false`，上层 `SmoothTargetOrientationsCommand::execute()` 判定 `mutated_ = false`，被 `CommandManager::executeCommand` 拦截，杜绝无效命令入栈与对 `userModified` 的错误污染。
-  - 显式标记 `(void)seam; (void)uframeInWorld;` 清理未用形参警告。
-
-### 2. M08-004：补全路径生成与重算命令的撤销对称性与空焊缝防御
-- **修改文件**：`include/olp/app/CommandManager.h`、`src/app/CommandManager.cpp`
-- **实现细节**：
-  - `RegenerateOperationTargetsCommand` 新增 `beforeSeamProgrammed_` 与 `seamId_` 成员字段，在 `execute()` 时保存焊缝旧编程状态并在 `undo()` 中准确复原 `seam->programmed = beforeSeamProgrammed_;`。
-  - `GenerateOperationFromSeamCommand` 新增 `bool createdProgram_{false};` 字段，当自动创建 `prog_1` 时在 `undo()` 中对称弹出该程序；在 `execute()` 入口拦截空采样焊缝（`seam->sampledFrames.empty()` 时直接 `mutated_ = false; return;`）。
-
-### 3. M08-005：修复 `selectTarget` 跨操作反查循环中断与 `ShellWindow` 路径表联动
-- **修改文件**：`src/ui/MainWindow.cpp:30-65`、`src/ui/ShellWindow.cpp:920-960`
-- **实现细节**：
-  - `MainWindow::selectTarget`：改用独立局部变量 `std::string foundOpId;` 进行三层控制器遍历，消除外层提前依据非空 `selectedOperationId_` 错误 `break` 的缺陷，使得默认空 `operationId` 时可 100% 正确反查出目标点所属的 `foundOpId`。修正早退条件为 `(operationId.empty() || selectedOperationId_ == operationId)`。
-  - `ShellWindow::applySelection`：在设置选中目标点前，增加检查 `targetTable_` 当前显示的操作 ID 与控制器 `selectedOperationId()` 是否一致；若不一致或表格为空，先行调用 `rebuildTargetTable()` 重构当前操作点列表，再精准高亮对应行并居中滚动，彻底杜绝跨操作选中时路径点表漏刷。
-
-### 4. M08-006：补充自动化测试与回归用例
-- **修改文件**：`tests/test_main.cpp:1770-1845`
-- **新增验证用例**：
-  1. 验证零变化 SLERP 不产生命令入栈，且中间目标点保持 `!userModified`；
-  2. 验证 `RegenerateOperationTargetsCommand` 的执行与 `undo()` 对 `seam.programmed` 和 `doc.isDirty` 严格双向对称；
-  3. 验证多操作工位下，单参数 `win.selectTarget(op2_target)` 自动解析并将 `selectedOperationId()` 更新为第二操作 ID，且视口手柄准确定位。
+1. **焊接工艺参数模型与默认生成规则补全**：
+   - 在 `include/olp/core/ProjectModel.h` 中完善 `WeldScheduleDefinition`，包含条件号 `scheduleNumber`（1~32）、预置电流 `currentAmps`（A）、预置电压 `voltageVolts`（V）、送丝速度、焊接速度 `weldSpeedCmPerMin` 与 `weldSpeedMmPerSec`、气体流量及描述。
+   - 在 `ProjectDocument` 中维护 `std::vector<WeldScheduleDefinition> weldSchedules;`，新建文档时默认初始化 Schedule 1（180A, 22V, 50 cm/min, 15 L/min MAG）。
+   - `SeamAndToolpathAlgo::generateOperationTargets` 默认规则：APPROACH=FINE, WELD_START=FINE+ArcStart[n], WELD_VIA=CNT 50（`useWeldSpeed = true`）, WELD_END=FINE+ArcEnd[n]（`useWeldSpeed = true`）, RETRACT=FINE。
+2. **绕焊枪 TCP Z 轴自转角优化与局部姿态微调**：
+   - 实现 `rotateTargetAroundTcpZ(Target& target, double angleRad)`：枪轴本地 Z 轴自转，位置严格不变，施密特正交化保持 $\det(R) = 1.0$，累加 `userDeltaOffset` 并打上 `userModified = true`。
+   - 封装 `ModifyTargetProcessParamsCommand` 与 `RotateTargetAroundTcpZCommand`，严格实现无实质变更不压栈门禁与 Undo/Redo 对称还原。
+3. **UI 交互（解决 UI-001 与表格/属性微调联动）**：
+   - 解决 `UI-001`：`targetTable_` 多选 $\ge 2$ 点时执行局部区间 SLERP 插值，区间外点姿态严格不变，未选或单选回退全局平滑。
+   - 路径点表格 7 列直观展示与双击编辑运动、速度、平滑度与工艺事件。
+   - 属性面板集成 TCP Z 自转角快速步进微调面板（$\pm 1^\circ, \pm 5^\circ, \pm 15^\circ$）。
 
 ---
 
-## 验证证据与测试结果
+## Round 2 缺陷修复与实现细节
 
-- **单元与集成测试（`build-full/Release/olp_tests.exe`）**：
-  - 自动化测试用例数由 163 项扩增至 **175 项全部通过（0 失败），耗时 1.3 秒**。
-- **端到端流程验证（`SiFastSuiteOLP.exe --verify`）**：
-  - 5 阶段完整通过，退出码 `0`。
+针对 Reviewer 在 `CRDocs/REVIEW.md` 中指出的 3 项 OPEN P1 缺陷，逐项完成闭环修复：
 
----
+### 1. M09-001 速度单元格解析与往返一致性修复
+- **修改文件**：`include/olp/ui/ShellWindow.h`、`src/ui/ShellWindow.cpp`、`tests/test_main.cpp`
+- **问题**：原代码直接截断字符串，导致形如 `WELD_SPEED (80 mm/s)` 中括号残留无法解析，且无法通过输入纯数值退出 `WELD_SPEED`。
+- **实现方案**：
+  - 在 `ShellWindow.h` 中定义 `struct ParsedSpeedCell { double speedValue{0.0}; bool useWeldSpeed{false}; bool valid{false}; };`；
+  - 实现通用解析函数 `parseSpeedCellText(const QString& rawText, double fallbackSpeed)`：
+    - 去除 `WELD_SPEED`、括号、单位并提取浮点数；
+    - 若文本包含 `weld`（如 `WELD_SPEED (80 mm/s)` 或 `WELD_SPEED`），设置 `useWeldSpeed = true`，数值存入 `speedValue`；
+    - 若输入明确的线性速度（如 `80 mm/s`、`250`）或角度比例（`50%`），设置 `useWeldSpeed = false`，从而允许从 `WELD_SPEED` 退出；
+    - 若单位为 `cm/min`（如 `50 cm/min`），按 $\text{mm/s} = \text{cm/min} \times 10 / 60$ 准确换算；
+  - 路径点表格第 2 列统一使用 `formatSpeedCellText(target)` 显示与回读；
+  - 增加往返断言覆盖 `WELD_SPEED (80 mm/s)`、`80 mm/s`、`50%`、`50 cm/min` 及 `Target` 格式化再解析的全流程。
 
-## 异议与理由
+### 2. M09-002 防止单元格编辑事件中同步销毁当前 WidgetItem 与刷新守卫嵌套
+- **修改文件**：`include/olp/ui/ShellWindow.h`、`src/ui/ShellWindow.cpp`
+- **问题**：`itemChanged` 槽内触发命令执行时，文档监听器同步调用 `refreshFromDocument` -> `rebuildTargetTable` -> `setRowCount(0)`，在 Qt 事件派发中途销毁了正在编辑的 `QTableWidgetItem`，且 `rebuildTargetTable` 末尾提前将全局 `refreshing_` 置 false 破坏外层守卫。
+- **实现方案**：
+  - 引入 RAII 深度计数守卫 `RefreshGuard` 与 `refreshDepth_`，替代原扁平布尔变量；提供 `isRefreshing() const noexcept { return refreshDepth_ > 0; }`；
+  - `rebuildTargetTable()` 与 `refreshFromDocument()` 以及 `applySelection()` 均使用 `RefreshGuard` 保护，支持多层安全嵌套，离开作用域自动恢复；
+  - 在 `itemChanged` 槽内引入 `inItemChanged_` 作用域标记；
+  - `documentListenerId_` 监听器检测到 `inItemChanged_` 为 true 时，不进行同步重构，而是通过 `QTimer::singleShot(0, this, [this]{ refreshFromDocument(); });` 将表格重构递延至 Qt 信号派发彻底完成后执行；
+  - 当单元格输入非法格式需要回滚时，同样使用 `QTimer::singleShot(0, ...)` 递延刷新，彻底杜绝当前正处于派发栈中的 `QTableWidgetItem` 被同步销毁的隐患。
 
-无。完全认同 Round 1 审核意见并已全部落实修复。
-
----
-
-## 本轮实际修改
-
-### 1. 焊缝到操作路径生成与智能抽稀（`src/algo/SeamAndToolpathAlgo.cpp`）
-- **直线严格几何判定**：
-  - 在 `generateOperationTargets` 中重构前置判定：仅当 `!seam.isClosed && seam.edgeChain.size() <= 1 && seam.sampledFrames.size() >= 2`，且首尾切向夹角 $\ge 0.98$、各采样点到首尾连线弦的高垂直偏差 $\le 0.05\text{ mm}$ 时，才判定为单段直线。
-  - 单段直线在 `endpointsOnlyForLine = true` 时退化为 4 点（APPROACH, WELD_START, WELD_END, RETRACT）。
-  - 圆环焊缝（`isClosed == true`）、多段复合边链（`edgeChain.size() > 1`）及曲线焊缝，完整保留全部 `WELD_START`, `WELD_VIA_*`, `WELD_END` 弧长离散采样点。
-- **切入/切出段退避与速度/运动方式**：
-  - APPROACH 与 RETRACT 沿焊枪 TCP $-Z$ 轴（焊丝反向）退避：`pos - colZ() * dist`。
-  - 在 `ToolpathGenParams` 中新增 `approachMotion`、`retractMotion` 及 `retractSpeedMmPerSec`，支持对切入切出段独立指定运动类型与速度。
-
-### 2. 旋转矩阵 SLERP 与姿态平滑（`include/olp/core/MathTypes.h` & `src/algo/SeamAndToolpathAlgo.cpp`）
-- **SLERP 插值算法**：
-  - `Mat3::slerp(const Mat3& R1, const Mat3& R2, double t)` 基于四元数球面测地线插值。
-  - `SeamAndToolpathAlgo::interpolateOrientationsSlerp` 提取首尾两点相对于基准姿态的局部偏转 $\Delta R_A$ 与 $\Delta R_B$。
-  - 对二者之间的所有中间焊接目标点（`WELD_VIA`），根据其累计弧长比例 $s$ 进行 SLERP 插值，使焊枪在弯曲或多段焊缝上平滑过渡（中点角误差 $< 10^{-6\circ} \ll 0.1^\circ$）。
-  - 将插值点打上 `userModified = true` 并更新 `userDeltaOffset`，保证后续重新计算焊缝操作时稳定继承平滑结果。
-
-### 3. 命令化封装与撤销重做（`include/olp/app/CommandManager.h` & `src/app/CommandManager.cpp`）
-- **`GenerateOperationFromSeamCommand`**：
-  - 构造时根据 `seamId` 初始化确立 `operationId`。
-  - 若文档未配置控制器/程序，自动补齐默认控制器 `cu_1` 和程序 `prog_1`。
-  - 重新计算时保留旧有的 `userModified == true` 目标点微调偏移。
-  - 执行时标记 `seam.programmed = true`，记录 `beforeDirty_` 与 `beforeOp_`；撤销时严格一对一回滚、恢复未编程状态与 `beforeDirty_`。
-- **`RegenerateOperationTargetsCommand`**：针对既有操作进行目标点重新解算。
-- **`SmoothTargetOrientationsCommand`**：对操作内中间目标点执行姿态 SLERP 插值，支持完整撤销重做并维护 `isDirty` 对称性。
-- **`ProjectDocument::computeUFrameInWorld`**：统一根据 `uframeNumber` 在场景节点中检索 UFRAME 空间变换矩阵，缺失时安全回退至单位矩阵。
-
-### 4. 交互联动与单步导航（`include/olp/ui/MainWindow.h` & `src/ui/ShellWindow.cpp` & `src/ui/OcctViewport.cpp`）
-- **`MainWindow`**：
-  - 实现 `stepTarget(bool forward, bool wrap = false)`，在目标点之间前进/后退单步切换。
-  - 当目标点含有有效逆解（`cache.valid == true`）时，自动更新场景机器人节点的 `currentJointsRad = cache.jointsRad`。
-  - 实现 `generateOperationFromSelectedSeam()` 与 `smoothTargetOrientations()` 命令调度入口。
-- **`OcctViewport`**：
-  - 新增 `attachMainWindow` 接口，自动监听主窗口选择集变更；选中目标点时自动挂载 `TcpGizmo`，保持 `activeTargetId` 100% 联动。
-- **`ShellWindow`**：
-  - 启用主工具栏“生成路径”（Path）与新增“姿态平滑”（SLERP）交互按钮。
-  - 注册 `[`（上一目标点）与 `]`（下一目标点）全局键盘快捷键。
-  - 目标点切换联动：程序树高亮对应操作、路径点表高亮选中对应行并滚动居中、视口手柄挂载、右下角关节滑块预览同步更新。
+### 3. M09-003 解耦姿态手改与工艺手改，路径重生成时精准恢复工艺参数
+- **修改文件**：`include/olp/core/ProjectModel.h`、`include/olp/app/CommandManager.h`、`src/app/CommandManager.cpp`、`src/algo/SeamAndToolpathAlgo.cpp`、`tests/test_main.cpp`
+- **问题**：原代码仅有 `userModified`（姿态偏移），`SavedUserModification` 在重生成时仅保留姿态 `deltaOffset`，工艺改动在重新生成路径时被默认规则覆盖；且若将工艺改动混入 `userModified`，会导致姿态微调点无法随工艺生成规则更新。
+- **实现方案**：
+  - 在 `Target` 中增加独立字段 `bool processModified{false};`，解耦姿态修改（`userModified`）与工艺修改（`processModified`）；
+  - 在 `ModifyTargetProcessParamsCommand` 中：
+    - `TargetParamsSnapshot` 保存原 `processModified` 状态；
+    - 执行时标记 `target->processModified = true`；撤销时准确恢复 `target->processModified = snap.processModified`；
+    - `ReverseOperationPathCommand` 同步交换前后对应点的 `processModified` 标记；
+  - 在 `SeamAndToolpathAlgo::generateOperationTargets` 中：
+    - `SavedUserModification` 结构体同时保存 `poseModified`、`deltaOffset`、`processModified`、`motion`、`speedValue`、`useWeldSpeed`、`termination`、`cntValue` 与 `events`；
+    - 遍历并匹配旧操作点（接近/退避点按角色匹配，焊接点按弧长比例匹配）；
+    - 若 `mod->poseModified` 为 true，恢复其姿态偏移 `userDeltaOffset` 并打上 `userModified = true`；
+    - 若 `mod->processModified` 为 true，恢复其用户自定义的工艺参数并打上 `processModified = true`；
+    - 若仅调整过姿态而未手动修改工艺（`!mod->processModified`），该点的运动类型、速度、平滑度（FINE/CNT）及工艺事件仍严格按最新的生成规则（`inOutOperation.genParams`）重新计算与写入，不锁死工艺参数。
 
 ---
 
-## 判定后未改（维持既有契约）
+## 自动化测试与验证证据
 
-1. **J2/J3 耦合比仍保持 +1.0**：用户决定继续无真机/无 ROBOGUIDE 开发，未盲目调整耦合矩阵。
-2. **安全间隙门禁**：回退段对 `Workpiece_BoxWall_Front` 的间隙低于 5 mm 维持现状，不阻断正常退出码。
+### 1. 单元与集成测试（`build-full/Release/olp_tests.exe`）
+- 扩充 `tests/test_main.cpp` 中的 `Test 16`，新增：
+  - **M09-001 往返回归验证**：
+    - `parseSpeedCellText("WELD_SPEED (80 mm/s)")` -> `valid=true, useWeldSpeed=true, speedValue=80.0`
+    - `parseSpeedCellText("80 mm/s")` -> `valid=true, useWeldSpeed=false, speedValue=80.0`（成功退出 WELD_SPEED）
+    - `parseSpeedCellText("50%")` -> `valid=true, useWeldSpeed=false, speedValue=50.0`
+    - `parseSpeedCellText("50 cm/min")` -> `valid=true, speedValue=8.3333 mm/s`
+    - `parseSpeedCellText("250")` -> `valid=true, speedValue=250.0`
+    - 各种运动与速度模式下 `formatSpeedCellText` $\to$ `parseSpeedCellText` 往返完全一致。
+  - **M09-003 路径重生成参数保留与解耦回归验证**：
+    - 修改 WELD_START 的起弧条件号为 Schedule 3；
+    - 修改 WELD_VIA_1 的平滑度为 CNT 80、速度为 85.0、运动为 J；
+    - 对 WELD_VIA_2 仅执行 TCP Z 自转 30°（纯姿态修改，`userModified = true, !processModified`）；
+    - 执行 `RegenerateOperationTargetsCommand`；
+    - 验证 WELD_START 重生成后保留 `processModified = true` 且保留 Schedule 3（未被默认覆盖）；
+    - 验证 WELD_VIA_1 重生成后保留 `processModified = true` 且保留 CNT 80、速度 85.0 与 J；
+    - 验证 WELD_VIA_2 重生成后姿态自转偏角依然保留（`userModified = true`），但工艺平滑度被按当前生成规则重写为 `CNT 50`，运动类型重写为 `L`，且维持 `!processModified`。
+- **测试结果**：
+  - 测试用例总数扩增至 **298 passed, 0 failed**，退出码 `0`。
 
----
-
-## 验证证据与测试结果
-
-- **单元与集成测试（`build-full/Release/olp_tests.exe`）**：
-  - 新增 `Test 15: M08 Seam-to-Operation Generation, SLERP Orientation Smoothing & Target Stepping`。
-  - 验证单段直线生成 4 点、圆环与边链保留全采样序列、`GenerateOperationFromSeamCommand` 严格对称 Undo/Redo、SLERP 单调平滑过渡与中点零角误差、单步前后切换与视口/逆解预览联动。
-  - **175 项自动化测试全部通过（0 失败），耗时 1.3 秒。**
-- **端到端流程验证（`SiFastSuiteOLP.exe --verify`）**：
-  - STEP 导入、机器人替换、焊缝识别、操作路径生成、OPW 逆解、碰撞烘焙与 .ls 导出全流程通过，退出码 `0`。
-
----
-
-## 异议与理由
-
-无。
+### 2. 端到端流程校验（`SiFastSuiteOLP.exe --verify`）
+- 运行命令：
+  ```powershell
+  $env:PATH = "D:\Soft\Qt\6.12.0\msvc2022_64\bin;C:\vcpkg\vcpkg\installed\x64-windows\bin;$env:PATH"
+  .\build-full\Release\SiFastSuiteOLP.exe --verify
+  ```
+- **输出**：全部 5 阶段顺利通过，FANUC .ls 与 HTML TCP 动画正常生成，退出码 `0`。

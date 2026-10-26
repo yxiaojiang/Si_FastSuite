@@ -42,9 +42,19 @@ public:
     bool stepTarget(bool forward, bool wrap = false);
     bool generateOperationFromSelectedSeam(const core::ToolpathGenParams* params = nullptr);
     bool smoothTargetOrientations(
-        const std::string& operationId = "",
         const std::string& startTargetId = "",
-        const std::string& endTargetId = "");
+        const std::string& endTargetId = "",
+        const std::string& operationId = "");
+
+    // M09: Process parameters & TCP Z spin tuning
+    bool rotateTargetTcpZ(const std::string& targetId, double angleRad);
+    bool rotateTargetsTcpZ(const std::vector<std::string>& targetIds, double angleRad);
+    bool modifyTargetProcessParams(
+        const std::string& targetId,
+        const app::TargetProcessParams& params);
+    bool modifyTargetsProcessParams(
+        const std::vector<std::string>& targetIds,
+        const app::TargetProcessParams& params);
 
     void noteSampleRun(int exitCode, int frameCount, double cycleTimeSec, double weldTimeSec) noexcept;
     int lastSampleExitCode() const noexcept { return lastSampleExitCode_; }

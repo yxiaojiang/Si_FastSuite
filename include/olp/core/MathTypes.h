@@ -135,6 +135,22 @@ struct Mat3 {
         return std::acos(cosTheta);
     }
 
+    // M09: Matrix determinant
+    double determinant() const noexcept {
+        return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+             - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+             + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    }
+
+    // M09: Gram-Schmidt orthonormalization preserving local Z axis as anchor
+    static Mat3 orthonormalize(const Mat3& R) noexcept {
+        Vec3 z = R.colZ().normalized();
+        Vec3 x = R.colX();
+        x = (x - z * x.dot(z)).normalized();
+        Vec3 y = z.cross(x).normalized();
+        return Mat3::fromColumns(x, y, z);
+    }
+
     // M08: Spherical linear interpolation between two rotation matrices
     static Mat3 slerp(const Mat3& R1, const Mat3& R2, double t) noexcept;
 };

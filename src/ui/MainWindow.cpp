@@ -166,10 +166,27 @@ bool MainWindow::generateOperationFromSelectedSeam(const core::ToolpathGenParams
 }
 
 bool MainWindow::smoothTargetOrientations(
-    const std::string& operationId,
     const std::string& startTargetId,
-    const std::string& endTargetId) {
+    const std::string& endTargetId,
+    const std::string& operationId) {
     std::string opId = operationId.empty() ? selectedOperationId_ : operationId;
+    if (opId.empty() && !startTargetId.empty()) {
+        for (const auto& cu : doc_.controllers) {
+            for (const auto& prog : cu.programs) {
+                for (const auto& op : prog.operations) {
+                    for (const auto& t : op.targets) {
+                        if (t.id == startTargetId) {
+                            opId = op.id;
+                            break;
+                        }
+                    }
+                    if (!opId.empty()) break;
+                }
+                if (!opId.empty()) break;
+            }
+            if (!opId.empty()) break;
+        }
+    }
     if (opId.empty()) {
         for (const auto& cu : doc_.controllers) {
             for (const auto& prog : cu.programs) {
@@ -187,6 +204,46 @@ bool MainWindow::smoothTargetOrientations(
 
     auto cmd = std::make_unique<app::SmoothTargetOrientationsCommand>(
         doc_, opId, startTargetId, endTargetId);
+    cmdMgr_.executeCommand(std::move(cmd));
+    return true;
+}
+
+bool MainWindow::rotateTargetTcpZ(const std::string& targetId, double angleRad) {
+    if (targetId.empty() || std::abs(angleRad) < 1e-6) {
+        return false;
+    }
+    auto cmd = std::make_unique<app::RotateTargetAroundTcpZCommand>(doc_, targetId, angleRad);
+    cmdMgr_.executeCommand(std::move(cmd));
+    return true;
+}
+
+bool MainWindow::rotateTargetsTcpZ(const std::vector<std::string>& targetIds, double angleRad) {
+    if (targetIds.empty() || std::abs(angleRad) < 1e-6) {
+        return false;
+    }
+    auto cmd = std::make_unique<app::RotateTargetAroundTcpZCommand>(doc_, targetIds, angleRad);
+    cmdMgr_.executeCommand(std::move(cmd));
+    return true;
+}
+
+bool MainWindow::modifyTargetProcessParams(
+    const std::string& targetId,
+    const app::TargetProcessParams& params) {
+    if (targetId.empty()) {
+        return false;
+    }
+    auto cmd = std::make_unique<app::ModifyTargetProcessParamsCommand>(doc_, targetId, params);
+    cmdMgr_.executeCommand(std::move(cmd));
+    return true;
+}
+
+bool MainWindow::modifyTargetsProcessParams(
+    const std::vector<std::string>& targetIds,
+    const app::TargetProcessParams& params) {
+    if (targetIds.empty()) {
+        return false;
+    }
+    auto cmd = std::make_unique<app::ModifyTargetProcessParamsCommand>(doc_, targetIds, params);
     cmdMgr_.executeCommand(std::move(cmd));
     return true;
 }

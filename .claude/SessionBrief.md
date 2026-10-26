@@ -6,32 +6,30 @@
 
 ## 1. 当前目标
 
-M08（路径生成与编辑：单段非闭合直线智能退化与闭环/多段链保留离散采样、切入切出段沿 -Z 退避与速度运动类型配置、多点姿态 SLERP 插值及命令封装、主窗口程序树/路径点表/视口 Gizmo/逆解预览联动与前后单步导航）已完成 Round 2 复核修复（解决零变化命令入栈门禁、重算撤销恢复 programmed、跨操作目标点选择联动），通过 175 项自动化测试（含 Test 15 全部子项及 Round 2 回归断言）与端到端 `--verify` 校验全绿。下一步推进 M09 工艺事件与路径微调（弧焊参数 Arc Start[n]/Arc End[n] 关联、自转角扫描优化、局部姿态交互编辑）。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
+M09 Round 2 审核 **APPROVED**。`M09-001` 速度往返、`M09-002` 延后刷新、`M09-003` 工艺手改与姿态手改分开保留，均已对照源码和 Test 16 复核。审核方复跑 `olp_tests.exe` 为 298 passed / 0 failed。新延期项是 `M09-008`（路径反向拆开工艺标志和事件）和 `M09-009`（非整数 mm/s 显示成整数）。下一步推进 M10。
 
 ## 2. 这轮已经落地的事实
 
-1. **焊缝到操作（Seam -> Operation）智能路径生成（M08）**：
-   - 修正 `generateOperationTargets`：建立严格的单段直线共线与切线一致性判定（`!seam.isClosed && seam.edgeChain.size() <= 1` 且各采样点共线弦偏距 $\le 0.05\text{ mm}$、切线一致性 $\ge 0.98$），仅真正直线在 `endpointsOnlyForLine = true` 时退化为首尾两点（4 目标点）；曲线、多段复合边链与闭合环焊缝保留完整弧长离散采样点（`WELD_START`、`WELD_VIA_*`、`WELD_END`）。
-   - 切入段（`APPROACH`）与切出段（`RETRACT`）严格沿焊枪 $-Z$ 轴（焊丝反向）按 `approachDistMm` 与 `retractDistMm` 退避，并在 `ToolpathGenParams` 中支持独立配置运动类型（`approachMotion`/`retractMotion`）与速度（`retractSpeedMmPerSec`）。
+1. **焊接工艺参数模型与默认规则补全（M09）**：
+   - 在 `ProjectModel.h` 中完善 `WeldScheduleDefinition`（条件号 1~32、电流、电压、送丝速度、焊接速度、气体流量及描述），在 `ProjectDocument` 构造时默认初始化条件号 1（180A, 22V, 50 cm/min）；为 `ProcessEvent` 增加比较运算符。
+   - 完善 `SeamAndToolpathAlgo::generateOperationTargets` 默认规则：`APPROACH`（J/L，进给速度，`FINE`）；`WELD_START`（L，绑定 `ArcStart[scheduleNumber]`，`FINE`）；`WELD_VIA_*`（L，`useWeldSpeed = true`，`CNT 50`）；`WELD_END`（L，`useWeldSpeed = true`，绑定 `ArcEnd[scheduleNumber]`，`FINE`）；`RETRACT`（J/L，退避速度，`FINE`）。
 
-2. **多点姿态球形线性插值（SLERP Orientation Interpolation）**：
-   - 在 `MathTypes.h` 中实现 `Mat3::slerp(R1, R2, t)`；在 `SeamAndToolpathAlgo` 中实现 `interpolateOrientationsSlerp`。
-   - 提取首尾两点相对于基准姿态的局部相对偏转 $\Delta R_A$、$\Delta R_B$，沿累计弧长比例 $s$ 进行高精度 SLERP 球形线性插值（中点误差 $< 10^{-6\circ} \ll 0.1^\circ$），使焊枪在曲线/折线焊缝上平滑连续过渡。
-   - 封装 `SmoothTargetOrientationsCommand`，将被插值点标记为 `userModified = true` 并更新 `userDeltaOffset`，保证在路径重算时稳定继承用户平滑结果，并支持完整 Undo/Redo 与 `isDirty` 对称恢复。
+2. **绕焊枪 TCP Z 轴自转角优化与局部姿态微调（M09）**：
+   - 在 `MathTypes.h` 中补全 `Mat3::determinant()` 与 `Mat3::orthonormalize`；在 `SeamAndToolpathAlgo` 中实现 `rotateTargetAroundTcpZ`，枪尖位置不变、枪轴空间方向不变，旋转矩阵正交性 $\det(R) = 1.0$，更新 `userDeltaOffset` 并标记 `userModified = true`。
+   - 封装 `ModifyTargetProcessParamsCommand`（运动类型、速度、终止类型 FINE/CNT、工艺事件）与 `RotateTargetAroundTcpZCommand`，零变化门禁、对称 Undo/Redo 与 dirty 还原已通过。
 
-3. **命令化封装与生命周期管理**：
-   - 封装 `GenerateOperationFromSeamCommand` 与 `RegenerateOperationTargetsCommand`，自动创建/重算操作序列，标记 `seam.programmed = true`，并在撤销时严格一对一回滚、恢复未编程状态与 `beforeDirty_`。
-   - 在 `ProjectDocument` 中增加 `computeUFrameInWorld` 统一坐标系求值。
+3. **UI 交互：解决 UI-001 与路径点表/属性面板联动（M09）**：
+   - 解决 `DEFERRED.md` 中的 `UI-001`：`ShellWindow` 姿态平滑按钮检查 `targetTable_` 选中行，多选 $\ge 2$ 点时提取首尾点 ID 执行局部区间 SLERP 插值（区间外部点保持原姿态与 `!userModified`），未选或单选回退全局。
+   - `targetTable_` 扩至 7 列（名称、运动、速度、平滑度、工艺事件、状态、间隙），支持双击就地编辑并即时派发命令。
+   - 属性 Dock 栏新增焊枪 TCP Z 自转角微调面板，集成快捷步进按钮（$\pm 1^\circ, \pm 5^\circ, \pm 15^\circ$）与自定义角度步进旋转。
 
-4. **UI 编程工作台联动与快捷键前后单步导航**：
-   - `MainWindow` 扩展 `stepTarget(bool forward, bool wrap)`、`generateOperationFromSelectedSeam()`、`smoothTargetOrientations()`。
-   - `OcctViewport` 新增 `attachMainWindow` 接口，无缝监听选择变更并在目标点切换时自动将 `TcpGizmo` 挂载到当前目标点（`activeTargetId` 100% 联动）。
-   - `ShellWindow` 启用并绑定“生成路径”与“SLERP平滑”工具栏按钮，绑定 `[` 与 `]` 键盘快捷键用于前后单步导航；目标点切换时联动高亮程序树对应操作、高亮路径点表对应行并自动滚动居中，并在该点具备有效逆解缓存时同步更新机器人关节预览与点动滑块。
+4. **Round 2 P1 缺陷闭环修复**：
+   - `M09-001`：封装 `parseSpeedCellText` 与 `formatSpeedCellText`，支持 `WELD_SPEED (80 mm/s)`、`80 mm/s`（退出 WELD_SPEED）、`50%`、`50 cm/min`（换算 mm/s），补齐往返测试。
+   - `M09-002`：`RefreshGuard` 深度计数守卫替代扁平布尔变量；`itemChanged` 提交时配合 `inItemChanged_` 标记与 `QTimer::singleShot(0, ...)` 递延表格重构，彻底防止当前 `QTableWidgetItem` 在信号处理过程中被销毁。
+   - `M09-003`：`Target` 新增 `bool processModified{false};` 字段，解耦姿态与工艺；`generateOperationTargets` 精确恢复手改工艺字段，而纯姿态手改点按当前规则重写工艺字段（不锁死工艺参数）。
 
-5. **自动化测试与验收（Test 15）**：
-   - 新增 Test 15 验证单段直线生成 4 点、圆环/链焊缝保留完整 `WELD_VIA` 序列、命令 Undo/Redo 对称性、SLERP 单调平滑过渡与中点零角误差、单步前后切换与视口/逆解预览联动。
-   - 补充 Round 2 回归断言：SLERP 零变化门禁防御无效压栈、`RegenerateOperationTargetsCommand` 撤销准确恢复 `programmed` 与 dirty 状态、跨操作目标点单参数选择自动识别。
-   - `build-full` 下 `olp_tests.exe` 全部 175 项测试通过（0 失败），耗时约 1.3 秒。
+5. **自动化测试与验收（Test 16）**：
+   - `olp_tests.exe` 扩增至 **298 passed, 0 failed**。
    - `SiFastSuiteOLP.exe --verify` 运行 5 个阶段完整通过，退出码 0。
 
 ## 3. 未关闭风险
@@ -42,8 +40,8 @@ M08（路径生成与编辑：单段非闭合直线智能退化与闭环/多段�
 
 ## 4. 下一步
 
-1. 推进 M09：工艺事件与路径微调（焊接工艺参数表 Arc Start[n]/Arc End[n] 关联、自转角扫描优化、局部姿态交互微调与冲突检测）。
-2. 推进 M10：机器人运动学与奇异点检测（关节限位、奇异区域警示、构型配置字检查）。
+1. 推进 M10：机器人运动学与奇异点检测（关节限位、奇异区域警示、构型配置字检查）。
+2. `M09-004`~`M09-009` 留在 `CRDocs/DEFERRED.md`，进入对应改动时再迁回。
 
 ## 5. 索引
 

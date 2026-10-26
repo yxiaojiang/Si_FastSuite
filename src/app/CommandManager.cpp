@@ -4,6 +4,18 @@
 
 namespace olp::app {
 
+ProjectDocument::ProjectDocument() {
+    core::WeldScheduleDefinition sched1;
+    sched1.scheduleNumber = 1;
+    sched1.currentAmps = 180.0;
+    sched1.voltageVolts = 22.0;
+    sched1.wireFeedSpeedMPerMin = 6.0;
+    sched1.setWeldSpeedCmPerMin(50.0);
+    sched1.gasFlowRateLPerMin = 15.0;
+    sched1.description = "Schedule 1: 180A, 22V, 50 cm/min";
+    weldSchedules.push_back(sched1);
+}
+
 core::Target* ProjectDocument::findTarget(const std::string& targetId) {
     for (auto& cu : controllers) {
         for (auto& prog : cu.programs) {
@@ -90,6 +102,24 @@ core::SeamDefinition* ProjectDocument::findSeam(const std::string& seamId) {
 const core::SeamDefinition* ProjectDocument::findSeam(const std::string& seamId) const {
     for (const auto& s : seams) {
         if (s.id == seamId) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+
+core::WeldScheduleDefinition* ProjectDocument::findWeldSchedule(int scheduleNumber) {
+    for (auto& s : weldSchedules) {
+        if (s.scheduleNumber == scheduleNumber) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+
+const core::WeldScheduleDefinition* ProjectDocument::findWeldSchedule(int scheduleNumber) const {
+    for (const auto& s : weldSchedules) {
+        if (s.scheduleNumber == scheduleNumber) {
             return &s;
         }
     }
@@ -235,6 +265,7 @@ void ReverseOperationPathCommand::applyReversed(std::vector<core::Target>& targe
         std::swap(a.useWeldSpeed, b.useWeldSpeed);
         std::swap(a.termination, b.termination);
         std::swap(a.cntValue, b.cntValue);
+        std::swap(a.processModified, b.processModified);
     };
 
     core::Target* approach = nullptr;
@@ -584,6 +615,233 @@ void SmoothTargetOrientationsCommand::undo() {
 
 std::string SmoothTargetOrientationsCommand::description() const {
     return "Smooth Target Orientations (" + operationId_ + ")";
+}
+
+// ------------------------------------------------------------------------------
+// ModifyTargetProcessParamsCommand
+// ------------------------------------------------------------------------------
+ModifyTargetProcessParamsCommand::ModifyTargetProcessParamsCommand(
+    ProjectDocument& doc,
+    std::string targetId,
+    const TargetProcessParams& params)
+    : doc_(doc), targetIds_({std::move(targetId)}), newParams_(params) {}
+
+ModifyTargetProcessParamsCommand::ModifyTargetProcessParamsCommand(
+    ProjectDocument& doc,
+    std::vector<std::string> targetIds,
+    const TargetProcessParams& params)
+    : doc_(doc), targetIds_(std::move(targetIds)), newParams_(params) {}
+
+ModifyTargetProcessParamsCommand::ModifyTargetProcessParamsCommand(
+    ProjectDocument& doc,
+    std::string targetId,
+    core::MotionType motion,
+    double speedValue,
+    bool useWeldSpeed,
+    core::TerminationType termination,
+    int cntValue,
+    std::vector<core::ProcessEvent> events)
+    : doc_(doc), targetIds_({std::move(targetId)}) {
+    newParams_.motion = motion;
+    newParams_.speedValue = speedValue;
+    newParams_.useWeldSpeed = useWeldSpeed;
+    newParams_.termination = termination;
+    newParams_.cntValue = cntValue;
+    newParams_.events = std::move(events);
+}
+
+void ModifyTargetProcessParamsCommand::execute() {
+    if (!initialized_) {
+        beforeDirty_ = doc_.isDirty;
+        beforeSnapshots_.clear();
+
+        for (const auto& tid : targetIds_) {
+            auto* t = doc_.findTarget(tid);
+            if (!t) continue;
+
+            bool changed = false;
+            if (newParams_.motion.has_value() && *newParams_.motion != t->motion) changed = true;
+            if (newParams_.speedValue.has_value() && std::abs(*newParams_.speedValue - t->speedValue) > 1e-4) changed = true;
+            if (newParams_.useWeldSpeed.has_value() && *newParams_.useWeldSpeed != t->useWeldSpeed) changed = true;
+            if (newParams_.termination.has_value() && *newParams_.termination != t->termination) changed = true;
+            if (newParams_.cntValue.has_value() && *newParams_.cntValue != t->cntValue) changed = true;
+            if (newParams_.events.has_value() && *newParams_.events != t->events) changed = true;
+
+            if (changed) {
+                TargetParamsSnapshot snap;
+                snap.targetId = t->id;
+                snap.motion = t->motion;
+                snap.speedValue = t->speedValue;
+                snap.useWeldSpeed = t->useWeldSpeed;
+                snap.termination = t->termination;
+                snap.cntValue = t->cntValue;
+                snap.events = t->events;
+                snap.processModified = t->processModified;
+                snap.cacheValid = t->cache.valid;
+                beforeSnapshots_.push_back(std::move(snap));
+            }
+        }
+
+        if (beforeSnapshots_.empty()) {
+            mutated_ = false;
+            initialized_ = true;
+            return;
+        }
+        initialized_ = true;
+    }
+
+    if (beforeSnapshots_.empty()) {
+        mutated_ = false;
+        return;
+    }
+
+    for (const auto& snap : beforeSnapshots_) {
+        auto* t = doc_.findTarget(snap.targetId);
+        if (!t) continue;
+        if (newParams_.motion.has_value()) t->motion = *newParams_.motion;
+        if (newParams_.speedValue.has_value()) t->speedValue = *newParams_.speedValue;
+        if (newParams_.useWeldSpeed.has_value()) t->useWeldSpeed = *newParams_.useWeldSpeed;
+        if (newParams_.termination.has_value()) t->termination = *newParams_.termination;
+        if (newParams_.cntValue.has_value()) t->cntValue = *newParams_.cntValue;
+        if (newParams_.events.has_value()) t->events = *newParams_.events;
+        t->processModified = true;
+        t->cache.valid = false;
+    }
+
+    doc_.isDirty = true;
+    mutated_ = true;
+}
+
+void ModifyTargetProcessParamsCommand::undo() {
+    if (!mutated_) return;
+    for (const auto& snap : beforeSnapshots_) {
+        auto* t = doc_.findTarget(snap.targetId);
+        if (!t) continue;
+        t->motion = snap.motion;
+        t->speedValue = snap.speedValue;
+        t->useWeldSpeed = snap.useWeldSpeed;
+        t->termination = snap.termination;
+        t->cntValue = snap.cntValue;
+        t->events = snap.events;
+        t->processModified = snap.processModified;
+        t->cache.valid = snap.cacheValid;
+    }
+    doc_.isDirty = beforeDirty_;
+}
+
+std::string ModifyTargetProcessParamsCommand::description() const {
+    if (targetIds_.size() == 1) {
+        return "Modify Process Parameters (" + targetIds_.front() + ")";
+    }
+    return "Modify Process Parameters (" + std::to_string(targetIds_.size()) + " targets)";
+}
+
+// ------------------------------------------------------------------------------
+// RotateTargetAroundTcpZCommand
+// ------------------------------------------------------------------------------
+RotateTargetAroundTcpZCommand::RotateTargetAroundTcpZCommand(
+    ProjectDocument& doc,
+    std::string targetId,
+    double angleRad,
+    bool allowMerge)
+    : doc_(doc),
+      targetIds_({std::move(targetId)}),
+      angleRad_(angleRad),
+      allowMerge_(allowMerge) {}
+
+RotateTargetAroundTcpZCommand::RotateTargetAroundTcpZCommand(
+    ProjectDocument& doc,
+    std::vector<std::string> targetIds,
+    double angleRad,
+    bool allowMerge)
+    : doc_(doc),
+      targetIds_(std::move(targetIds)),
+      angleRad_(angleRad),
+      allowMerge_(allowMerge) {}
+
+void RotateTargetAroundTcpZCommand::execute() {
+    if (std::abs(angleRad_) < 1e-6 || targetIds_.empty()) {
+        mutated_ = false;
+        return;
+    }
+
+    if (!initialized_) {
+        beforeDirty_ = doc_.isDirty;
+        beforeSnapshots_.clear();
+
+        for (const auto& tid : targetIds_) {
+            auto* t = doc_.findTarget(tid);
+            if (!t) continue;
+            TargetPoseSnapshot snap;
+            snap.targetId = t->id;
+            snap.poseInUFrame = t->poseInUFrame;
+            snap.userDeltaOffset = t->userDeltaOffset;
+            snap.userModified = t->userModified;
+            snap.cacheValid = t->cache.valid;
+            beforeSnapshots_.push_back(std::move(snap));
+        }
+
+        if (beforeSnapshots_.empty()) {
+            mutated_ = false;
+            initialized_ = true;
+            return;
+        }
+        initialized_ = true;
+    }
+
+    bool anyRotated = false;
+    for (const auto& snap : beforeSnapshots_) {
+        auto* t = doc_.findTarget(snap.targetId);
+        if (!t) continue;
+        if (algo::SeamAndToolpathAlgo::rotateTargetAroundTcpZ(*t, angleRad_)) {
+            anyRotated = true;
+        }
+    }
+
+    if (!anyRotated) {
+        mutated_ = false;
+        return;
+    }
+
+    doc_.isDirty = true;
+    mutated_ = true;
+}
+
+void RotateTargetAroundTcpZCommand::undo() {
+    if (!mutated_) return;
+    for (const auto& snap : beforeSnapshots_) {
+        auto* t = doc_.findTarget(snap.targetId);
+        if (!t) continue;
+        t->poseInUFrame = snap.poseInUFrame;
+        t->userDeltaOffset = snap.userDeltaOffset;
+        t->userModified = snap.userModified;
+        t->cache.valid = snap.cacheValid;
+    }
+    doc_.isDirty = beforeDirty_;
+}
+
+bool RotateTargetAroundTcpZCommand::mergeWith(const ICommand* other) {
+    if (!allowMerge_ || other->commandTypeId() != commandTypeId()) {
+        return false;
+    }
+    const auto* rhs = static_cast<const RotateTargetAroundTcpZCommand*>(other);
+    if (!rhs->allowMerge_ || rhs->targetIds_ != targetIds_) {
+        return false;
+    }
+    for (const auto& snap : beforeSnapshots_) {
+        auto* t = doc_.findTarget(snap.targetId);
+        if (!t) continue;
+        algo::SeamAndToolpathAlgo::rotateTargetAroundTcpZ(*t, rhs->angleRad_);
+    }
+    angleRad_ += rhs->angleRad_;
+    return true;
+}
+
+std::string RotateTargetAroundTcpZCommand::description() const {
+    if (targetIds_.size() == 1) {
+        return "Rotate Target Around TCP Z (" + targetIds_.front() + ")";
+    }
+    return "Rotate Targets Around TCP Z (" + std::to_string(targetIds_.size()) + " targets)";
 }
 
 // ------------------------------------------------------------------------------

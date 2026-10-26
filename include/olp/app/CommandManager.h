@@ -11,10 +11,13 @@ namespace olp::app {
 // M01: Unified Project Document
 class ProjectDocument {
 public:
+    ProjectDocument();
+
     core::UnitsSettings settings{};
     std::vector<core::SceneNode> sceneNodes{};
     std::vector<core::SeamDefinition> seams{};
     std::vector<core::ControllerUnit> controllers{};
+    std::vector<core::WeldScheduleDefinition> weldSchedules{};
     bool isDirty{false};
 
     core::Target* findTarget(const std::string& targetId);
@@ -25,6 +28,8 @@ public:
     const core::SceneNode* findSceneNode(const std::string& nodeId) const;
     core::SeamDefinition* findSeam(const std::string& seamId);
     const core::SeamDefinition* findSeam(const std::string& seamId) const;
+    core::WeldScheduleDefinition* findWeldSchedule(int scheduleNumber);
+    const core::WeldScheduleDefinition* findWeldSchedule(int scheduleNumber) const;
     core::Transform4d computeUFrameInWorld(int uframeNumber = 1) const;
 };
 
@@ -178,6 +183,112 @@ private:
     std::string startTargetId_;
     std::string endTargetId_;
     std::vector<core::Target> beforeTargets_{};
+    bool beforeDirty_{false};
+    bool initialized_{false};
+    bool mutated_{false};
+};
+
+// ------------------------------------------------------------------------------
+// M09: Process Parameters & Target Editing Commands
+// ------------------------------------------------------------------------------
+struct TargetProcessParams {
+    std::optional<core::MotionType> motion{};
+    std::optional<double> speedValue{};
+    std::optional<bool> useWeldSpeed{};
+    std::optional<core::TerminationType> termination{};
+    std::optional<int> cntValue{};
+    std::optional<std::vector<core::ProcessEvent>> events{};
+};
+
+class ModifyTargetProcessParamsCommand final : public ICommand {
+public:
+    ModifyTargetProcessParamsCommand(
+        ProjectDocument& doc,
+        std::string targetId,
+        const TargetProcessParams& params);
+
+    ModifyTargetProcessParamsCommand(
+        ProjectDocument& doc,
+        std::vector<std::string> targetIds,
+        const TargetProcessParams& params);
+
+    ModifyTargetProcessParamsCommand(
+        ProjectDocument& doc,
+        std::string targetId,
+        core::MotionType motion,
+        double speedValue,
+        bool useWeldSpeed,
+        core::TerminationType termination,
+        int cntValue,
+        std::vector<core::ProcessEvent> events = {});
+
+    void execute() override;
+    void undo() override;
+    std::string description() const override;
+    int commandTypeId() const noexcept override { return 1002; }
+    bool didMutate() const noexcept override { return mutated_; }
+
+private:
+    struct TargetParamsSnapshot {
+        std::string targetId{};
+        core::MotionType motion{core::MotionType::L};
+        double speedValue{200.0};
+        bool useWeldSpeed{false};
+        core::TerminationType termination{core::TerminationType::FINE};
+        int cntValue{100};
+        std::vector<core::ProcessEvent> events{};
+        bool processModified{false};
+        bool cacheValid{false};
+    };
+
+    ProjectDocument& doc_;
+    std::vector<std::string> targetIds_{};
+    TargetProcessParams newParams_{};
+
+    std::vector<TargetParamsSnapshot> beforeSnapshots_{};
+    bool beforeDirty_{false};
+    bool initialized_{false};
+    bool mutated_{false};
+};
+
+class RotateTargetAroundTcpZCommand final : public ICommand {
+public:
+    RotateTargetAroundTcpZCommand(
+        ProjectDocument& doc,
+        std::string targetId,
+        double angleRad,
+        bool allowMerge = false);
+
+    RotateTargetAroundTcpZCommand(
+        ProjectDocument& doc,
+        std::vector<std::string> targetIds,
+        double angleRad,
+        bool allowMerge = false);
+
+    void execute() override;
+    void undo() override;
+    std::string description() const override;
+    int commandTypeId() const noexcept override { return 1003; }
+    bool mergeWith(const ICommand* other) override;
+    bool didMutate() const noexcept override { return mutated_; }
+
+    double angleRad() const noexcept { return angleRad_; }
+
+private:
+    struct TargetPoseSnapshot {
+        std::string targetId{};
+        core::Transform4d poseInUFrame{};
+        core::Transform4d userDeltaOffset{};
+        bool userModified{false};
+        bool cacheValid{false};
+    };
+
+    ProjectDocument& doc_;
+    std::vector<std::string> targetIds_{};
+    double angleRad_{0.0};
+    bool allowMerge_{false};
+
+    std::vector<TargetPoseSnapshot> beforeSnapshots_{};
     bool beforeDirty_{false};
     bool initialized_{false};
     bool mutated_{false};

@@ -36,10 +36,70 @@
 
 ---
 
-## UI-001 [OPEN] 主工具栏“姿态平滑”按钮支持 `targetTable_` 多选局部区间插值（P2）
+## UI-001 [RESOLVED in M09] 主工具栏“姿态平滑”按钮支持 `targetTable_` 多选局部区间插值（P2）
 
 - **来源轮次**：`M08-TOOLPATH-EDIT-001` Round 1 审核（2026-10-26）。
-- **位置**：`src/ui/ShellWindow.cpp:411-421`。
-- **现状**：底层 `SeamAndToolpathAlgo::interpolateOrientationsSlerp` 与 `SmoothTargetOrientationsCommand` 已支持传入局部起止点 `startTargetId`、`endTargetId`，但 `ShellWindow` 工具栏 `slerpAction` 点击时目前固定调用无参 `controller_.smoothTargetOrientations()`（默认对整条焊缝首尾焊接点插值），尚未读取 `targetTable_` 中用户框选的多行起止目标点。
-- **触发阶段**：M09 路径点表格编辑与局部姿态交互微调阶段。
-- **验收条件**：当用户在 `targetTable_` 中选中 $\ge 2$ 行焊接目标点并点击“姿态平滑”时，自动提取选中行的首尾 `targetId` 执行局部区间 SLERP 插值。
+- **位置**：`src/ui/ShellWindow.cpp` 姿态平滑动作与 `selectedTargetIdsFromTable`。
+- **现状**：已在 M09（`M09-PROCESS-TUNE-001`）中闭环。选中行按行号排序，多选不少于 2 点时用首尾 `targetId` 做局部 SLERP，单选或未选退化为整条焊缝。
+- **闭环验证**：Test 16 中区间内 `T_3` 插到约 20°，区间外 `T_1` / `T_5` 保持单位阵且 `!userModified`。M09 Round 1 审核已复核源码，维持 **RESOLVED**。
+
+---
+
+## M09-004 [OPEN] 界面入口把未入栈的命令也报成成功（P2）
+
+- **来源轮次**：`M09-PROCESS-TUNE-001` Round 1 审核（2026-10-26）。
+- **位置**：`src/ui/MainWindow.cpp` 的 `smoothTargetOrientations`、`rotateTargetsTcpZ`、`modifyTargetProcessParams`。
+- **现状**：命令被零变化门禁拒绝、或局部 SLERP 没有中间点时，函数仍返回 true。状态栏显示已完成或已更新。
+- **触发阶段**：下一次改这三条界面入口时。
+- **验收条件**：返回值跟随 `didMutate()`。未入栈时状态栏说明没有变化，不显示成功。
+
+---
+
+## M09-005 [OPEN] 焊接条件表没有编辑界面，非法条件号被静默改成 1（P2）
+
+- **来源轮次**：`M09-PROCESS-TUNE-001` Round 1 审核（2026-10-26）。
+- **位置**：`ProjectDocument::weldSchedules`；`ShellWindow.cpp` 工艺事件列解析。
+- **现状**：文档里只有默认条件号 1。表内没有电流、电压、送丝、气体的编辑入口。输入 `Arc Start[99]` 或 `[0]` 时不报错，条件号落到 1。`WeldScheduleDefinition` 的速度字段若绕过 setter 直接赋值，会和 `getWeldSpeedMmPerSec()` 不一致。
+- **触发阶段**：工艺参数表面板（仍属 M09 的条件表编辑，不挡当前三条 P1）。
+- **验收条件**：可查看并编辑 1~32 号条件的电流、电压、送丝、气体与速度；非法条件号拒绝入栈并保留原文本；速度只通过 setter 写入。
+
+---
+
+## M09-006 [OPEN] 圆弧运动 C 与自转连续拖拽合并未接入（P2）
+
+- **来源轮次**：`M09-PROCESS-TUNE-001` Round 1 审核（2026-10-26）。
+- **位置**：`MotionType::C`；`RotateTargetAroundTcpZCommand::mergeWith`；属性面板步进按钮。
+- **现状**：路径点表只接受 J/L。后处理遇到 C 会拒绝写出。`mergeWith` 默认 `allowMerge=false`，界面没有滑块，连续点击每次各入栈一条。自转角扫描图属于 M10。
+- **触发阶段**：M10 自转角扫描，或 M11 圆弧插补。
+- **验收条件**：扫描图上的连续拖拽合并为一条撤销命令；C 在插补与后处理可用之前，表格不把它收成一条合法运动。
+
+---
+
+## M09-007 [OPEN] 多选在刷新后塌成一行，工艺参数不能一次改多点（P2）
+
+- **来源轮次**：`M09-PROCESS-TUNE-001` Round 1 审核（2026-10-26）。
+- **位置**：`ShellWindow::applySelection` 的 `selectRow`；路径点表 `itemChanged`。
+- **现状**：自转按钮会旋转当前多选的全部点，但刷新后 `selectRow` 只留下当前行。表格双击只改被编辑的那一行，未调用已有的 `modifyTargetsProcessParams`。
+- **触发阶段**：下一次做路径点批量编辑时。
+- **验收条件**：一次速度或 CNT 编辑可作用于当前多选行，并作为一条命令入栈；操作完成后多选范围仍在。
+
+---
+
+## M09-008 [OPEN] 路径反向把 processModified 和工艺事件拆开（P2）
+
+- **来源轮次**：`M09-PROCESS-TUNE-001` Round 2 审核（2026-10-26）。
+- **位置**：`ReverseOperationPathCommand::applyReversed`。
+- **现状**：`processModified` 随运动、速度、CNT 在起弧点与收弧点之间对调。`Arc Start` / `Arc End` 留在原来的点上，只改事件类型，并把 `arcLengthRatio` 取补。之后再重生成时，手改过的条件号可能因为标志已经离开该点而被默认规则覆盖；对面那个点却带着 `processModified` 把默认事件保留下来。
+- **触发阶段**：下一次改路径反向，或反向之后立刻重生成。
+- **验收条件**：反向后再重生成，手改过的条件号、CNT 和速度仍在翻转后的对应点上；没改过的一端仍按生成规则重写。
+
+---
+
+## M09-009 [OPEN] 速度单元格把非整数 mm/s 显示成整数（P2）
+
+- **来源轮次**：`M09-PROCESS-TUNE-001` Round 2 审核（2026-10-26）。
+- **位置**：`formatSpeedCellText`。
+- **现状**：`50 cm/min` 正确存成 \(8.333\) mm/s，表格用 0 位小数显示成 `8 mm/s`。用户再提交这个显示文本时，速度变成 8。
+- **触发阶段**：下一次改速度列的显示格式时。
+- **验收条件**：显示至少保留到 0.1 mm/s，或提交显示文本后内部速度与换算结果之差小于 \(0.05\) mm/s。
+
