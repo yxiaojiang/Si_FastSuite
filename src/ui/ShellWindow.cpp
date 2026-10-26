@@ -258,6 +258,7 @@ const core::Target* findTargetById(const app::ProjectDocument& doc, const std::s
 
 ShellWindow::ShellWindow(MainWindow& controller, QWidget* parent)
     : QMainWindow(parent), controller_(controller) {
+    QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
     setWindowTitle(QString::fromUtf8("SiFastSuite OLP — 焊接离线编程"));
     resize(1440, 900);
     buildChrome();

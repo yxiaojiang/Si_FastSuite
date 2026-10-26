@@ -54,14 +54,10 @@ protected:
     void showEvent(QShowEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
-    void focusInEvent(QFocusEvent* event) override;
-    void focusOutEvent(QFocusEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
-    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
-    QPaintEngine* paintEngine() const override;
 #endif
 
 private:
@@ -75,7 +71,6 @@ private:
     TcpGizmo tcpGizmo_;
     std::unique_ptr<ViewState> view_;
     bool fitted_{false};
-    bool painting_{false};
 };
 
 } // namespace olp::ui

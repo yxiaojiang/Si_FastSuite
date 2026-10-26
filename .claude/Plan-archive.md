@@ -1,5 +1,10 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-26：三维视口背景防黑屏物理隔离
+
+1. **[DONE] 视口背景防黑屏物理隔离。** Qt 6 Windows 平台忽略 `WA_PaintOnScreen`，在 `paintEvent`（OpenGL `SwapBuffers`）后 `QBackingStore::flush()` 会对 `OcctViewport` 执行全黑 `GDI BitBlt` 覆盖。现由 `OcctViewport` 内部建立专用 Win32 透传子窗口 `SiFastSuiteOcctRenderHost`（`WM_NCHITTEST -> HTTRANSPARENT`）承载 `WNT_Window`，配合父级 `WS_CLIPCHILDREN` 硬件裁剪与全局 `AA_DontCreateNativeWidgetSiblings`，彻底阻断 GDI 覆盖黑屏与停靠面板原生句柄传染。`olp_tests` 56 项全过，`--verify` 退出码 0。
+2. **未完成，转入活跃计划**：视口边拾取，以及把焊枪拖拽画到视口上。
+
 ## 2026-10-26：三维视口相机
 
 1. **[DONE] 视口与分区契约。** `OcctViewport` 由窗口壳创建。背景保持深灰。点到其它面板时拦住窗口擦除并整幅重画，避免黑底和底边条纹。左键旋转，中键或右键平移，滚轮向前拉近、向后拉远。「全景」按可见包围盒取景。工具栏按文件、编辑、工作台、编程、视图分组，图标在上、文字在下；还没接入的命令是灰的。场景画成包围盒。两个工作台都保留场景、属性和点动；编程台额外显示程序树和「路径点 | 问题」。程序树不列点，路径点表只含当前操作。问题读路径点缓存。点动读场景机器人且不入栈。`olp_tests` 五十六项通过，`--verify` 退出码 0。

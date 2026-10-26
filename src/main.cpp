@@ -52,6 +52,7 @@ int main(int argc, char* argv[]) {
     hideConsoleWindow();
 
 #ifdef OLP_HAS_QT6
+    QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
     QApplication app(argc, argv);
     app.setApplicationName("SiFastSuite OLP");
     app.setOrganizationName("SiFastSuite");

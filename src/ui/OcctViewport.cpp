@@ -45,6 +45,9 @@ struct OcctViewport::ViewState {
     Handle(V3d_Viewer) viewer;
     Handle(V3d_View) view;
     Handle(AIS_InteractiveContext) context;
+#ifdef _WIN32
+    HWND renderHwnd{nullptr};
+#endif
 #endif
 #ifdef OLP_HAS_QT6
     bool rotating{false};
@@ -53,16 +56,90 @@ struct OcctViewport::ViewState {
 #endif
 };
 
+#if defined(_WIN32) && defined(OLP_HAS_QT6) && defined(OLP_HAS_OCCT)
+namespace {
+
+LRESULT CALLBACK occtRenderWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_NCHITTEST) {
+        return HTTRANSPARENT;
+    }
+    if (msg == WM_ERASEBKGND) {
+        return 1;
+    }
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT ps{};
+        BeginPaint(hwnd, &ps);
+        auto* viewPtr = reinterpret_cast<V3d_View*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (viewPtr != nullptr) {
+            viewPtr->MustBeResized();
+            viewPtr->Redraw();
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+HWND createOcctRenderWindow(HWND parentHwnd) {
+    static ATOM classAtom = 0;
+    HINSTANCE hInst = GetModuleHandleW(nullptr);
+    if (classAtom == 0) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(WNDCLASSEXW);
+        wc.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = occtRenderWndProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        wc.lpszClassName = L"SiFastSuiteOcctRenderHost";
+        classAtom = RegisterClassExW(&wc);
+    }
+    const LONG_PTR parentStyle = GetWindowLongPtrW(parentHwnd, GWL_STYLE);
+    if ((parentStyle & WS_CLIPCHILDREN) == 0) {
+        SetWindowLongPtrW(parentHwnd, GWL_STYLE, parentStyle | WS_CLIPCHILDREN);
+    }
+    RECT rc{};
+    GetClientRect(parentHwnd, &rc);
+    const int w = std::max<int>(1, rc.right - rc.left);
+    const int h = std::max<int>(1, rc.bottom - rc.top);
+    return CreateWindowExW(
+        0,
+        L"SiFastSuiteOcctRenderHost",
+        L"",
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+        0, 0, w, h,
+        parentHwnd,
+        nullptr,
+        hInst,
+        nullptr);
+}
+
+void syncOcctRenderWindowSize(HWND parentHwnd, HWND renderHwnd) {
+    if (parentHwnd == nullptr || renderHwnd == nullptr) {
+        return;
+    }
+    RECT rc{};
+    GetClientRect(parentHwnd, &rc);
+    SetWindowPos(
+        renderHwnd,
+        nullptr,
+        0,
+        0,
+        std::max<int>(1, rc.right - rc.left),
+        std::max<int>(1, rc.bottom - rc.top),
+        SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+} // namespace
+#endif
+
 #ifdef OLP_HAS_QT6
 OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMgr, QWidget* parent)
     : QWidget(parent), doc_(doc), tcpGizmo_(doc, cmdMgr), view_(std::make_unique<ViewState>()) {
+    setAttribute(Qt::WA_DontCreateNativeAncestors);
     setAttribute(Qt::WA_NativeWindow);
-    setAttribute(Qt::WA_PaintOnScreen);
-    setAttribute(Qt::WA_NoSystemBackground);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setAttribute(Qt::WA_NoMousePropagation);
-    setBackgroundRole(QPalette::NoRole);
-    setAutoFillBackground(false);
     const QColor background(30, 34, 38);
     QPalette pal = palette();
     pal.setColor(QPalette::Window, background);
@@ -73,15 +150,21 @@ OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMg
     setMinimumSize(640, 420);
 }
 
-OcctViewport::~OcctViewport() = default;
-
-QPaintEngine* OcctViewport::paintEngine() const {
-#ifdef OLP_HAS_OCCT
-    if (view_ && !view_->view.IsNull()) {
-        return nullptr;
+OcctViewport::~OcctViewport() {
+#if defined(OLP_HAS_OCCT) && defined(_WIN32)
+    if (view_ != nullptr) {
+        if (view_->renderHwnd != nullptr) {
+            SetWindowLongPtrW(view_->renderHwnd, GWLP_USERDATA, 0);
+        }
+        view_->view.Nullify();
+        view_->context.Nullify();
+        view_->viewer.Nullify();
+        if (view_->renderHwnd != nullptr && IsWindow(view_->renderHwnd)) {
+            DestroyWindow(view_->renderHwnd);
+            view_->renderHwnd = nullptr;
+        }
     }
 #endif
-    return QWidget::paintEngine();
 }
 #else
 OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMgr)
@@ -199,11 +282,26 @@ void OcctViewport::ensureView() {
         view_->viewer->SetLightOn();
         view_->context = new AIS_InteractiveContext(view_->viewer);
         view_->view = view_->viewer->CreateView();
-        Handle(WNT_Window) window = new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
+#ifdef _WIN32
+        view_->renderHwnd = createOcctRenderWindow(reinterpret_cast<HWND>(winId()));
+        const Aspect_Handle targetHandle = reinterpret_cast<Aspect_Handle>(
+            view_->renderHwnd != nullptr ? view_->renderHwnd : reinterpret_cast<HWND>(winId()));
+#else
+        const Aspect_Handle targetHandle = reinterpret_cast<Aspect_Handle>(winId());
+#endif
+        Handle(WNT_Window) window = new WNT_Window(targetHandle);
         view_->view->SetWindow(window);
         if (!window->IsMapped()) {
             window->Map();
         }
+#ifdef _WIN32
+        if (view_->renderHwnd != nullptr) {
+            SetWindowLongPtrW(
+                view_->renderHwnd,
+                GWLP_USERDATA,
+                reinterpret_cast<LONG_PTR>(view_->view.get()));
+        }
+#endif
         view_->view->SetBackgroundColor(Quantity_Color(30.0 / 255.0, 34.0 / 255.0, 38.0 / 255.0, Quantity_TOC_RGB));
         view_->view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_WHITE, 0.08, V3d_WIREFRAME);
         view_->view->MustBeResized();
@@ -211,6 +309,13 @@ void OcctViewport::ensureView() {
         syncScene();
         view_->view->Redraw();
     } catch (const Standard_Failure&) {
+#ifdef _WIN32
+        if (view_->renderHwnd != nullptr) {
+            SetWindowLongPtrW(view_->renderHwnd, GWLP_USERDATA, 0);
+            DestroyWindow(view_->renderHwnd);
+            view_->renderHwnd = nullptr;
+        }
+#endif
         view_->view.Nullify();
         view_->context.Nullify();
         view_->viewer.Nullify();
@@ -229,6 +334,9 @@ void OcctViewport::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
 #ifdef OLP_HAS_OCCT
     if (view_ && !view_->view.IsNull()) {
+#ifdef _WIN32
+        syncOcctRenderWindowSize(reinterpret_cast<HWND>(winId()), view_->renderHwnd);
+#endif
         view_->view->MustBeResized();
         view_->view->Redraw();
     }
@@ -236,68 +344,26 @@ void OcctViewport::resizeEvent(QResizeEvent* event) {
 }
 
 void OcctViewport::paintEvent(QPaintEvent* event) {
+    QPainter painter(this);
+    painter.fillRect(rect(), QColor(30, 34, 38));
 #ifdef OLP_HAS_OCCT
     if (view_ && !view_->view.IsNull()) {
         view_->view->Redraw();
-        return;
     }
 #endif
-    QPainter painter(this);
-    painter.fillRect(rect(), QColor(30, 34, 38));
     (void)event;
 }
 
-bool OcctViewport::nativeEvent(const QByteArray& eventType, void* message, qintptr* result) {
-#if defined(_WIN32) && defined(OLP_HAS_OCCT)
-    if ((eventType == "windows_generic_MSG" || eventType == "windows_dispatcher_MSG")
-        && view_ && !view_->view.IsNull() && message != nullptr) {
-        auto* msg = static_cast<MSG*>(message);
-        if (msg->message == WM_ERASEBKGND) {
-            if (result != nullptr) {
-                *result = 1;
-            }
-            return true;
-        }
-        if (msg->message == WM_PAINT) {
-            PAINTSTRUCT paint{};
-            BeginPaint(msg->hwnd, &paint);
-            if (!painting_) {
-                painting_ = true;
-                view_->view->MustBeResized();
-                view_->view->Redraw();
-                painting_ = false;
-            }
-            EndPaint(msg->hwnd, &paint);
-            if (result != nullptr) {
-                *result = 0;
-            }
-            return true;
-        }
-    }
-#else
-    (void)eventType;
-    (void)message;
-    (void)result;
-#endif
-    return QWidget::nativeEvent(eventType, message, result);
-}
-
-void OcctViewport::focusInEvent(QFocusEvent* event) {
-    QWidget::focusInEvent(event);
-    QTimer::singleShot(0, this, [this] { redrawView(); });
-}
-
-void OcctViewport::focusOutEvent(QFocusEvent* event) {
-    QWidget::focusOutEvent(event);
-    QTimer::singleShot(0, this, [this] { redrawView(); });
-}
-
 void OcctViewport::mousePressEvent(QMouseEvent* event) {
+    setFocus(Qt::MouseFocusReason);
 #ifdef OLP_HAS_OCCT
     if (view_ == nullptr || view_->view.IsNull()) {
         return;
     }
-    view_->lastPos = event->position().toPoint();
+    const qreal dpr = devicePixelRatioF();
+    view_->lastPos = QPoint(
+        static_cast<int>(std::lround(event->position().x() * dpr)),
+        static_cast<int>(std::lround(event->position().y() * dpr)));
     const int x = view_->lastPos.x();
     const int y = view_->lastPos.y();
     if (event->button() == Qt::LeftButton) {
@@ -316,7 +382,10 @@ void OcctViewport::mouseMoveEvent(QMouseEvent* event) {
     if (view_ == nullptr || view_->view.IsNull()) {
         return;
     }
-    const QPoint pos = event->position().toPoint();
+    const qreal dpr = devicePixelRatioF();
+    const QPoint pos(
+        static_cast<int>(std::lround(event->position().x() * dpr)),
+        static_cast<int>(std::lround(event->position().y() * dpr)));
     if (view_->rotating) {
         view_->view->Rotation(pos.x(), pos.y());
     } else if (view_->panning) {
