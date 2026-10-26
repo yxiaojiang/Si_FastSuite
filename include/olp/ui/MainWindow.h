@@ -1,5 +1,6 @@
 #pragma once
 
+#include "olp/algo/CollisionAndSim.h"
 #include "olp/app/CommandManager.h"
 #include "olp/cad/OcctCadKernel.h"
 #include "olp/device/RobotModel.h"
@@ -56,6 +57,12 @@ public:
         const std::vector<std::string>& targetIds,
         const app::TargetProcessParams& params);
 
+    // M10: Operation validation, kinematics/singularity/collision checks & twist scan
+    algo::SimulationResult validateOperation(const std::string& operationId);
+    algo::SimulationResult validateCurrentOperation();
+    std::vector<algo::TwistScanSample> scanSelectedTargetTwistAngles(double stepDeg = 5.0) const;
+    const algo::SimulationResult& lastSimulationResult() const noexcept { return lastSimulationResult_; }
+
     void noteSampleRun(int exitCode, int frameCount, double cycleTimeSec, double weldTimeSec) noexcept;
     int lastSampleExitCode() const noexcept { return lastSampleExitCode_; }
     int lastFrameCount() const noexcept { return lastFrameCount_; }
@@ -79,6 +86,7 @@ private:
     };
     std::vector<SelectionListener> selectionListeners_{};
     int nextSelectionListenerId_{1};
+    algo::SimulationResult lastSimulationResult_{};
     int lastSampleExitCode_{0};
     int lastFrameCount_{0};
     double lastCycleTimeSec_{0.0};

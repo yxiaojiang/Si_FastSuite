@@ -162,6 +162,7 @@ bool MainWindow::generateOperationFromSelectedSeam(const core::ToolpathGenParams
     const std::string opId = cmd->operationId();
     cmdMgr_.executeCommand(std::move(cmd));
     selectOperation(opId);
+    validateOperation(opId);
     return true;
 }
 
@@ -204,17 +205,16 @@ bool MainWindow::smoothTargetOrientations(
 
     auto cmd = std::make_unique<app::SmoothTargetOrientationsCommand>(
         doc_, opId, startTargetId, endTargetId);
+    const bool mutated = cmd->didMutate();
     cmdMgr_.executeCommand(std::move(cmd));
-    return true;
+    if (mutated) {
+        validateOperation(opId);
+    }
+    return mutated;
 }
 
 bool MainWindow::rotateTargetTcpZ(const std::string& targetId, double angleRad) {
-    if (targetId.empty() || std::abs(angleRad) < 1e-6) {
-        return false;
-    }
-    auto cmd = std::make_unique<app::RotateTargetAroundTcpZCommand>(doc_, targetId, angleRad);
-    cmdMgr_.executeCommand(std::move(cmd));
-    return true;
+    return rotateTargetsTcpZ({targetId}, angleRad);
 }
 
 bool MainWindow::rotateTargetsTcpZ(const std::vector<std::string>& targetIds, double angleRad) {
@@ -222,19 +222,20 @@ bool MainWindow::rotateTargetsTcpZ(const std::vector<std::string>& targetIds, do
         return false;
     }
     auto cmd = std::make_unique<app::RotateTargetAroundTcpZCommand>(doc_, targetIds, angleRad);
+    const bool mutated = cmd->didMutate();
     cmdMgr_.executeCommand(std::move(cmd));
-    return true;
+    if (mutated) {
+        if (!selectedOperationId_.empty()) {
+            validateOperation(selectedOperationId_);
+        }
+    }
+    return mutated;
 }
 
 bool MainWindow::modifyTargetProcessParams(
     const std::string& targetId,
     const app::TargetProcessParams& params) {
-    if (targetId.empty()) {
-        return false;
-    }
-    auto cmd = std::make_unique<app::ModifyTargetProcessParamsCommand>(doc_, targetId, params);
-    cmdMgr_.executeCommand(std::move(cmd));
-    return true;
+    return modifyTargetsProcessParams({targetId}, params);
 }
 
 bool MainWindow::modifyTargetsProcessParams(
@@ -244,8 +245,134 @@ bool MainWindow::modifyTargetsProcessParams(
         return false;
     }
     auto cmd = std::make_unique<app::ModifyTargetProcessParamsCommand>(doc_, targetIds, params);
+    const bool mutated = cmd->didMutate();
     cmdMgr_.executeCommand(std::move(cmd));
-    return true;
+    if (mutated) {
+        if (!selectedOperationId_.empty()) {
+            validateOperation(selectedOperationId_);
+        }
+    }
+    return mutated;
+}
+
+algo::SimulationResult MainWindow::validateOperation(const std::string& operationId) {
+    algo::SimulationResult result;
+    core::Operation* op = doc_.findOperation(operationId);
+    if (!op) return result;
+
+    core::Program* prog = nullptr;
+    for (auto& cu : doc_.controllers) {
+        for (auto& p : cu.programs) {
+            for (auto& o : p.operations) {
+                if (o.id == operationId) {
+                    prog = &p;
+                    break;
+                }
+            }
+            if (prog) break;
+        }
+        if (prog) break;
+    }
+    if (!prog) return result;
+
+    core::Transform4d robotBaseInWorld = core::Transform4d::fromTranslation(0.0, 0.0, 500.0);
+    for (const auto& node : doc_.sceneNodes) {
+        if (node.type == core::SceneNodeType::Robot) {
+            robotBaseInWorld = node.localTransform;
+            break;
+        }
+    }
+
+    const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(prog->uframeNumber);
+    core::Transform4d utoolOffset = core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
+    for (const auto& node : doc_.sceneNodes) {
+        if (node.type == core::SceneNodeType::Tool) {
+            utoolOffset = node.localTransform;
+            break;
+        }
+    }
+
+    algo::OpwKinematics kin(robotModel_);
+    algo::CollisionAndSimEngine simEngine(kin, doc_.settings);
+
+    result = simEngine.validateAndSimulateProgram(
+        *prog,
+        robotBaseInWorld,
+        uframeInWorld,
+        utoolOffset,
+        doc_.sceneNodes,
+        0.05);
+
+    lastSimulationResult_ = result;
+    return result;
+}
+
+algo::SimulationResult MainWindow::validateCurrentOperation() {
+    if (selectedOperationId_.empty()) return {};
+    return validateOperation(selectedOperationId_);
+}
+
+std::vector<algo::TwistScanSample> MainWindow::scanSelectedTargetTwistAngles(double stepDeg) const {
+    if (selectedTargetId_.empty()) return {};
+    const core::Target* target = doc_.findTarget(selectedTargetId_);
+    if (!target) return {};
+
+    const core::Operation* op = nullptr;
+    const core::Program* prog = nullptr;
+    for (const auto& cu : doc_.controllers) {
+        for (const auto& p : cu.programs) {
+            for (const auto& o : p.operations) {
+                for (const auto& t : o.targets) {
+                    if (t.id == selectedTargetId_) {
+                        op = &o;
+                        prog = &p;
+                        break;
+                    }
+                }
+                if (op) break;
+            }
+            if (op) break;
+        }
+        if (op) break;
+    }
+    if (!op || !prog) return {};
+
+    core::Transform4d robotBaseInWorld = core::Transform4d::fromTranslation(0.0, 0.0, 500.0);
+    for (const auto& node : doc_.sceneNodes) {
+        if (node.type == core::SceneNodeType::Robot) {
+            robotBaseInWorld = node.localTransform;
+            break;
+        }
+    }
+
+    const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(prog->uframeNumber);
+    core::Transform4d utoolOffset = core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
+    for (const auto& node : doc_.sceneNodes) {
+        if (node.type == core::SceneNodeType::Tool) {
+            utoolOffset = node.localTransform;
+            break;
+        }
+    }
+
+    const core::Transform4d baseTargetWorldPose = uframeInWorld * target->poseInUFrame;
+    std::array<double, 6> refJoints = prog->startState.homeJointsRad;
+    if (target->cache.valid) {
+        refJoints = target->cache.jointsRad;
+    }
+
+    algo::OpwKinematics kin(robotModel_);
+    algo::CollisionAndSimEngine simEngine(kin, doc_.settings);
+
+    return simEngine.scanTwistAngles(
+        baseTargetWorldPose,
+        robotBaseInWorld,
+        utoolOffset,
+        refJoints,
+        target->config,
+        doc_.sceneNodes,
+        op->targetWorkpieceId,
+        stepDeg,
+        op->exemptionPartIds);
 }
 
 int MainWindow::addSelectionListener(std::function<void()> listener) {

@@ -1,10 +1,14 @@
 #pragma once
 
+#include "olp/algo/CollisionAndSim.h"
 #include "olp/ui/MainWindow.h"
 
 #include <QMainWindow>
 #include <QStringList>
+#include <QWidget>
 #include <functional>
+#include <optional>
+#include <vector>
 
 class QAction;
 class QDockWidget;
@@ -14,7 +18,6 @@ class QPlainTextEdit;
 class QSlider;
 class QTableWidget;
 class QTreeWidget;
-class QWidget;
 
 namespace olp::ui {
 
@@ -29,6 +32,31 @@ struct ParsedSpeedCell {
 
 ParsedSpeedCell parseSpeedCellText(const QString& rawText, double fallbackSpeed = 0.0);
 QString formatSpeedCellText(const core::Target& target);
+
+// M10: Interactive Twist Angle Feasibility Scan Widget (Section 6.5)
+class TwistScanWidget : public QWidget {
+    Q_OBJECT
+public:
+    explicit TwistScanWidget(QWidget* parent = nullptr);
+
+    void setSamples(const std::vector<algo::TwistScanSample>& samples, double currentAngleDeg = 0.0);
+    std::optional<double> findOptimalFeasibleAngleDeg() const;
+    const std::vector<algo::TwistScanSample>& samples() const noexcept { return samples_; }
+    double currentAngleDeg() const noexcept { return currentAngleDeg_; }
+
+signals:
+    void angleSelected(double angleDeg);
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+
+private:
+    std::vector<algo::TwistScanSample> samples_{};
+    double currentAngleDeg_{0.0};
+    int hoveredIndex_{-1};
+};
 
 // M01 shell: two workbenches and the dock zones. The center view is OcctViewport.
 class ShellWindow : public QMainWindow {
@@ -75,6 +103,7 @@ private:
     QListWidget* issueList_{nullptr};
     QPlainTextEdit* propertyText_{nullptr};
     QWidget* spinTuningWidget_{nullptr};
+    TwistScanWidget* twistScanWidget_{nullptr};
     QLabel* jogReadout_{nullptr};
     QSlider* jogSliders_[6]{};
     QLabel* timelineLabel_{nullptr};

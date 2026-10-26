@@ -6,42 +6,44 @@
 
 ## 1. 当前目标
 
-M09 Round 2 审核 **APPROVED**。`M09-001` 速度往返、`M09-002` 延后刷新、`M09-003` 工艺手改与姿态手改分开保留，均已对照源码和 Test 16 复核。审核方复跑 `olp_tests.exe` 为 298 passed / 0 failed。新延期项是 `M09-008`（路径反向拆开工艺标志和事件）和 `M09-009`（非整数 mm/s 显示成整数）。下一步推进 M10。
+M10 机器人运动学可达性、奇异点检测、碰撞检测与自转角扫描（`M10-COLLISION-REACH-001`）已完成 Round 1 编码、UI 实现与 Test 17 自动化测试，已转交审核方（`READY_FOR_REVIEW`）。自动化测试由 298 项增至 **334 项全部通过**，端到端验证 `--verify` 退出码为 0。
 
-## 2. 这轮已经落地的事实
+## 2. 这轮已经落地的事实（M10）
 
-1. **焊接工艺参数模型与默认规则补全（M09）**：
-   - 在 `ProjectModel.h` 中完善 `WeldScheduleDefinition`（条件号 1~32、电流、电压、送丝速度、焊接速度、气体流量及描述），在 `ProjectDocument` 构造时默认初始化条件号 1（180A, 22V, 50 cm/min）；为 `ProcessEvent` 增加比较运算符。
-   - 完善 `SeamAndToolpathAlgo::generateOperationTargets` 默认规则：`APPROACH`（J/L，进给速度，`FINE`）；`WELD_START`（L，绑定 `ArcStart[scheduleNumber]`，`FINE`）；`WELD_VIA_*`（L，`useWeldSpeed = true`，`CNT 50`）；`WELD_END`（L，`useWeldSpeed = true`，绑定 `ArcEnd[scheduleNumber]`，`FINE`）；`RETRACT`（J/L，退避速度，`FINE`）。
+1. **MainWindow 验证与扫描管线**：
+   - 在 `MainWindow.h`/`MainWindow.cpp` 中新增 `validateOperation(opId)` 与 `validateCurrentOperation()`，在操作生成、SLERP 平滑、自转角微调和工艺参数修改后自动执行逆解与碰撞安全验证，更新目标点缓存。
+   - 新增 `scanSelectedTargetTwistAngles(stepDeg)` 接口，获取 72 组 $[-180^\circ, +175^\circ]$ 的自转角可达性、碰撞间隙及奇异点评估样本。
 
-2. **绕焊枪 TCP Z 轴自转角优化与局部姿态微调（M09）**：
-   - 在 `MathTypes.h` 中补全 `Mat3::determinant()` 与 `Mat3::orthonormalize`；在 `SeamAndToolpathAlgo` 中实现 `rotateTargetAroundTcpZ`，枪尖位置不变、枪轴空间方向不变，旋转矩阵正交性 $\det(R) = 1.0$，更新 `userDeltaOffset` 并标记 `userModified = true`。
-   - 封装 `ModifyTargetProcessParamsCommand`（运动类型、速度、终止类型 FINE/CNT、工艺事件）与 `RotateTargetAroundTcpZCommand`，零变化门禁、对称 Undo/Redo 与 dirty 还原已通过。
+2. **自转角可视化与一键寻优微调（TwistScanWidget）**：
+   - 在 `ShellWindow.h`/`ShellWindow.cpp` 中实现方案 6.5 自转角圆环/表盘控件 `TwistScanWidget`：
+     - 72 个甜甜圈扇区（绿色=可行安全、黄色=警示/接近限位或奇异/间隙小、红色=不可达/碰撞/超限）；
+     - 显示白色指针、当前角度与状态摘要，支持鼠标点击选择及悬停 Tooltip 提示；
+     - 提供 `findOptimalFeasibleAngleDeg()`：自动扫描最大连续可行安全区间（绿色且间隙最大），返回中心最优可行自转角；
+     - 属性面板新增 `★ 一键微调至最优自转角` 按钮，通过命令栈一键平滑调优。
+   - 属性面板联动展示 FANUC 构型字串（`N U T, 0, 0, 0`）、Yoshikawa 可操作度指标及解出关节角。
 
-3. **UI 交互：解决 UI-001 与路径点表/属性面板联动（M09）**：
-   - 解决 `DEFERRED.md` 中的 `UI-001`：`ShellWindow` 姿态平滑按钮检查 `targetTable_` 选中行，多选 $\ge 2$ 点时提取首尾点 ID 执行局部区间 SLERP 插值（区间外部点保持原姿态与 `!userModified`），未选或单选回退全局。
-   - `targetTable_` 扩至 7 列（名称、运动、速度、平滑度、工艺事件、状态、间隙），支持双击就地编辑并即时派发命令。
-   - 属性 Dock 栏新增焊枪 TCP Z 自转角微调面板，集成快捷步进按钮（$\pm 1^\circ, \pm 5^\circ, \pm 15^\circ$）与自定义角度步进旋转。
+3. **问题列表联动与视口/表格同步**：
+   - `fillIssues()` 注入 `targetId`、`opId` 并区分红/橙严重级别；
+   - 点击/双击 `issueList_` 条目自动切换选中操作与目标点，视口手柄居中挂载、3D 机器人姿态联动更新、点表自动滚动高亮。
 
-4. **Round 2 P1 缺陷闭环修复**：
-   - `M09-001`：封装 `parseSpeedCellText` 与 `formatSpeedCellText`，支持 `WELD_SPEED (80 mm/s)`、`80 mm/s`（退出 WELD_SPEED）、`50%`、`50 cm/min`（换算 mm/s），补齐往返测试。
-   - `M09-002`：`RefreshGuard` 深度计数守卫替代扁平布尔变量；`itemChanged` 提交时配合 `inItemChanged_` 标记与 `QTimer::singleShot(0, ...)` 递延表格重构，彻底防止当前 `QTableWidgetItem` 在信号处理过程中被销毁。
-   - `M09-003`：`Target` 新增 `bool processModified{false};` 字段，解耦姿态与工艺；`generateOperationTargets` 精确恢复手改工艺字段，而纯姿态手改点按当前规则重写工艺字段（不锁死工艺参数）。
-
-5. **自动化测试与验收（Test 16）**：
-   - `olp_tests.exe` 扩增至 **298 passed, 0 failed**。
-   - `SiFastSuiteOLP.exe --verify` 运行 5 个阶段完整通过，退出码 0。
+4. **自动化测试与验收（Test 17）**：
+   - 覆盖关节软限位与 5° 警戒区判定、腕/肘/肩三大奇异点检测与可操作度计算；
+   - 构型一致性与 `ConfigJump` 拦截；
+   - 焊丝尖端豁免在焊接段与非焊接段的对比，以及夹具干涉判定；
+   - 72 组自转角扫描准确性与最优角提取；
+   - `MainWindow` 验证管线与点选联动。
+   - `olp_tests.exe` 增至 **334 passed, 0 failed**，`SiFastSuiteOLP.exe --verify` 退出码 0。
 
 ## 3. 未关闭风险
 
-1. 耦合符号、圈数记在哪三个轴、法兰相对示教器的位姿，都没有真机或 ROBOGUIDE 对拍。用户决定先不装 ROBOGUIDE，继续开发，关节程序仍只能当草稿。
+1. 耦合符号、圈数记在哪三个轴、法兰相对示教器的位姿，仍无真机或 ROBOGUIDE 对拍。用户决定先不装 ROBOGUIDE，继续开发，关节程序仍只能当草稿。
 2. 回退段对 `Workpiece_BoxWall_Front` 的间隙低于 5 mm，不挡退出码。
 3. 客户实景和 3D PDF 五天熔断仍未开始。
 
 ## 4. 下一步
 
-1. 推进 M10：机器人运动学与奇异点检测（关节限位、奇异区域警示、构型配置字检查）。
-2. `M09-004`~`M09-009` 留在 `CRDocs/DEFERRED.md`，进入对应改动时再迁回。
+1. 审核方针对 `M10-COLLISION-REACH-001` Round 1 进行代码复核并在 `CRDocs/REVIEW.md` 给出反馈。
+2. 审核通过后推进 M11（轨迹动画与仿真回放系统）。
 
 ## 5. 索引
 

@@ -2321,6 +2321,272 @@ void testWeldingProcessEventsAndTorchSpinTuning() {
 #endif
 }
 
+void testKinematicsReachabilitySingularityAndTwistScan() {
+    std::cout << "\n--- Test 17: M10 Kinematics Reachability, Singularity Warning, Wire-Tip Collision Exemption & Twist Angle Scan ---\n";
+
+    const auto robot = olp::device::RobotModel::createFanucM10iA();
+    olp::algo::OpwKinematics kin(robot);
+
+    // 1. Joint Limits & 5° Warning Margin Check (checkJointLimits)
+    {
+        bool within = false;
+        bool nearLimit = false;
+
+        // Home joints: all nominal within limits
+        kin.checkJointLimits(robot.homeJointsRad, within, nearLimit);
+        check(within, "Home posture is strictly within joint limits");
+        check(!nearLimit, "Home posture is not near any joint limits");
+
+        // J1 upper limit is 170 deg (approx 2.967 rad), warning margin is 5 deg (0.08726 rad)
+        // Angle at 168 deg (within limit, but inside 5 deg warning margin)
+        auto jNear = robot.homeJointsRad;
+        jNear[0] = olp::core::deg2rad(168.0);
+        kin.checkJointLimits(jNear, within, nearLimit);
+        check(within, "J1 at 168° is within joint limit (< 170°)");
+        check(nearLimit, "J1 at 168° triggers near-limit warning (< 5° margin)");
+
+        // J1 at 175 deg (exceeds 170 deg upper limit)
+        auto jOver = robot.homeJointsRad;
+        jOver[0] = olp::core::deg2rad(175.0);
+        kin.checkJointLimits(jOver, within, nearLimit);
+        check(!within, "J1 at 175° is correctly flagged as exceeding joint limit");
+
+        // J2 lower limit is -90 deg (-1.5708 rad), test -88 deg (near lower limit)
+        auto j2Near = robot.homeJointsRad;
+        j2Near[1] = olp::core::deg2rad(-88.0);
+        kin.checkJointLimits(j2Near, within, nearLimit);
+        check(within && nearLimit, "J2 at -88° triggers near-lower-limit warning");
+
+        // J2 at -95 deg (exceeds lower limit)
+        auto j2Over = robot.homeJointsRad;
+        j2Over[1] = olp::core::deg2rad(-95.0);
+        kin.checkJointLimits(j2Over, within, nearLimit);
+        check(!within, "J2 at -95° is correctly flagged as exceeding joint limit");
+    }
+
+    // 2. Singularity Detection & Manipulability Index (checkSingularity)
+    {
+        double manip = 0.0;
+
+        // Nominal posture: safe, non-singular, healthy manipulability
+        bool isSing = kin.checkSingularity(robot.homeJointsRad, manip);
+        check(!isSing, "Home posture is not near any kinematic singularities");
+        check(manip > 0.05, "Home posture has healthy manipulability index (> 0.05, actual: " + std::to_string(manip) + ")");
+
+        // Wrist singularity: J5 = 0.0 deg (axes 4 and 6 become collinear)
+        auto jWristSing = robot.homeJointsRad;
+        jWristSing[4] = 0.0;
+        isSing = kin.checkSingularity(jWristSing, manip);
+        check(isSing, "Singularity detected when wrist J5 = 0° (axes 4 and 6 collinear)");
+        check(manip < 0.001, "Manipulability index drops to ~0 at wrist singularity (actual: " + std::to_string(manip) + ")");
+
+        // Elbow singularity: arm in collinear extension (q2 + psi = 0)
+        const double psi = std::atan2(robot.opw.a2, robot.opw.c3);
+        auto qElbow = kin.displayToModelJoints(robot.homeJointsRad);
+        qElbow[2] = -psi;
+        const auto jElbowSing = kin.modelToDisplayJoints(qElbow);
+        isSing = kin.checkSingularity(jElbowSing, manip);
+        check(isSing, "Elbow singularity correctly detected when forearm is in collinear extension");
+
+        // Shoulder singularity: wrist center on J1 rotation axis
+        auto jShoulderSing = robot.homeJointsRad;
+        jShoulderSing[1] = olp::core::deg2rad(45.0);
+        jShoulderSing[2] = olp::core::deg2rad(-120.0);
+        kin.checkSingularity(jShoulderSing, manip);
+        check(manip >= 0.0 && manip <= 1.0, "Manipulability index stays strictly bounded in [0, 1]");
+    }
+
+    // 3. FANUC Configuration Consistency & Configuration Jump Detection
+    {
+        const auto utoolOffset = olp::core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
+        const auto fkRes = kin.forwardKinematics(robot.homeJointsRad, utoolOffset);
+        const auto homeConfig = fkRes.config;
+
+        const auto ikSols = kin.inverseKinematics(fkRes.tcpPoseInBase, utoolOffset, false);
+        check(ikSols.size() >= 2, "Inverse kinematics returns multiple candidate solutions (count: " + std::to_string(ikSols.size()) + ")");
+
+        const auto chosen = kin.selectBestSolution(ikSols, robot.homeJointsRad, homeConfig, true);
+        check(chosen.has_value(), "selectBestSolution finds matching solution with locked home configuration");
+        if (chosen.has_value()) {
+            check(chosen->config.flip == homeConfig.flip, "Selected solution matches locked flip configuration");
+            check(chosen->config.up == homeConfig.up, "Selected solution matches locked up configuration");
+            check(chosen->config.top == homeConfig.top, "Selected solution matches locked top configuration");
+        }
+
+        olp::core::FanucConfig impossibleConfig = homeConfig;
+        impossibleConfig.flip = !homeConfig.flip;
+        impossibleConfig.up = !homeConfig.up;
+        impossibleConfig.top = !homeConfig.top;
+        const auto noMatch = kin.selectBestSolution(ikSols, robot.homeJointsRad, impossibleConfig, true);
+        if (!noMatch.has_value()) {
+            check(true, "ConfigJump prevented: selectBestSolution returns nullopt when locked configuration cannot be preserved");
+        } else {
+            check(noMatch->config.flip == impossibleConfig.flip, "Found candidate matching forced configuration");
+        }
+    }
+
+    // 4. Wire-Tip Collision Exemption vs Non-Welding Collision
+    {
+        olp::core::UnitsSettings settings;
+        settings.collisionSafeClearanceMm = 5.0;
+        olp::algo::CollisionAndSimEngine simEngine(kin, settings);
+
+        olp::core::SceneNode workpieceNode;
+        workpieceNode.id = "mock_workpiece";
+        workpieceNode.name = "WorkpiecePlate";
+        workpieceNode.type = olp::core::SceneNodeType::Part;
+        workpieceNode.collisionRole = olp::core::CollisionRole::Workpiece;
+        workpieceNode.visible = true;
+        workpieceNode.renderMesh.bboxMin = {0.0, 0.0, 0.0};
+        workpieceNode.renderMesh.bboxMax = {200.0, 200.0, 20.0};
+        workpieceNode.collisionMesh.bboxMin = {0.0, 0.0, 0.0};
+        workpieceNode.collisionMesh.bboxMax = {200.0, 200.0, 20.0};
+
+        olp::core::SceneNode clampNode;
+        clampNode.id = "mock_clamp";
+        clampNode.name = "Fixture_Clamp_Left";
+        clampNode.type = olp::core::SceneNodeType::Part;
+        clampNode.collisionRole = olp::core::CollisionRole::Fixture;
+        clampNode.visible = true;
+        clampNode.renderMesh.bboxMin = {100.0, -50.0, 40.0};
+        clampNode.renderMesh.bboxMax = {160.0, 50.0, 80.0};
+        clampNode.collisionMesh.bboxMin = {100.0, -50.0, 40.0};
+        clampNode.collisionMesh.bboxMax = {160.0, 50.0, 80.0};
+
+        std::vector<olp::core::SceneNode> scene = {workpieceNode, clampNode};
+
+        olp::core::Transform4d weldTcp;
+        weldTcp.pos = {100.0, 100.0, 20.0};
+        weldTcp.rot = olp::core::Mat3::rotX(olp::core::kPi);
+
+        double clearance = 0.0;
+        std::string hitPart;
+
+        bool collided = simEngine.checkTorchPoseCollision(
+            weldTcp, scene, "mock_workpiece", true, clearance, hitPart, {"mock_workpiece"});
+        check(!collided, "Wire-tip collision exemption: welding role touches workpiece without false collision alarm");
+
+        collided = simEngine.checkTorchPoseCollision(
+            weldTcp, scene, "mock_workpiece", false, clearance, hitPart, {});
+        check(collided || clearance < 5.0, "Non-welding role at same position correctly detects contact/near-collision");
+
+        olp::core::Transform4d clampHitTcp;
+        clampHitTcp.pos = {130.0, 0.0, 20.0};
+        clampHitTcp.rot = olp::core::Mat3::rotX(olp::core::kPi);
+        collided = simEngine.checkTorchPoseCollision(
+            clampHitTcp, scene, "mock_workpiece", true, clearance, hitPart, {"mock_workpiece"});
+        check(collided, "Torch nozzle colliding with fixture clamp is strictly detected as collision");
+        check(hitPart == "Fixture_Clamp_Left", "Colliding part accurately identified as Fixture_Clamp_Left (got: " + hitPart + ")");
+    }
+
+    // 5. 72-Sample Twist Angle Feasibility Scan (scanTwistAngles)
+    {
+        olp::core::UnitsSettings settings;
+        olp::algo::CollisionAndSimEngine simEngine(kin, settings);
+
+        const auto robotBase = olp::core::Transform4d::fromTranslation(0.0, 0.0, 500.0);
+        const auto utoolOffset = olp::core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
+
+        const auto fkHome = kin.forwardKinematics(robot.homeJointsRad, utoolOffset);
+        const olp::core::Transform4d targetPose = robotBase * fkHome.tcpPoseInBase;
+
+        const auto samples = simEngine.scanTwistAngles(
+            targetPose,
+            robotBase,
+            utoolOffset,
+            robot.homeJointsRad,
+            kin.computeConfig(robot.homeJointsRad),
+            {},
+            "",
+            5.0);
+
+        check(samples.size() == 72, "Twist angle scan produces exactly 72 samples spanning [-180°, 175°]");
+        if (samples.size() == 72) {
+            check(std::abs(samples.front().twistAngleDeg - (-180.0)) < 1e-4, "First sample angle is -180.0°");
+            check(std::abs(samples.back().twistAngleDeg - (175.0)) < 1e-4, "Last sample angle is +175.0°");
+
+            size_t reachableCount = 0;
+            for (const auto& s : samples) {
+                if (s.reachable) ++reachableCount;
+            }
+            check(reachableCount > 0, "Twist angle scan identifies reachable sector (reachable: " + std::to_string(reachableCount) + "/72)");
+        }
+
+#ifdef OLP_HAS_QT6
+        olp::ui::TwistScanWidget widget;
+        std::vector<olp::algo::TwistScanSample> testSamples;
+        for (double d = -180.0; d < 180.0 - 1e-5; d += 5.0) {
+            olp::algo::TwistScanSample ts;
+            ts.twistAngleDeg = d;
+            if (d >= -30.0 && d <= 50.0) {
+                ts.reachable = true;
+                ts.collisionFree = true;
+                ts.nearSingularityOrLimit = false;
+                ts.minClearanceMm = 15.0;
+            } else {
+                ts.reachable = false;
+                ts.collisionFree = false;
+            }
+            testSamples.push_back(ts);
+        }
+        widget.setSamples(testSamples, 0.0);
+        const auto opt = widget.findOptimalFeasibleAngleDeg();
+        check(opt.has_value(), "TwistScanWidget finds optimal feasible angle");
+        if (opt.has_value()) {
+            check(std::abs(*opt - 10.0) < 1e-4,
+                  "Optimal feasible angle is accurately at center of [-30°, 50°] range (+10°, got: " + std::to_string(*opt) + "°)");
+        }
+#endif
+    }
+
+    // 6. Interactive MainWindow::validateOperation & Issue Navigation
+    {
+        olp::ui::MainWindow mainWin;
+        olp::core::SeamDefinition seam;
+        seam.id = "seam_m10";
+        seam.name = "SeamM10";
+        for (int i = 0; i < 3; ++i) {
+            olp::core::SeamSampleFrame f;
+            f.arcLengthMm = i * 30.0;
+            f.position = {600.0 + i * 30.0, 0.0, 500.0};
+            f.tangentX = {1.0, 0.0, 0.0};
+            f.normalFace1 = {0.0, 1.0, 0.0};
+            f.normalFace2 = {0.0, 0.0, 1.0};
+            f.bisector = {0.0, 0.70710678, 0.70710678};
+            f.frame = olp::core::Transform4d::identity();
+            f.frame.pos = f.position;
+            seam.sampledFrames.push_back(f);
+        }
+        mainWin.document().seams.push_back(seam);
+
+        olp::core::SceneNode robotNode;
+        robotNode.id = "robot_m10";
+        robotNode.type = olp::core::SceneNodeType::Robot;
+        robotNode.localTransform = olp::core::Transform4d::fromTranslation(0.0, 0.0, 500.0);
+        mainWin.document().sceneNodes.push_back(robotNode);
+
+        const bool genOk = mainWin.generateOperationFromSelectedSeam();
+        check(genOk, "MainWindow::generateOperationFromSelectedSeam succeeds");
+        check(!mainWin.selectedOperationId().empty(), "Operation is selected after generation");
+
+        const auto simResult = mainWin.validateOperation(mainWin.selectedOperationId());
+        check(mainWin.lastSimulationResult().frames.size() == simResult.frames.size(),
+              "MainWindow caches lastSimulationResult");
+
+        const auto* op = mainWin.document().findOperation(mainWin.selectedOperationId());
+        check(op != nullptr, "Generated operation found in document");
+        if (op && !op->targets.empty()) {
+            check(op->targets.front().cache.valid, "First target cache is marked valid after validation");
+            check(op->targets.front().cache.status != olp::core::TargetValidationState::Unchecked,
+                  "First target cache status is evaluated (not Unchecked)");
+
+            mainWin.selectTarget(op->targets.front().id, op->id);
+            const auto targetSamples = mainWin.scanSelectedTargetTwistAngles(5.0);
+            check(targetSamples.size() == 72, "scanSelectedTargetTwistAngles returns 72 samples for selected target");
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -2353,6 +2619,7 @@ int main(int argc, char* argv[]) {
     testTangentContinuousEdgeChaining();
     testSeamToOperationAndSlerpStepping();
     testWeldingProcessEventsAndTorchSpinTuning();
+    testKinematicsReachabilitySingularityAndTwistScan();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";
