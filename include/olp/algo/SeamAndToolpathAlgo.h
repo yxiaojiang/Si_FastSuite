@@ -35,6 +35,16 @@ public:
         double sampleStepMm = 20.0,
         double startTrimMm = 5.0);
 
+    // M07: Build SeamDefinition across a tangent-continuous edge chain
+    static std::optional<core::SeamDefinition> buildSeamFromEdgeChain(
+        const cad::ICadKernel& cadKernel,
+        int sourceCadHandleId,
+        const cad::EdgeChainResult& chain,
+        const std::vector<int>& allWorkpieceCadHandles,
+        double sampleStepMm = 20.0,
+        double startTrimMm = 0.0,
+        double endTrimMm = 0.0);
+
     // Walk the seam start forward until the torch spheres meet the safe clearance.
     // The fillet angles stay as set on the operation. Returns false if the 25% trim cap is still blocked.
     static bool extendStartTrimUntilTorchClears(

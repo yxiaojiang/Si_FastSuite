@@ -53,6 +53,163 @@ core::Transform4d SeamAndToolpathAlgo::applyWeldingAngles(
     return out;
 }
 
+std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromEdgeChain(
+    const cad::ICadKernel& cadKernel,
+    int sourceCadHandleId,
+    const cad::EdgeChainResult& chain,
+    const std::vector<int>& allWorkpieceCadHandles,
+    double sampleStepMm,
+    double startTrimMm,
+    double endTrimMm) {
+    if (chain.edges.empty() || chain.totalLengthMm <= 1e-4) {
+        return std::nullopt;
+    }
+
+    const auto allEdges = cadKernel.getEdges(sourceCadHandleId);
+    const auto allFaces = cadKernel.getFaces(sourceCadHandleId);
+
+    struct FlankInfo {
+        core::Vec3 normal1{0.0, 0.0, 1.0};
+        core::Vec3 normal2{0.0, -1.0, 0.0};
+        int face1Idx{-1};
+        int face2Idx{-1};
+        std::string face2PartId{};
+        bool valid{false};
+    };
+
+    auto determineFlanks = [&](int edgeIdx) -> FlankInfo {
+        FlankInfo info;
+        if (edgeIdx < 0 || edgeIdx >= static_cast<int>(allEdges.size())) {
+            return info;
+        }
+        const auto& edge = allEdges[edgeIdx];
+        auto crossMatch = cadKernel.findClosestMatingFaceAcrossParts(
+            sourceCadHandleId, edgeIdx, allWorkpieceCadHandles, 1.0);
+
+        if (crossMatch.has_value()) {
+            info.normal2 = crossMatch->outwardNormal;
+            info.face2Idx = crossMatch->faceIndex;
+            info.face2PartId = "part_" + std::to_string(crossMatch->partHandleId);
+            for (int adjIdx : edge.adjacentFaceIndices) {
+                if (adjIdx >= 0 && adjIdx < static_cast<int>(allFaces.size())) {
+                    const core::Vec3 candN = allFaces[adjIdx].outwardNormal;
+                    if (std::abs(candN.dot(info.normal2)) < 0.85) {
+                        info.normal1 = candN;
+                        info.face1Idx = adjIdx;
+                        info.valid = true;
+                        break;
+                    }
+                }
+            }
+        } else if (edge.adjacentFaceIndices.size() >= 2) {
+            info.face1Idx = edge.adjacentFaceIndices[0];
+            info.face2Idx = edge.adjacentFaceIndices[1];
+            info.face2PartId = "part_" + std::to_string(sourceCadHandleId);
+            if (info.face1Idx >= 0 && info.face1Idx < static_cast<int>(allFaces.size()) &&
+                info.face2Idx >= 0 && info.face2Idx < static_cast<int>(allFaces.size())) {
+                info.normal1 = allFaces[info.face1Idx].outwardNormal;
+                info.normal2 = allFaces[info.face2Idx].outwardNormal;
+                info.valid = true;
+            }
+        }
+        return info;
+    };
+
+    std::vector<FlankInfo> edgeFlanks;
+    edgeFlanks.reserve(chain.edges.size());
+    for (const auto& ce : chain.edges) {
+        edgeFlanks.push_back(determineFlanks(ce.edgeIndex));
+    }
+
+    for (size_t i = 0; i < edgeFlanks.size(); ++i) {
+        if (!edgeFlanks[i].valid) {
+            for (size_t j = 0; j < edgeFlanks.size(); ++j) {
+                if (edgeFlanks[j].valid) {
+                    edgeFlanks[i] = edgeFlanks[j];
+                    break;
+                }
+            }
+        }
+    }
+    if (edgeFlanks.empty() || !edgeFlanks[0].valid) {
+        return std::nullopt;
+    }
+
+    core::SeamDefinition seam;
+    const int firstEdgeIdx = chain.edges.front().edgeIndex;
+    seam.id = "seam_chain_" + std::to_string(sourceCadHandleId) + "_" + std::to_string(firstEdgeIdx);
+    seam.name = "ChainSeam_E" + std::to_string(firstEdgeIdx) + "_" + std::to_string(chain.edges.size()) + "edges";
+    seam.seamType = core::SeamType::Fillet;
+    seam.face1PartId = "part_" + std::to_string(sourceCadHandleId);
+    seam.face1Index = edgeFlanks[0].face1Idx;
+    seam.face2PartId = edgeFlanks[0].face2PartId;
+    seam.face2Index = edgeFlanks[0].face2Idx;
+    seam.startTrimMm = std::max(0.0, startTrimMm);
+    seam.endTrimMm = std::max(0.0, endTrimMm);
+
+    for (const auto& ce : chain.edges) {
+        seam.edgeChain.push_back(cadKernel.computeEdgeSignature(sourceCadHandleId, ce.edgeIndex));
+    }
+
+    const double totalLen = chain.totalLengthMm;
+    const double sStart = std::min(seam.startTrimMm, totalLen * 0.25);
+    const double sEnd = std::max(sStart, totalLen - std::min(seam.endTrimMm, totalLen * 0.25));
+    const double step = std::max(2.0, sampleStepMm);
+
+    auto sampleAtGlobalS = [&](double globalS) -> std::optional<core::SeamSampleFrame> {
+        double accum = 0.0;
+        for (size_t i = 0; i < chain.edges.size(); ++i) {
+            const auto& ce = chain.edges[i];
+            const double edgeLen = ce.lengthMm;
+            const bool isLastEdge = (i + 1 == chain.edges.size());
+            if (globalS <= accum + edgeLen || isLastEdge) {
+                const double localS = std::clamp(globalS - accum, 0.0, edgeLen);
+                const double edgeS = ce.isReversed ? (edgeLen - localS) : localS;
+
+                core::Vec3 pt{}, tan{};
+                if (!cadKernel.evaluateEdgeAtArcLength(sourceCadHandleId, ce.edgeIndex, edgeS, pt, tan)) {
+                    return std::nullopt;
+                }
+                if (ce.isReversed) {
+                    tan = -tan;
+                }
+                const auto& flank = edgeFlanks[i];
+                auto frameOpt = computeSeamFrame(pt, tan, flank.normal1, flank.normal2);
+                if (!frameOpt.has_value()) {
+                    return std::nullopt;
+                }
+
+                core::SeamSampleFrame sf;
+                sf.arcLengthMm = globalS;
+                sf.position = pt;
+                sf.tangentX = tan;
+                sf.normalFace1 = flank.normal1;
+                sf.normalFace2 = flank.normal2;
+                sf.bisector = (flank.normal1 + flank.normal2).normalized();
+                sf.frame = *frameOpt;
+                return sf;
+            }
+            accum += edgeLen;
+        }
+        return std::nullopt;
+    };
+
+    for (double s = sStart; s < sEnd - 1e-6; s += step) {
+        auto sfOpt = sampleAtGlobalS(s);
+        if (!sfOpt.has_value()) {
+            return std::nullopt;
+        }
+        seam.sampledFrames.push_back(*sfOpt);
+    }
+    auto sfEnd = sampleAtGlobalS(sEnd);
+    if (!sfEnd.has_value()) {
+        return std::nullopt;
+    }
+    seam.sampledFrames.push_back(*sfEnd);
+
+    return seam;
+}
+
 std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromPickedEdge(
     const cad::ICadKernel& cadKernel,
     int sourceCadHandleId,

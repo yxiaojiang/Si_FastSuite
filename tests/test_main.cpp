@@ -1421,6 +1421,143 @@ void testTcpGizmoMountAndInteraction() {
     check(viewport.activeTargetId().empty(), "clearTargetGizmo clears activeTargetId");
 }
 
+void testTangentContinuousEdgeChaining() {
+    std::cout << "\n--- Test 14: Tangent-Continuous Edge Chaining & Multi-Segment Seam Generation (M07) ---\n";
+#ifdef OLP_HAS_OCCT
+    olp::cad::OcctCadKernel cad;
+
+    // 1. SquareTube: Multi-segment straight + curved fillet corner edge chaining
+    const std::string squareTubePath =
+        std::string(OLP_SOURCE_DIR) + "/SampleScenes/Scene2_Full_Workcell_STEP/Workpiece_SquareTube_80x80x5.step";
+    std::vector<olp::core::SceneNode> tubeNodes;
+    bool okTube = cad.importStep(squareTubePath, tubeNodes);
+    check(okTube && !tubeNodes.empty(), "Import Workpiece_SquareTube_80x80x5.step");
+
+    int tubeCadHandle = tubeNodes.front().cadHandleId;
+    const auto tubeEdges = cad.getEdges(tubeCadHandle);
+    check(tubeEdges.size() > 0, "SquareTube has CAD edges", "count=" + std::to_string(tubeEdges.size()));
+
+    // Search for an edge with tangent-continuous fillet corners (straight + arc transition)
+    int seedEdgeIdx = -1;
+    olp::cad::EdgeChainResult tubeChain;
+    for (size_t i = 0; i < tubeEdges.size(); ++i) {
+        auto chain = cad.findTangentContinuousEdgeChain(tubeCadHandle, static_cast<int>(i), 15.0);
+        if (chain.edges.size() > 1) {
+            seedEdgeIdx = static_cast<int>(i);
+            tubeChain = chain;
+            break;
+        }
+    }
+    check(seedEdgeIdx >= 0 && tubeChain.edges.size() > 1,
+          "SquareTube finds tangent-continuous edge chain (> 1 edge)",
+          "edges=" + std::to_string(tubeChain.edges.size()) + ", totalLen=" + std::to_string(tubeChain.totalLengthMm));
+
+    // Verify chain length equals sum of chained edges
+    double sumEdgeLen = 0.0;
+    for (const auto& ce : tubeChain.edges) {
+        sumEdgeLen += ce.lengthMm;
+    }
+    check(std::abs(tubeChain.totalLengthMm - sumEdgeLen) < 1e-4,
+          "Chain total length equals sum of chained edge lengths");
+
+    // 2. Pipe Flange: Circular closed loop detection
+    const std::string flangePath =
+        std::string(OLP_SOURCE_DIR) + "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_PipeFlange_DN15.step";
+    std::vector<olp::core::SceneNode> flangeNodes;
+    bool okFlange = cad.importStep(flangePath, flangeNodes);
+    check(okFlange && !flangeNodes.empty(), "Import Workpiece_PipeFlange_DN15.step");
+
+    int flangeCadHandle = flangeNodes.front().cadHandleId;
+    const auto flangeEdges = cad.getEdges(flangeCadHandle);
+    check(flangeEdges.size() > 0, "Pipe Flange has CAD edges", "count=" + std::to_string(flangeEdges.size()));
+
+    bool foundClosed = false;
+    olp::cad::EdgeChainResult flangeChain;
+    for (size_t i = 0; i < flangeEdges.size(); ++i) {
+        auto chain = cad.findTangentContinuousEdgeChain(flangeCadHandle, static_cast<int>(i), 30.0);
+        if (chain.isClosed) {
+            foundClosed = true;
+            flangeChain = chain;
+            break;
+        }
+    }
+    check(foundClosed, "Pipe Flange detects closed loop edge chain (isClosed = true)");
+
+    std::vector<int> flangeWpHandles = {flangeCadHandle};
+    auto flangeSeamOpt = olp::algo::SeamAndToolpathAlgo::buildSeamFromEdgeChain(
+        cad, flangeCadHandle, flangeChain, flangeWpHandles, 10.0, 0.0, 0.0);
+    check(flangeSeamOpt.has_value(), "buildSeamFromEdgeChain succeeds for Pipe Flange closed loop");
+    if (flangeSeamOpt.has_value()) {
+        const auto& fseam = *flangeSeamOpt;
+        check(fseam.sampledFrames.size() >= 4, "Pipe Flange circular seam has multiple sampled frames");
+        double minX = 1e9, maxX = -1e9;
+        for (const auto& sf : fseam.sampledFrames) {
+            minX = std::min(minX, sf.position.x);
+            maxX = std::max(maxX, sf.position.x);
+        }
+        check(maxX - minX > 5.0, "Pipe Flange circular seam positions span true 3D diameter (not collapsed)");
+    }
+
+    // 3. Composite seam definition build
+    std::vector<int> wpHandles = {tubeCadHandle};
+    auto seamOpt = olp::algo::SeamAndToolpathAlgo::buildSeamFromEdgeChain(
+        cad, tubeCadHandle, tubeChain, wpHandles, 20.0, 0.0, 0.0);
+    check(seamOpt.has_value(), "buildSeamFromEdgeChain succeeds for SquareTube chain");
+    if (seamOpt.has_value()) {
+        const auto& seam = *seamOpt;
+        check(seam.edgeChain.size() == tubeChain.edges.size(),
+              "Composite seam contains all edges in chain",
+              "count=" + std::to_string(seam.edgeChain.size()));
+        check(seam.sampledFrames.size() >= 3,
+              "Composite seam has multiple sampled frames across multi-edge profile",
+              "frames=" + std::to_string(seam.sampledFrames.size()));
+
+        bool monotonic = true;
+        bool validOrthonormal = true;
+        for (size_t i = 0; i < seam.sampledFrames.size(); ++i) {
+            if (i > 0 && seam.sampledFrames[i].arcLengthMm <= seam.sampledFrames[i - 1].arcLengthMm) {
+                monotonic = false;
+            }
+            const auto& rot = seam.sampledFrames[i].frame.rot;
+            const auto cX = rot.colX();
+            const auto cY = rot.colY();
+            const auto cZ = rot.colZ();
+            const double det = cX.dot(cY.cross(cZ));
+            if (std::abs(det - 1.0) > 1e-3) {
+                validOrthonormal = false;
+            }
+        }
+        check(monotonic, "Sampled frames have strictly increasing cumulative arc lengths");
+        check(validOrthonormal, "Sampled frames all have orthonormal right-handed rotation matrices (det ~ 1)");
+    }
+
+    // 4. CreateSeamFromPickedEdgeCommand with chaining + Undo/Redo
+    olp::app::ProjectDocument doc;
+    olp::app::CommandManager cmdMgr;
+    for (const auto& n : tubeNodes) {
+        doc.sceneNodes.push_back(n);
+    }
+    check(doc.seams.empty(), "Document initially has no seams");
+
+    auto cmd = std::make_unique<olp::app::CreateSeamFromPickedEdgeCommand>(
+        doc, cad, tubeCadHandle, seedEdgeIdx, 20.0, true, 15.0);
+    cmdMgr.executeCommand(std::move(cmd));
+
+    check(doc.seams.size() == 1, "CreateSeamFromPickedEdgeCommand with chaining adds 1 seam");
+    check(doc.isDirty, "Document marked dirty after seam creation");
+    check(doc.seams.front().edgeChain.size() == tubeChain.edges.size(),
+          "Created seam edgeChain matches detected edge chain size");
+
+    cmdMgr.undo();
+    check(doc.seams.empty(), "Undo removes created chained seam");
+    check(!doc.isDirty, "Undo restores clean dirty state");
+
+    cmdMgr.redo();
+    check(doc.seams.size() == 1, "Redo restores created chained seam");
+    check(doc.isDirty, "Redo marks document dirty again");
+#endif
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1450,6 +1587,7 @@ int main(int argc, char* argv[]) {
      testMainWindowZones();
     testBRepMeshRenderingAndEdgePicking();
     testTcpGizmoMountAndInteraction();
+    testTangentContinuousEdgeChaining();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

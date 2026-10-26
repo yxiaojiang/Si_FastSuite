@@ -34,6 +34,11 @@ public:
     std::vector<CadFaceInfo> getFaces(int cadHandleId) const override;
     std::vector<int> getAdjacentFaces(int cadHandleId, int edgeIndex) const override;
 
+    EdgeChainResult findTangentContinuousEdgeChain(
+        int cadHandleId,
+        int startEdgeIndex,
+        double maxDeflectionAngleDeg = 15.0) const override;
+
     std::optional<CrossPartFaceMatch> findClosestMatingFaceAcrossParts(
         int sourceCadHandleId,
         int edgeIndex,

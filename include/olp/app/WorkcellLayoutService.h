@@ -105,7 +105,9 @@ public:
         cad::ICadKernel& cadKernel,
         int sourceCadHandleId,
         int edgeIndex,
-        double sampleStepMm = 50.0);
+        double sampleStepMm = 50.0,
+        bool chainContinuousEdges = true,
+        double maxDeflectionAngleDeg = 15.0);
 
     void execute() override;
     void undo() override;
@@ -119,6 +121,8 @@ private:
     int sourceCadHandleId_{-1};
     int edgeIndex_{-1};
     double sampleStepMm_{50.0};
+    bool chainContinuousEdges_{true};
+    double maxDeflectionAngleDeg_{15.0};
     core::SeamDefinition createdSeam_{};
     std::string createdSeamId_{};
     bool beforeDirty_{false};

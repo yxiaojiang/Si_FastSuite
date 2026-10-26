@@ -1,5 +1,10 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-26：切线连续边链扩展（Edge Chain）与复合曲率焊缝生成（M07）
+
+1. **[DONE] 切线连续边链扩展与复合焊缝生成。** 实现基于几何与拓扑双重校验的切线连续边链扩展算法 `findTangentContinuousEdgeChain`。1. 基于 `BRepAdaptor_Curve` 的端点 3D 几何邻接判定，彻底免疫 STEP 导入模型中由于 `TopAbs_REVERSED` 引起的顶点反序与端点错位；2. 贪心偏角匹配选择偏转角极小值（$\le \theta_{\text{max}}$），确保 $C^1$ 连续过渡；3. 支持环形曲线（如 `Workpiece_PipeFlange_DN15` 的 360° 圆环焊缝）与多段封闭多边形轮廓闭合环识别（`isClosed = true`）；4. 实现 `buildSeamFromEdgeChain` 复合曲线累计弧长均匀采样与两侧母材局部面法向角平分线矩阵计算；5. 升级 `OcctCadKernel::evaluateEdgeAtArcLength` 支持 OCCT `GCPnts_AbscissaPoint` 真实曲面弧长积分，消除曲率边离散坍塌；6. 扩展 `CreateSeamFromPickedEdgeCommand` 支持自动边链扩展与对称撤销重做。通过独立审计员 Argon 深度代码审查并获 PASS 批准，新增 Test 14 自动化测试，全部 126 项测试通过，`--verify` 退出码 0。
+2. **随后完成**：转入 M08 焊缝到操作路径生成、切入切出及姿态 SLERP 插值。
+
 ## 2026-10-26：TcpGizmo（AIS_Manipulator）挂载与三维交互微调姿态
 
 1. **[DONE] TcpGizmo 挂载与视口交互。** 在 `OcctViewport` 中实现 `AIS_Manipulator` 挂载与三维手柄交互调姿，严格遵守 M03 五项设计原则：1. 通过专用黄色 4mm 球体视觉代理对象（`targetGizmoProxyAis`）挂载，绝不调用 `Attach()` 绑定底层文档数据；2. 支持 Tool、World、UFrame、Seam 四大参考坐标系无缝切换与步长吸附，计算真实局部坐标变换矩阵；针对焊缝模式消除轨道位移跳跃，实现原地姿态微调并按距离匹配最近采样帧；3. 拖拽过程中仅发射预览信号，零文档污染，Undo 栈保持干净；4. 鼠标松开提交单一 `ModifyTargetPoseCommand` 命令，零位移不入栈，Esc 键干净取消恢复初态；5. 多选路径点批量平移/旋转并打包压入单个 `MacroCommand`；6. 视口析构时前置 `clearTargetGizmo()` 确保 OCCT Handle 引用生命周期安全。新增自动化测试 Test 13（23 项断言），全部 103 项测试通过，`--verify` 退出码 0。

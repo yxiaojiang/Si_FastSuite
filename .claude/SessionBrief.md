@@ -6,27 +6,28 @@
 
 ## 1. 当前目标
 
-在 `OcctViewport` 中实现三维位姿交互手柄 `TcpGizmo`（基于 OCCT `AIS_Manipulator`）已全部落地，经由独立审计员 Argon 深度代码审查（修复了焊缝参考系局部变换双重叠加、姿态微调轨道跳跃、非线性焊缝采样帧匹配以及视口析构时的清理时序）并通过 103 项自动化验证。下一步推进 M07 焊缝定义深化：切线连续边链扩展（Edge Chain）与相交两侧面（Flank Faces）法向识别与角平分线姿态生成。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
+切线连续边链自动扩展（`findTangentContinuousEdgeChain`）与复合曲率焊缝生成（`buildSeamFromEdgeChain`，含封闭环识别与母材角平分线局部姿态）已全部落地，经由独立审计员 Argon 深度代码审查（修复了 OCCT `evaluateEdgeAtArcLength` 真实曲面弧长积分离散与方向翻转一致性）并通过 126 项自动化验证与端到端工位校验。下一步推进 M08 路径生成与编辑：焊缝到操作路径生成、切入切出段（Approach/Retract）配置、姿态 SLERP 插值与逐点导航。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
 
 ## 2. 这轮已经落地的事实
 
-1. **TcpGizmo 视口手柄挂载与视觉代理**：
-   - 遵循 M03 五项设计原则：`AIS_Manipulator` 绝不调用 `Attach()` 绑定底层文档数据，而是挂载在专用黄色 4mm 视觉球体代理（`targetGizmoProxyAis`）上，并通过 `Deactivate` 屏蔽选择冲突。
-   - `OcctViewport` 增加 `setTargetGizmo(targetId)`、`clearTargetGizmo()`、`syncGizmoPosition()`、`setGizmoReferenceFrame()` 与 `setGizmoSnapSteps()` 接口。
-   - 场景重绘 `syncScene()` 时自动维护手柄与视觉代理生命周期；视口析构 `~OcctViewport()` 前置清除代理，杜绝 OCCT 内部 Handle 悬挂引用。
+1. **切线连续边链扩展（M07 Edge Chaining）**：
+   - 算法 `findTangentContinuousEdgeChain` 基于 `BRepAdaptor_Curve` 与 3D 几何端点距离（$\le 0.05\text{ mm}$）匹配邻接边，彻底消除 STEP 拓扑定向 `TopAbs_REVERSED` 引起的端点交换与偏角计算反转缺陷。
+   - 严格进行最小偏转角贪心检索（$\theta \le \theta_{\text{max}}$），保证曲线光滑连接；双向扩展（前向+后向）在重构链条时自动纠正反向边的局部参数与切线方向。
+   - 全面支持单段自闭合圆环（如 `Workpiece_PipeFlange_DN15` 的 360° 圆环焊缝）与多段封闭多边形闭合检测（`isClosed = true`）。在方管工件 `Workpiece_SquareTube_80x80x5` 上成功识别 32 组直线与倒角圆弧平滑衔接链。
 
-2. **多参考坐标系变换与无轨道跳跃微调**：
-   - 全面支持 Tool、World、UFrame、Seam 四种参考系平移与旋转微调，并支持线性与角度步长吸附（Snap）。
-   - 在焊缝参考系下，通过 `findTargetSeamFrameWorld` 动态匹配离目标点最近的几何采样帧并统一到局部坐标系；在 `TcpGizmo` 中彻底解耦位置与旋转变换，消除调整焊枪倾角时的轨道位移跳跃，确保围绕 TCP 原地微调姿态。
+2. **复合曲率焊缝与双侧面角平分线姿态生成（`buildSeamFromEdgeChain`）**：
+   - 全局累计弧长参数化映射到各个局部子边，准确处理反向边逆序采样；支持每段边的母材接触面或跨零件配合面法向自动追踪与平滑过渡。
+   - 升级 `OcctCadKernel::evaluateEdgeAtArcLength`：在启用 OCCT 时调用 `GCPnts_AbscissaPoint` 真实曲面弧长积分计算采样点与切线，解决圆环边两端重合退化与倒角弦高误差。
+   - 严格保证所有采样点三维正交基右手系（$\det([X, Y, Z]) = 1.0 \pm 10^{-7}$）与累计弧长单调递增。
 
-3. **拖拽实时预览与单命令入栈**：
-   - 拖拽过程严格遵守零文档污染（Zero Document Mutation）：仅发出 `previewCallback_` 预览信号，`ProjectDocument` 与撤销栈完全不被污染；状态栏实时显示当前拖拽坐标与欧拉角姿态。
-   - 鼠标松开（MouseRelease）计算位移与角度变化，只有真正发生变化时才向 Undo 栈提交唯一定稿命令（单选为 `ModifyTargetPoseCommand`，多选通过 `multiTargetProvider_` 打包为 `MacroCommand`）；未移动不入栈；Esc 键干净取消拖拽并回滚初始状态。
-   - 主窗口 `ShellWindow` 属性区与路径点表格联动选中 Target，手柄随 Target 切换即时更新位置。
+3. **命令封装与撤销重做支持**：
+   - `CreateSeamFromPickedEdgeCommand` 扩充连续边链扩展参数（`chainContinuousEdges`、`maxDeflectionAngleDeg`），边链数 $>1$ 时自动升级为复合链焊缝。
+   - 对称跟踪 `beforeDirty_`，执行/重做写入复合焊缝并标记 dirty，撤销精准按 ID 移除焊缝并恢复 dirty 状态。
 
-4. **测试与运行状态**：
-   - 新增 Test 13 自动化测试（涵盖挂载、参考系切换、步长吸附、焊缝原地调姿无跳跃、拖拽零污染、单命令入栈、Esc 取消、多选宏命令及清理验证等 23 项断言）。
-   - `build-full` 下 `olp_tests.exe` 全部 103 项测试通过，退出码 0。
+4. **审计与自动化测试状态**：
+   - 独立审计员 Argon 签发 **PASS (APPROVED)** 审核结论。
+   - 新增 Test 14 自动化测试（覆盖 SquareTube 连续边链、PipeFlange 闭环检测、真 3D 空间圆环跨度、姿态正交性、单调采样及 Undo/Redo 全闭环）。
+   - `build-full` 下 `olp_tests.exe` 全部 126 项测试通过，退出码 0。
    - `SiFastSuiteOLP.exe --verify` 运行 5 个阶段完整通过，退出码 0。
 
 ## 3. 未关闭风险
@@ -37,9 +38,10 @@
 
 ## 4. 下一步
 
-1. 实现切线连续边链自动扩展（沿工件边链切线平滑连接多段边合并为单条复合焊缝，支持角度阈值配置）。
-2. 实现交接两侧面（Flank Faces）识别与双面夹角平分线计算，自动生成角焊缝法向基准姿态。
-3. 真机到位后再核对 J2/J3。3D PDF 五天熔断仍未开始。
+1. 实现由 `SeamDefinition` 生成完整 `Operation` 焊接指令序列（参数化步长/弦高误差、直线段自动退化为 L 端点两点）。
+2. 自动生成焊枪法向反向退避的切入点（Approach）与切出点（Retract），支持独立速度与运动类型配置。
+3. 实现多点姿态 SLERP 插值（选定首尾两点对中间点姿态沿弧长球形线性插值）。
+4. 主窗口程序树与路径点表格联动与快捷键前后单步导航。
 
 ## 5. 索引
 

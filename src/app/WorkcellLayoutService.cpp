@@ -187,12 +187,16 @@ CreateSeamFromPickedEdgeCommand::CreateSeamFromPickedEdgeCommand(
     cad::ICadKernel& cadKernel,
     int sourceCadHandleId,
     int edgeIndex,
-    double sampleStepMm)
+    double sampleStepMm,
+    bool chainContinuousEdges,
+    double maxDeflectionAngleDeg)
     : doc_(doc),
       cadKernel_(cadKernel),
       sourceCadHandleId_(sourceCadHandleId),
       edgeIndex_(edgeIndex),
-      sampleStepMm_(sampleStepMm) {}
+      sampleStepMm_(sampleStepMm),
+      chainContinuousEdges_(chainContinuousEdges),
+      maxDeflectionAngleDeg_(maxDeflectionAngleDeg) {}
 
 void CreateSeamFromPickedEdgeCommand::execute() {
     mutated_ = false;
@@ -211,8 +215,22 @@ void CreateSeamFromPickedEdgeCommand::execute() {
             workpieceHandles.push_back(node.cadHandleId);
         }
     }
-    auto seamOpt = algo::SeamAndToolpathAlgo::buildSeamFromPickedEdge(
-        cadKernel_, sourceCadHandleId_, edgeIndex_, workpieceHandles, sampleStepMm_);
+
+    std::optional<core::SeamDefinition> seamOpt;
+    if (chainContinuousEdges_) {
+        cad::EdgeChainResult chain = cadKernel_.findTangentContinuousEdgeChain(
+            sourceCadHandleId_, edgeIndex_, maxDeflectionAngleDeg_);
+        if (chain.edges.size() > 1) {
+            seamOpt = algo::SeamAndToolpathAlgo::buildSeamFromEdgeChain(
+                cadKernel_, sourceCadHandleId_, chain, workpieceHandles, sampleStepMm_);
+        }
+    }
+
+    if (!seamOpt.has_value()) {
+        seamOpt = algo::SeamAndToolpathAlgo::buildSeamFromPickedEdge(
+            cadKernel_, sourceCadHandleId_, edgeIndex_, workpieceHandles, sampleStepMm_);
+    }
+
     if (!seamOpt.has_value()) {
         return;
     }
@@ -236,6 +254,10 @@ void CreateSeamFromPickedEdgeCommand::undo() {
 }
 
 std::string CreateSeamFromPickedEdgeCommand::description() const {
+    if (createdSeam_.edgeChain.size() > 1) {
+        return "Create Seam from Edge Chain (" + std::to_string(sourceCadHandleId_) + ":" +
+               std::to_string(edgeIndex_) + ", " + std::to_string(createdSeam_.edgeChain.size()) + " edges)";
+    }
     return "Create Seam from Edge (" + std::to_string(sourceCadHandleId_) + ":" + std::to_string(edgeIndex_) + ")";
 }
 

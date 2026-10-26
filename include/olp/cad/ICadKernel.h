@@ -46,6 +46,18 @@ struct CrossPartFaceMatch {
     core::Vec3 outwardNormal{};
 };
 
+struct ChainedEdge {
+    int edgeIndex{-1};
+    bool isReversed{false};
+    double lengthMm{0.0};
+};
+
+struct EdgeChainResult {
+    std::vector<ChainedEdge> edges{};
+    double totalLengthMm{0.0};
+    bool isClosed{false};
+};
+
 // M02: Abstract CAD Kernel Interface (isolates OpenCASCADE from upper layers)
 class ICadKernel {
 public:
@@ -61,6 +73,12 @@ public:
     virtual std::vector<CadEdgeInfo> getEdges(int cadHandleId) const = 0;
     virtual std::vector<CadFaceInfo> getFaces(int cadHandleId) const = 0;
     virtual std::vector<int> getAdjacentFaces(int cadHandleId, int edgeIndex) const = 0;
+
+    // M07: Find tangent-continuous edge chain starting from a seed edge
+    virtual EdgeChainResult findTangentContinuousEdgeChain(
+        int cadHandleId,
+        int startEdgeIndex,
+        double maxDeflectionAngleDeg = 15.0) const = 0;
 
     // M07 Critical Fix: Find closest mating face across adjacent solids for T-joint fillet welds
     virtual std::optional<CrossPartFaceMatch> findClosestMatingFaceAcrossParts(
