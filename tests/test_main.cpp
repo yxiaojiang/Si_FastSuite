@@ -7,6 +7,7 @@
 #include "olp/device/RobotModel.h"
 #include "olp/io/FanucLsPostProcessor.h"
 #include "olp/ui/MainWindow.h"
+#include "olp/ui/TcpGizmo.h"
 
 #ifdef OLP_HAS_QT6
 #include "olp/ui/ShellWindow.h"
@@ -644,7 +645,7 @@ void testGizmoAndUndoRedo100Steps() {
     olp::ui::MainWindow win;
     auto& doc = win.document();
     auto& cmdMgr = win.commandManager();
-    auto& gizmo = win.viewport().tcpGizmo();
+    olp::ui::TcpGizmo gizmo(doc, cmdMgr);
 
     olp::core::ControllerUnit cu;
     olp::core::Program prog;
@@ -882,7 +883,7 @@ void testPathEditsAndCommandGates() {
     check(commands.undoCount() == 1, "A command that does not change a target is not stacked");
 
     olp::ui::MainWindow win;
-    auto& gizmo = win.viewport().tcpGizmo();
+    olp::ui::TcpGizmo gizmo(win.document(), win.commandManager());
     olp::core::Target dragTarget;
     dragTarget.id = "drag";
     dragTarget.poseInUFrame = olp::core::Transform4d::fromTranslation(10.0, 0.0, 0.0);
@@ -1137,18 +1138,27 @@ void testMainWindowZones() {
         }
     }
     check(missing.isEmpty(), "Main window has the six functional docks", missing.toStdString());
-    check(shell.zoneChecked(QString::fromUtf8("场景")) && !shell.zoneChecked(QString::fromUtf8("程序")),
-          "Layout workbench shows the scene dock");
+    check(shell.zoneChecked(QString::fromUtf8("场景")) &&
+              shell.zoneChecked(QString::fromUtf8("属性")) &&
+              shell.zoneChecked(QString::fromUtf8("关节点动")) &&
+              !shell.zoneChecked(QString::fromUtf8("程序")) &&
+              !shell.zoneChecked(QString::fromUtf8("路径点")) &&
+              !shell.zoneChecked(QString::fromUtf8("问题")),
+          "Layout workbench keeps scene, properties, and jog");
     shell.showOlpWorkbench();
-    check(shell.zoneChecked(QString::fromUtf8("程序")) &&
+    check(shell.zoneChecked(QString::fromUtf8("场景")) &&
+              shell.zoneChecked(QString::fromUtf8("程序")) &&
               shell.zoneChecked(QString::fromUtf8("路径点")) &&
               shell.zoneChecked(QString::fromUtf8("关节点动")) &&
               shell.zoneChecked(QString::fromUtf8("问题")) &&
-              !shell.zoneChecked(QString::fromUtf8("场景")),
-          "Programming workbench shows the program, points, jog, and issues");
+              shell.zoneChecked(QString::fromUtf8("属性")),
+          "Programming workbench adds the program, points, and issues");
     shell.showLayoutWorkbench();
-    check(shell.zoneChecked(QString::fromUtf8("场景")) && shell.zoneChecked(QString::fromUtf8("属性")),
-          "Switching back to the layout workbench restores the scene dock");
+    check(shell.zoneChecked(QString::fromUtf8("场景")) &&
+              shell.zoneChecked(QString::fromUtf8("属性")) &&
+              shell.zoneChecked(QString::fromUtf8("关节点动")) &&
+              !shell.zoneChecked(QString::fromUtf8("程序")),
+          "Switching back to the layout workbench hides the program dock");
 #endif
 }
 

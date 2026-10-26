@@ -3,8 +3,9 @@
 #include "olp/app/CommandManager.h"
 #include "olp/cad/OcctCadKernel.h"
 #include "olp/device/RobotModel.h"
-#include "olp/ui/OcctViewport.h"
+#include <functional>
 #include <string>
+#include <vector>
 
 namespace olp::ui {
 
@@ -26,16 +27,44 @@ public:
     app::ProjectDocument& document() noexcept { return doc_; }
     app::CommandManager& commandManager() noexcept { return cmdMgr_; }
     cad::OcctCadKernel& cadKernel() noexcept { return cadKernel_; }
-    OcctViewport& viewport() noexcept { return viewport_; }
     const device::RobotModel& activeRobotModel() const noexcept { return robotModel_; }
 
+    void selectSceneNode(const std::string& nodeId);
+    void selectOperation(const std::string& operationId);
+    void selectTarget(const std::string& targetId, const std::string& operationId);
+    const std::string& selectedSceneNodeId() const noexcept { return selectedSceneNodeId_; }
+    const std::string& selectedOperationId() const noexcept { return selectedOperationId_; }
+    const std::string& selectedTargetId() const noexcept { return selectedTargetId_; }
+    int addSelectionListener(std::function<void()> listener);
+    void removeSelectionListener(int listenerId);
+
+    void noteSampleRun(int exitCode, int frameCount, double cycleTimeSec, double weldTimeSec) noexcept;
+    int lastSampleExitCode() const noexcept { return lastSampleExitCode_; }
+    int lastFrameCount() const noexcept { return lastFrameCount_; }
+    double lastCycleTimeSec() const noexcept { return lastCycleTimeSec_; }
+    double lastWeldTimeSec() const noexcept { return lastWeldTimeSec_; }
+
 private:
+    void notifySelectionChanged();
+
     app::ProjectDocument doc_{};
     app::CommandManager cmdMgr_{200};
     cad::OcctCadKernel cadKernel_{};
     device::RobotModel robotModel_{device::RobotModel::createFanucM10iA()};
-    OcctViewport viewport_;
     ActiveWorkbench activeWorkbench_{ActiveWorkbench::LayoutWorkbench};
+    std::string selectedSceneNodeId_{};
+    std::string selectedOperationId_{};
+    std::string selectedTargetId_{};
+    struct SelectionListener {
+        int id{0};
+        std::function<void()> fn{};
+    };
+    std::vector<SelectionListener> selectionListeners_{};
+    int nextSelectionListenerId_{1};
+    int lastSampleExitCode_{0};
+    int lastFrameCount_{0};
+    double lastCycleTimeSec_{0.0};
+    double lastWeldTimeSec_{0.0};
 };
 
 } // namespace olp::ui

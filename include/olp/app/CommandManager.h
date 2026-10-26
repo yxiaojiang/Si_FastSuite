@@ -115,12 +115,22 @@ public:
     size_t redoCount() const noexcept { return redoStack_.size(); }
 
     void setOnDocumentChangedCallback(std::function<void()> cb) { onChanged_ = std::move(cb); }
+    int addDocumentChangedListener(std::function<void()> listener);
+    void removeDocumentChangedListener(int listenerId);
 
 private:
+    void notifyDocumentChanged();
+
     size_t maxDepth_{200};
     std::vector<std::unique_ptr<ICommand>> undoStack_{};
     std::vector<std::unique_ptr<ICommand>> redoStack_{};
     std::function<void()> onChanged_{};
+    struct DocumentListener {
+        int id{0};
+        std::function<void()> fn{};
+    };
+    std::vector<DocumentListener> listeners_{};
+    int nextListenerId_{1};
     bool mergeSession_{false};
 };
 

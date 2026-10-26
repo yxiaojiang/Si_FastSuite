@@ -43,9 +43,14 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
     mainWin.commandManager().executeCommand(
         std::make_unique<olp::app::ImportSceneAndReplaceRobotCommand>(
             doc, cad, fullCellStep, robotModel, &repRes));
+    auto finish = [&](SampleSessionResult result) {
+        mainWin.noteSampleRun(result.exitCode, result.frameCount, result.cycleTimeSec, result.weldTimeSec);
+        return result;
+    };
+
     if (!repRes.success) {
         std::cerr << "Failed to import workcell STEP: " << fullCellStep << "\n";
-        return failed(1, "示例工位导入失败。");
+        return finish(failed(1, "示例工位导入失败。"));
     }
 
     std::cout << "      -> Imported " << repRes.totalSolidsImported << " B-Rep solids.\n";
@@ -55,8 +60,6 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
               << repRes.detectedRobotBaseTransform.pos.x << ", "
               << repRes.detectedRobotBaseTransform.pos.y << ", "
               << repRes.detectedRobotBaseTransform.pos.z << ") mm.\n";
-
-    mainWin.switchWorkbench(ActiveWorkbench::OlpWorkbench);
 
     std::string uframeId;
     mainWin.commandManager().executeCommand(
@@ -69,7 +72,7 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
     const olp::core::SceneNode* uframeNode = doc.findSceneNode(uframeId);
     if (uframeNode == nullptr) {
         std::cerr << "Failed to define UFRAME.\n";
-        return failed(1, "用户坐标系没有建成。");
+        return finish(failed(1, "用户坐标系没有建成。"));
     }
     const olp::core::Transform4d uframeInWorld = uframeNode->localTransform;
 
@@ -92,7 +95,7 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
         cad, frontWallHandle, 3, workpieceHandles, 50.0);
     if (!seamOpt.has_value()) {
         std::cerr << "Failed to build seam from picked edge.\n";
-        return failed(1, "没有生成焊缝。");
+        return finish(failed(1, "没有生成焊缝。"));
     }
     doc.seams.push_back(*seamOpt);
     std::cout << "      -> Built Seam '" << seamOpt->name << "' across parts ("
@@ -196,7 +199,7 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
                   << " html=" << (htmlOk ? "ok" : "failed") << "\n";
         result.exitCode = 1;
         result.summary = "导出失败。";
-        return result;
+        return finish(result);
     }
     if (blockingIssue) {
         std::cerr << "Verification found blocking reachability or collision issues. Files were written for inspection.\n";
@@ -219,7 +222,7 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
     std::cout << "      -> Exported FANUC .ls: " << lsOut << "\n";
     std::cout << "      -> Exported HTML TCP preview: " << htmlOut << "\n";
     std::cout << "====================================================================\n";
-    return result;
+    return finish(result);
 }
 
 } // namespace olp::ui

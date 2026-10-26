@@ -234,7 +234,7 @@ void CommandManager::executeCommand(std::unique_ptr<ICommand> cmd) {
 
     if (mergeSession_ && !undoStack_.empty() && undoStack_.back()->mergeWith(cmd.get())) {
         redoStack_.clear();
-        if (onChanged_) onChanged_();
+        notifyDocumentChanged();
         return;
     }
 
@@ -243,8 +243,7 @@ void CommandManager::executeCommand(std::unique_ptr<ICommand> cmd) {
     }
     undoStack_.push_back(std::move(cmd));
     redoStack_.clear();
-
-    if (onChanged_) onChanged_();
+    notifyDocumentChanged();
 }
 
 bool CommandManager::undo() {
@@ -253,7 +252,7 @@ bool CommandManager::undo() {
     undoStack_.pop_back();
     cmd->undo();
     redoStack_.push_back(std::move(cmd));
-    if (onChanged_) onChanged_();
+    notifyDocumentChanged();
     return true;
 }
 
@@ -263,13 +262,38 @@ bool CommandManager::redo() {
     redoStack_.pop_back();
     cmd->execute();
     undoStack_.push_back(std::move(cmd));
-    if (onChanged_) onChanged_();
+    notifyDocumentChanged();
     return true;
 }
 
 void CommandManager::clear() {
     undoStack_.clear();
     redoStack_.clear();
+}
+
+int CommandManager::addDocumentChangedListener(std::function<void()> listener) {
+    const int id = nextListenerId_++;
+    listeners_.push_back(DocumentListener{id, std::move(listener)});
+    return id;
+}
+
+void CommandManager::removeDocumentChangedListener(int listenerId) {
+    listeners_.erase(
+        std::remove_if(listeners_.begin(), listeners_.end(), [&](const DocumentListener& listener) {
+            return listener.id == listenerId;
+        }),
+        listeners_.end());
+}
+
+void CommandManager::notifyDocumentChanged() {
+    if (onChanged_) {
+        onChanged_();
+    }
+    for (const auto& listener : listeners_) {
+        if (listener.fn) {
+            listener.fn();
+        }
+    }
 }
 
 } // namespace olp::app

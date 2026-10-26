@@ -3,7 +3,7 @@
 > **基线依据**：严格遵循 [`Docs/OLP_System_Design_Claude.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/OLP_System_Design_Claude.md)（v1.1 最终定版）与 [`Docs/FASTSUITE_OLP_System_Architecture.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/FASTSUITE_OLP_System_Architecture.md)。
 > **对标产品**：德国 CENIT **FASTSUITE Edition 2**（下文简称 FS E2）。
 > **目标闭环**：**3D 场景导入 → 工位/机器人配置 → 焊缝与路径编辑 → 可达性/碰撞校验 → 轨迹仿真预览 → 输出 FANUC `.ls` 与 3D PDF / 单文件离线 HTML 3D 动画包**。
-> **最近刷新**：2026-10-26（主窗口分区已能打开。当前活跃事项以 `.claude/Plan.md` 为准：下一步是把三维视口接到窗口中间）。
+> **最近刷新**：2026-10-26（主窗口中间已是可旋转的三维视口。当前活跃事项以 `.claude/Plan.md` 为准：下一步是边拾取和把焊枪拖拽画到画面上）。
 
 ---
 
@@ -15,9 +15,9 @@
 2. **[IN PROGRESS] 阶段 0 预研与阶段 1 基础 C++ 工程骨架搭建（CMake + Qt6 + OpenCASCADE）**：
    - 建立五层解耦架构的 CMake 工程（`olp_core`、`olp_cad`、`olp_device`、`olp_algo`、`olp_io`、`olp_app`、`olp_ui` 及单元测试 `olp_tests`）。
    - 落地 M01（文档模型 + 命令系统 Undo/Redo 栈 + 选择集 + 事件总线）、M02（`ICadKernel` 接口 + OpenCASCADE 实现）、M03（三维视图 + 不挂接对象的 `TcpGizmo` 操纵器层）、M05/M06（`FANUC M-10iA` 模型 + OPW 正逆运动学 + J2/J3 耦合 + WPR 换算）、M12（FANUC `.ls` 生成器）。
-3. **[NEXT] 三维视口接入主窗口**（细节见 `.claude/Plan.md`）：
-   - 分区骨架已有：布局工作台、编程工作台，场景、程序、路径点、属性、关节点动、问题。中间仍是占位。
-   - 下一步接上可旋转、可拾取的 `OcctViewport`；`TcpGizmo` 挂上视口仍按下文第 7 周。
+3. **[NEXT] 视口边拾取与焊枪拖拽**（细节见 `.claude/Plan.md`）：
+   - 分区和相机已接上：两个工作台都有场景、属性和点动；编程台另有程序树和「路径点 | 问题」。中间视口可旋转、平移、缩放和适应窗口，物体仍是包围盒。
+   - 下一步是边拾取，以及把 `TcpGizmo` 画到视口上。
    - 3D PDF 限时 5 个工作日熔断和客户实景仍未开始。
 
 ---

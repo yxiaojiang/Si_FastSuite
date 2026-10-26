@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
     app.setOrganizationName("SiFastSuite");
     olp::ui::MainWindow window;
     olp::ui::ShellWindow shell(window);
-    shell.setSampleLoader([&window] { return olp::ui::runSampleWorkcell(window); });
+    shell.setSampleLoader([&window] { olp::ui::runSampleWorkcell(window); });
     shell.show();
     shell.raise();
     shell.activateWindow();

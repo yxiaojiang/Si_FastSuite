@@ -1,6 +1,6 @@
 #pragma once
 
-#include "olp/ui/SampleSession.h"
+#include "olp/ui/MainWindow.h"
 
 #include <QMainWindow>
 #include <QStringList>
@@ -17,8 +17,9 @@ class QTreeWidget;
 
 namespace olp::ui {
 
-// M01 shell: two workbenches and the dock zones. The center view is a placeholder
-// until the OpenCASCADE viewport is connected.
+class OcctViewport;
+
+// M01 shell: two workbenches and the dock zones. The center view is OcctViewport.
 class ShellWindow : public QMainWindow {
     Q_OBJECT
 
@@ -26,7 +27,7 @@ public:
     explicit ShellWindow(MainWindow& controller, QWidget* parent = nullptr);
     ~ShellWindow() override;
 
-    void setSampleLoader(std::function<SampleSessionResult()> loader);
+    void setSampleLoader(std::function<void()> loader);
 
     QStringList dockTitles() const;
     bool zoneChecked(const QString& title) const;
@@ -47,10 +48,14 @@ private:
     void showPropertiesForTarget(const QString& targetId);
     void updateUndoActions();
     void fillIssues();
+    void applySelection();
+    void syncJogFromRobot();
 
     MainWindow& controller_;
-    std::function<SampleSessionResult()> loader_{};
-    SampleSessionResult lastResult_{};
+    std::function<void()> loader_{};
+    OcctViewport* viewport_{nullptr};
+    int documentListenerId_{-1};
+    int selectionListenerId_{-1};
 
     QTreeWidget* sceneTree_{nullptr};
     QTreeWidget* programTree_{nullptr};

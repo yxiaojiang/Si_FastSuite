@@ -1,5 +1,7 @@
 #include "olp/ui/ShellWindow.h"
 
+#include "olp/ui/OcctViewport.h"
+
 #include <QActionGroup>
 #include <QApplication>
 #include <QDockWidget>
@@ -8,7 +10,6 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMenuBar>
-#include <QPainter>
 #include <QPlainTextEdit>
 #include <QSlider>
 #include <QStatusBar>
@@ -17,62 +18,11 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <cmath>
 #include <sstream>
 
 namespace olp::ui {
 namespace {
-
-class ViewportPlaceholder : public QWidget {
-public:
-    explicit ViewportPlaceholder(QWidget* parent = nullptr) : QWidget(parent) {
-        setMinimumSize(640, 420);
-        setAutoFillBackground(false);
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override {
-        QPainter painter(this);
-        painter.fillRect(rect(), QColor(28, 40, 49));
-        painter.setPen(QColor(48, 68, 82));
-        const int step = 40;
-        for (int x = 0; x < width(); x += step) {
-            painter.drawLine(x, 0, x, height());
-        }
-        for (int y = 0; y < height(); y += step) {
-            painter.drawLine(0, y, width(), y);
-        }
-
-        const QPoint origin(56, height() - 56);
-        painter.setPen(QPen(QColor(214, 84, 78), 3));
-        painter.drawLine(origin, origin + QPoint(72, 0));
-        painter.setPen(QPen(QColor(92, 184, 108), 3));
-        painter.drawLine(origin, origin + QPoint(0, -72));
-        painter.setPen(QPen(QColor(86, 156, 214), 3));
-        painter.drawLine(origin, origin + QPoint(42, -42));
-        painter.setPen(QColor(220, 226, 230));
-        painter.drawText(origin + QPoint(76, 4), "X");
-        painter.drawText(origin + QPoint(-14, -76), "Z");
-        painter.drawText(origin + QPoint(46, -46), "Y");
-
-        painter.setPen(QColor(236, 240, 243));
-        QFont title = painter.font();
-        title.setPixelSize(22);
-        title.setBold(true);
-        painter.setFont(title);
-        const QString heading = QString::fromUtf8("三维视口");
-        painter.drawText(rect().adjusted(0, -40, 0, 0), Qt::AlignCenter, heading);
-
-        painter.setPen(QColor(176, 190, 200));
-        QFont body = painter.font();
-        body.setPixelSize(13);
-        body.setBold(false);
-        painter.setFont(body);
-        painter.drawText(
-            rect().adjusted(40, 24, -40, 0),
-            Qt::AlignHCenter | Qt::AlignVCenter,
-            QString::fromUtf8("这里显示工件、机器人和焊缝。\n旋转、拾取和焊枪拖拽在视口接入后可用。"));
-    }
-};
 
 QString roleText(core::CollisionRole role) {
     switch (role) {
@@ -151,17 +101,25 @@ ShellWindow::ShellWindow(MainWindow& controller, QWidget* parent)
     setWindowTitle(QString::fromUtf8("SiFastSuite OLP — 焊接离线编程"));
     resize(1440, 900);
     buildChrome();
-    controller_.commandManager().setOnDocumentChangedCallback([this] { refreshFromDocument(); });
-    applyWorkbench(controller_.activeWorkbench());
+    documentListenerId_ = controller_.commandManager().addDocumentChangedListener([this] {
+        refreshFromDocument();
+    });
+    selectionListenerId_ = controller_.addSelectionListener([this] { applySelection(); });
+    applyWorkbench(ActiveWorkbench::LayoutWorkbench);
     refreshFromDocument();
-    statusBar()->showMessage(QString::fromUtf8("布局工作台。用工具栏加载示例工位。"));
+    statusBar()->showMessage(QString::fromUtf8("布局工作台。场景、属性和点动保持打开。用工具栏加载示例工位。"));
 }
 
 ShellWindow::~ShellWindow() {
-    controller_.commandManager().setOnDocumentChangedCallback(nullptr);
+    if (documentListenerId_ >= 0) {
+        controller_.commandManager().removeDocumentChangedListener(documentListenerId_);
+    }
+    if (selectionListenerId_ >= 0) {
+        controller_.removeSelectionListener(selectionListenerId_);
+    }
 }
 
-void ShellWindow::setSampleLoader(std::function<SampleSessionResult()> loader) {
+void ShellWindow::setSampleLoader(std::function<void()> loader) {
     loader_ = std::move(loader);
 }
 
@@ -231,7 +189,7 @@ void ShellWindow::buildChrome() {
     menuBar()->addMenu(QString::fromUtf8("帮助"))->addAction(
         QString::fromUtf8("关于"), this, [this] {
             statusBar()->showMessage(QString::fromUtf8(
-                "SiFastSuite OLP。当前是主窗口分区，三维视口尚未接入。"));
+                "SiFastSuite OLP。左键旋转，中键或右键平移，滚轮向前拉近、向后拉远。"));
         });
 
     auto* toolbar = addToolBar(QString::fromUtf8("主工具栏"));
@@ -243,8 +201,16 @@ void ShellWindow::buildChrome() {
     toolbar->addSeparator();
     toolbar->addAction(undoAction_);
     toolbar->addAction(redoAction_);
+    toolbar->addSeparator();
+    auto* fitAction = toolbar->addAction(QString::fromUtf8("整个工作台"));
+    connect(fitAction, &QAction::triggered, this, [this] {
+        if (viewport_ != nullptr) {
+            viewport_->fitAll();
+        }
+    });
 
-    setCentralWidget(new ViewportPlaceholder(this));
+    viewport_ = new OcctViewport(controller_.document(), controller_.commandManager(), this);
+    setCentralWidget(viewport_);
 
     sceneTree_ = new QTreeWidget();
     sceneTree_->setHeaderLabels({QString::fromUtf8("名称"), QString::fromUtf8("类型"), QString::fromUtf8("角色")});
@@ -254,7 +220,10 @@ void ShellWindow::buildChrome() {
         if (current == nullptr || refreshing_) {
             return;
         }
-        showPropertiesForScene(current->data(0, Qt::UserRole).toString());
+        const QString nodeId = current->data(0, Qt::UserRole).toString();
+        if (!nodeId.isEmpty()) {
+            controller_.selectSceneNode(nodeId.toStdString());
+        }
     });
 
     programTree_ = new QTreeWidget();
@@ -266,8 +235,8 @@ void ShellWindow::buildChrome() {
         }
         const QString kind = current->data(0, Qt::UserRole).toString();
         const QString id = current->data(0, Qt::UserRole + 1).toString();
-        if (kind == "target") {
-            showPropertiesForTarget(id);
+        if (kind == "operation" && !id.isEmpty()) {
+            controller_.selectOperation(id.toStdString());
         }
     });
 
@@ -289,7 +258,9 @@ void ShellWindow::buildChrome() {
         }
         auto* item = targetTable_->item(row, 0);
         if (item != nullptr) {
-            showPropertiesForTarget(item->data(Qt::UserRole).toString());
+            controller_.selectTarget(
+                item->data(Qt::UserRole).toString().toStdString(),
+                item->data(Qt::UserRole + 1).toString().toStdString());
         }
     });
 
@@ -370,12 +341,12 @@ void ShellWindow::buildChrome() {
 void ShellWindow::applyWorkbench(ActiveWorkbench workbench) {
     controller_.switchWorkbench(workbench);
     const bool layout = workbench == ActiveWorkbench::LayoutWorkbench;
-    sceneDock_->setVisible(layout);
+    sceneDock_->setVisible(true);
+    propertyDock_->setVisible(true);
+    jogDock_->setVisible(true);
     programDock_->setVisible(!layout);
     targetDock_->setVisible(!layout);
     issueDock_->setVisible(!layout);
-    jogDock_->setVisible(!layout);
-    propertyDock_->setVisible(true);
     if (layoutAction_ != nullptr) {
         layoutAction_->setChecked(layout);
         olpAction_->setChecked(!layout);
@@ -387,12 +358,12 @@ void ShellWindow::applyWorkbench(ActiveWorkbench workbench) {
 
 void ShellWindow::showLayoutWorkbench() {
     applyWorkbench(ActiveWorkbench::LayoutWorkbench);
-    statusBar()->showMessage(QString::fromUtf8("布局工作台：场景、属性和三维视口。"));
+    statusBar()->showMessage(QString::fromUtf8("布局工作台：场景、属性、点动和三维视口。"));
 }
 
 void ShellWindow::showOlpWorkbench() {
     applyWorkbench(ActiveWorkbench::OlpWorkbench);
-    statusBar()->showMessage(QString::fromUtf8("编程工作台：程序、路径点、点动、问题和属性。"));
+    statusBar()->showMessage(QString::fromUtf8("编程工作台：场景、程序、路径点、点动、问题和属性。"));
 }
 
 void ShellWindow::loadSample() {
@@ -403,16 +374,30 @@ void ShellWindow::loadSample() {
     QApplication::setOverrideCursor(Qt::WaitCursor);
     statusBar()->showMessage(QString::fromUtf8("正在导入示例工位并生成焊缝…"));
     QApplication::processEvents();
-    lastResult_ = loader_();
+    loader_();
+    if (controller_.lastFrameCount() > 0 || !controller_.document().controllers.empty()) {
+        showOlpWorkbench();
+    }
     refreshFromDocument();
-    applyWorkbench(controller_.activeWorkbench());
-    fillIssues();
-    if (timelineSlider_ != nullptr && lastResult_.frameCount > 0) {
-        timelineSlider_->setRange(0, lastResult_.frameCount - 1);
-        timelineLabel_->setText(QString::fromUtf8("时间轴  %1 帧").arg(lastResult_.frameCount));
+    if (viewport_ != nullptr) {
+        viewport_->syncScene();
+    }
+    const int frames = controller_.lastFrameCount();
+    if (timelineSlider_ != nullptr && frames > 0) {
+        timelineSlider_->setRange(0, frames - 1);
+        timelineLabel_->setText(QString::fromUtf8("时间轴  %1 帧").arg(frames));
     }
     QApplication::restoreOverrideCursor();
-    statusBar()->showMessage(QString::fromStdString(lastResult_.summary));
+    std::ostringstream summary;
+    summary.setf(std::ios::fixed);
+    summary.precision(1);
+    summary << "示例工位已加载。节拍 " << controller_.lastCycleTimeSec()
+            << " 秒，焊接 " << controller_.lastWeldTimeSec()
+            << " 秒，" << frames << " 帧。";
+    if (controller_.lastSampleExitCode() != 0) {
+        summary << " 有阻塞问题，文件仍已写出。";
+    }
+    statusBar()->showMessage(QString::fromStdString(summary.str()));
 }
 
 void ShellWindow::refreshFromDocument() {
@@ -423,8 +408,14 @@ void ShellWindow::refreshFromDocument() {
     rebuildSceneTree();
     rebuildProgramTree();
     rebuildTargetTable();
+    fillIssues();
+    syncJogFromRobot();
     updateUndoActions();
+    if (viewport_ != nullptr) {
+        viewport_->syncScene();
+    }
     refreshing_ = false;
+    applySelection();
 }
 
 void ShellWindow::rebuildSceneTree() {
@@ -497,14 +488,8 @@ void ShellWindow::rebuildProgramTree() {
                     QString::fromStdString(op.name),
                     QString::fromUtf8("操作")
                 });
-                for (const auto& target : op.targets) {
-                    auto* targetItem = new QTreeWidgetItem(opItem, {
-                        QString::fromStdString(target.name),
-                        motionText(target.motion)
-                    });
-                    targetItem->setData(0, Qt::UserRole, "target");
-                    targetItem->setData(0, Qt::UserRole + 1, QString::fromStdString(target.id));
-                }
+                opItem->setData(0, Qt::UserRole, "operation");
+                opItem->setData(0, Qt::UserRole + 1, QString::fromStdString(op.id));
             }
         }
     }
@@ -513,27 +498,39 @@ void ShellWindow::rebuildProgramTree() {
 
 void ShellWindow::rebuildTargetTable() {
     targetTable_->setRowCount(0);
-    int row = 0;
+    const core::Operation* operation = nullptr;
+    const std::string& selected = controller_.selectedOperationId();
     for (const auto& cu : controller_.document().controllers) {
         for (const auto& program : cu.programs) {
             for (const auto& op : program.operations) {
-                for (const auto& target : op.targets) {
-                    targetTable_->insertRow(row);
-                    auto* name = new QTableWidgetItem(QString::fromStdString(target.name));
-                    name->setData(Qt::UserRole, QString::fromStdString(target.id));
-                    targetTable_->setItem(row, 0, name);
-                    targetTable_->setItem(row, 1, new QTableWidgetItem(motionText(target.motion)));
-                    const QString speed = target.motion == core::MotionType::J
-                        ? QString("%1%").arg(target.speedValue, 0, 'f', 0)
-                        : QString("%1 mm/s").arg(target.speedValue, 0, 'f', 0);
-                    targetTable_->setItem(row, 2, new QTableWidgetItem(speed));
-                    targetTable_->setItem(row, 3, new QTableWidgetItem(statusText(target.cache.status)));
-                    targetTable_->setItem(row, 4, new QTableWidgetItem(
-                        QString::number(target.cache.minClearanceMm, 'f', 1)));
-                    ++row;
+                if (operation == nullptr) {
+                    operation = &op;
+                }
+                if (!selected.empty() && op.id == selected) {
+                    operation = &op;
                 }
             }
         }
+    }
+    if (operation == nullptr) {
+        return;
+    }
+    int row = 0;
+    for (const auto& target : operation->targets) {
+        targetTable_->insertRow(row);
+        auto* name = new QTableWidgetItem(QString::fromStdString(target.name));
+        name->setData(Qt::UserRole, QString::fromStdString(target.id));
+        name->setData(Qt::UserRole + 1, QString::fromStdString(operation->id));
+        targetTable_->setItem(row, 0, name);
+        targetTable_->setItem(row, 1, new QTableWidgetItem(motionText(target.motion)));
+        const QString speed = target.motion == core::MotionType::J
+            ? QString("%1%").arg(target.speedValue, 0, 'f', 0)
+            : QString("%1 mm/s").arg(target.speedValue, 0, 'f', 0);
+        targetTable_->setItem(row, 2, new QTableWidgetItem(speed));
+        targetTable_->setItem(row, 3, new QTableWidgetItem(statusText(target.cache.status)));
+        targetTable_->setItem(row, 4, new QTableWidgetItem(
+            QString::number(target.cache.minClearanceMm, 'f', 1)));
+        ++row;
     }
 }
 
@@ -590,15 +587,82 @@ void ShellWindow::updateUndoActions() {
 
 void ShellWindow::fillIssues() {
     issueList_->clear();
-    if (lastResult_.issues.empty()) {
+    for (const auto& cu : controller_.document().controllers) {
+        for (const auto& program : cu.programs) {
+            for (const auto& op : program.operations) {
+                for (const auto& target : op.targets) {
+                    if (target.cache.issueMessage.empty()) {
+                        continue;
+                    }
+                    if (target.cache.status == core::TargetValidationState::Valid ||
+                        target.cache.status == core::TargetValidationState::Unchecked) {
+                        continue;
+                    }
+                    issueList_->addItem(QString::fromStdString(target.name + ": " + target.cache.issueMessage));
+                }
+            }
+        }
+    }
+    if (issueList_->count() == 0) {
         issueList_->addItem(QString::fromUtf8("没有校验问题。"));
+    }
+}
+
+void ShellWindow::applySelection() {
+    if (!controller_.selectedTargetId().empty()) {
+        showPropertiesForTarget(QString::fromStdString(controller_.selectedTargetId()));
         return;
     }
-    for (const auto& issue : lastResult_.issues) {
-        issueList_->addItem(QString::fromStdString(issue));
+    if (!controller_.selectedSceneNodeId().empty()) {
+        showPropertiesForScene(QString::fromStdString(controller_.selectedSceneNodeId()));
+        return;
     }
-    issueDock_->setVisible(controller_.activeWorkbench() == ActiveWorkbench::OlpWorkbench);
-    issueDock_->raise();
+    if (controller_.selectedOperationId().empty()) {
+        return;
+    }
+    const bool wasRefreshing = refreshing_;
+    refreshing_ = true;
+    rebuildTargetTable();
+    refreshing_ = wasRefreshing;
+    for (const auto& cu : controller_.document().controllers) {
+        for (const auto& program : cu.programs) {
+            for (const auto& op : program.operations) {
+                if (op.id != controller_.selectedOperationId()) {
+                    continue;
+                }
+                propertyText_->setPlainText(QString::fromUtf8("操作  ")
+                    + QString::fromStdString(op.name)
+                    + QString::fromUtf8("\n路径点  ")
+                    + QString::number(static_cast<int>(op.targets.size())));
+                return;
+            }
+        }
+    }
+}
+
+void ShellWindow::syncJogFromRobot() {
+    const core::SceneNode* robot = nullptr;
+    for (const auto& node : controller_.document().sceneNodes) {
+        if (node.type == core::SceneNodeType::Robot) {
+            robot = &node;
+            break;
+        }
+    }
+    const auto& model = controller_.activeRobotModel();
+    QStringList parts;
+    for (int joint = 0; joint < 6; ++joint) {
+        if (jogSliders_[joint] == nullptr) {
+            continue;
+        }
+        const double rad = robot != nullptr
+            ? robot->currentJointsRad[static_cast<size_t>(joint)]
+            : model.homeJointsRad[static_cast<size_t>(joint)];
+        jogSliders_[joint]->setValue(static_cast<int>(std::lround(core::rad2deg(rad) * 10.0)));
+        parts.push_back(QString("J%1 %2°").arg(joint + 1).arg(core::rad2deg(rad), 0, 'f', 1));
+    }
+    if (jogReadout_ != nullptr) {
+        jogReadout_->setText(QString::fromUtf8("场景机器人：") + parts.join("  "));
+    }
 }
 
 } // namespace olp::ui
