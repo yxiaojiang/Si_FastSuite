@@ -128,6 +128,7 @@ struct SeamDefinition {
     int face2Index{-1};
     double startTrimMm{5.0};
     double endTrimMm{5.0};
+    bool isClosed{false};
     bool reversed{false};
     bool programmed{false};
     std::vector<SeamSampleFrame> sampledFrames{};

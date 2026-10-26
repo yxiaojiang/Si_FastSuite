@@ -220,7 +220,7 @@ void CreateSeamFromPickedEdgeCommand::execute() {
     if (chainContinuousEdges_) {
         cad::EdgeChainResult chain = cadKernel_.findTangentContinuousEdgeChain(
             sourceCadHandleId_, edgeIndex_, maxDeflectionAngleDeg_);
-        if (chain.edges.size() > 1) {
+        if (chain.edges.size() > 1 || chain.isClosed) {
             seamOpt = algo::SeamAndToolpathAlgo::buildSeamFromEdgeChain(
                 cadKernel_, sourceCadHandleId_, chain, workpieceHandles, sampleStepMm_);
         }
@@ -233,6 +233,11 @@ void CreateSeamFromPickedEdgeCommand::execute() {
 
     if (!seamOpt.has_value()) {
         return;
+    }
+    for (const auto& existing : doc_.seams) {
+        if (existing.id == seamOpt->id) {
+            return;
+        }
     }
     createdSeam_ = *seamOpt;
     createdSeamId_ = createdSeam_.id;

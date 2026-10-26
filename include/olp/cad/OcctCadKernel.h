@@ -7,6 +7,7 @@
 #ifdef OLP_HAS_OCCT
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
 #endif
 
 namespace olp::cad {
@@ -92,6 +93,7 @@ private:
 #ifdef OLP_HAS_OCCT
     std::unordered_map<int, TopoDS_Shape> shapes_{};
     std::unordered_map<int, std::vector<TopoDS_Edge>> edgeShapes_{};
+    std::unordered_map<int, std::vector<TopoDS_Face>> faceShapes_{};
 #endif
 
     static double pointToFaceBoxDistance(const core::Vec3& pt, const CadFaceInfo& face) noexcept;

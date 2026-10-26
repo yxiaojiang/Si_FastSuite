@@ -613,44 +613,44 @@ bool OcctCadKernel::evaluateEdgeAtArcLength(
     double arcLengthMm,
     core::Vec3& outPoint,
     core::Vec3& outTangent) const {
+    auto it = solids_.find(cadHandleId);
 #ifdef OLP_HAS_OCCT
     auto itEdges = edgeShapes_.find(cadHandleId);
     if (itEdges != edgeShapes_.end() && edgeIndex >= 0 && edgeIndex < static_cast<int>(itEdges->second.size())) {
         const TopoDS_Edge& edge = itEdges->second[edgeIndex];
         BRepAdaptor_Curve curve(edge);
-        const double totalLen = GCPnts_AbscissaPoint::Length(curve);
-        const double clampedS = std::clamp(arcLengthMm, 0.0, totalLen);
-        if (clampedS <= 1e-7) {
-            const double param = curve.FirstParameter();
-            gp_Pnt p;
-            gp_Vec v;
-            curve.D1(param, p, v);
-            outPoint = {p.X(), p.Y(), p.Z()};
-            outTangent = (v.Magnitude() > 1e-7) ? core::Vec3{v.X(), v.Y(), v.Z()}.normalized() : core::Vec3{1, 0, 0};
-            return true;
-        } else if (clampedS >= totalLen - 1e-7) {
-            const double param = curve.LastParameter();
-            gp_Pnt p;
-            gp_Vec v;
-            curve.D1(param, p, v);
-            outPoint = {p.X(), p.Y(), p.Z()};
-            outTangent = (v.Magnitude() > 1e-7) ? core::Vec3{v.X(), v.Y(), v.Z()}.normalized() : core::Vec3{1, 0, 0};
-            return true;
+        const double fParam = curve.FirstParameter();
+        const double lParam = curve.LastParameter();
+        double totalLen = 0.0;
+        if (it != solids_.end() && edgeIndex < static_cast<int>(it->second.edges.size()) &&
+            it->second.edges[edgeIndex].lengthMm > 1e-7) {
+            totalLen = it->second.edges[edgeIndex].lengthMm;
         } else {
-            GCPnts_AbscissaPoint absPt(curve, clampedS, curve.FirstParameter());
+            totalLen = GCPnts_AbscissaPoint::Length(curve);
+        }
+        const double clampedS = std::clamp(arcLengthMm, 0.0, totalLen);
+        double param = fParam;
+        if (clampedS <= 1e-7) {
+            param = fParam;
+        } else if (clampedS >= totalLen - 1e-7) {
+            param = lParam;
+        } else {
+            GCPnts_AbscissaPoint absPt(curve, clampedS, fParam);
             if (absPt.IsDone()) {
-                const double param = absPt.Parameter();
-                gp_Pnt p;
-                gp_Vec v;
-                curve.D1(param, p, v);
-                outPoint = {p.X(), p.Y(), p.Z()};
-                outTangent = (v.Magnitude() > 1e-7) ? core::Vec3{v.X(), v.Y(), v.Z()}.normalized() : core::Vec3{1, 0, 0};
-                return true;
+                param = absPt.Parameter();
+            } else {
+                const double ratio = (totalLen > 1e-9) ? (clampedS / totalLen) : 0.0;
+                param = fParam + ratio * (lParam - fParam);
             }
         }
+        gp_Pnt p;
+        gp_Vec v;
+        curve.D1(param, p, v);
+        outPoint = {p.X(), p.Y(), p.Z()};
+        outTangent = (v.Magnitude() > 1e-7) ? core::Vec3{v.X(), v.Y(), v.Z()}.normalized() : core::Vec3{1, 0, 0};
+        return true;
     }
 #endif
-    auto it = solids_.find(cadHandleId);
     if (it == solids_.end()) return false;
     if (edgeIndex < 0 || edgeIndex >= static_cast<int>(it->second.edges.size())) return false;
 
@@ -665,12 +665,42 @@ bool OcctCadKernel::evaluateEdgeAtArcLength(
 bool OcctCadKernel::evaluateFaceOutwardNormal(
     int cadHandleId,
     int faceIndex,
-    const core::Vec3& /*samplePoint*/,
+    const core::Vec3& samplePoint,
     core::Vec3& outNormal) const {
     auto it = solids_.find(cadHandleId);
     if (it == solids_.end()) return false;
     if (faceIndex < 0 || faceIndex >= static_cast<int>(it->second.faces.size())) return false;
-    outNormal = it->second.faces[faceIndex].outwardNormal;
+    const auto& finfo = it->second.faces[faceIndex];
+
+#ifdef OLP_HAS_OCCT
+    if (finfo.surfaceType != CadSurfaceType::Plane) {
+        auto itFaces = faceShapes_.find(cadHandleId);
+        if (itFaces != faceShapes_.end() && faceIndex < static_cast<int>(itFaces->second.size())) {
+            const TopoDS_Face& face = itFaces->second[faceIndex];
+            TopLoc_Location loc;
+            const Handle(Geom_Surface) geomSurf = BRep_Tool::Surface(face, loc);
+            if (!geomSurf.IsNull()) {
+                gp_Pnt queryPt(samplePoint.x, samplePoint.y, samplePoint.z);
+                if (!loc.IsIdentity()) {
+                    queryPt.Transform(loc.Transformation().Inverted());
+                }
+                ShapeAnalysis_Surface sas(geomSurf);
+                const gp_Pnt2d uv = sas.ValueOfUV(queryPt, 1e-4);
+                BRepAdaptor_Surface surf(face, false);
+                BRepLProp_SLProps props(surf, uv.X(), uv.Y(), 1, 1e-7);
+                if (props.IsNormalDefined()) {
+                    gp_Dir n = props.Normal();
+                    if (face.Orientation() == TopAbs_REVERSED) {
+                        n.Reverse();
+                    }
+                    outNormal = {n.X(), n.Y(), n.Z()};
+                    return true;
+                }
+            }
+        }
+    }
+#endif
+    outNormal = finfo.outwardNormal;
     return true;
 }
 
@@ -794,17 +824,19 @@ EdgeChainResult OcctCadKernel::findTangentContinuousEdgeChain(
     const double seedLastParam = seedCurve.LastParameter();
     const gp_Pnt seedPStart = seedCurve.Value(seedFirstParam);
     const gp_Pnt seedPEnd = seedCurve.Value(seedLastParam);
+    const gp_Dir seedStartDir = getCurveTangentAtParam(seedEdge, seedFirstParam);
+    const gp_Dir seedEndDir = getCurveTangentAtParam(seedEdge, seedLastParam);
 
     std::vector<ChainedEdge> forwardChain;
     gp_Pnt currPt = seedPEnd;
-    gp_Dir currOutDir = getCurveTangentAtParam(seedEdge, seedLastParam);
+    gp_Dir currOutDir = seedEndDir;
     bool loopClosed = false;
 
-    if (seedPStart.Distance(seedPEnd) < 0.05) {
+    if (seedPStart.Distance(seedPEnd) < 0.05 && seedEndDir.Angle(seedStartDir) <= maxAngleRad) {
         loopClosed = true;
     }
 
-    while (!loopClosed) {
+    while (!loopClosed && seedPStart.Distance(seedPEnd) >= 0.05) {
         auto step = findNextContinuousEdge(currPt, currOutDir, visited, edgeShapes, maxAngleRad);
         if (step.nextEdgeIdx < 0) {
             break;
@@ -817,12 +849,6 @@ EdgeChainResult OcctCadKernel::findTangentContinuousEdgeChain(
         ce.lengthMm = edgeInfos[step.nextEdgeIdx].lengthMm;
         forwardChain.push_back(ce);
 
-        if (step.nextPt.Distance(seedPStart) < 0.05) {
-            loopClosed = true;
-            break;
-        }
-
-        currPt = step.nextPt;
         const TopoDS_Edge nextEdge = edgeShapes[step.nextEdgeIdx];
         BRepAdaptor_Curve nextCurve(nextEdge);
         if (step.isReversed) {
@@ -830,12 +856,21 @@ EdgeChainResult OcctCadKernel::findTangentContinuousEdgeChain(
         } else {
             currOutDir = getCurveTangentAtParam(nextEdge, nextCurve.LastParameter());
         }
+
+        if (step.nextPt.Distance(seedPStart) < 0.05) {
+            if (currOutDir.Angle(seedStartDir) <= maxAngleRad) {
+                loopClosed = true;
+            }
+            break;
+        }
+
+        currPt = step.nextPt;
     }
 
     std::vector<ChainedEdge> backwardChain;
-    if (!loopClosed) {
+    if (!loopClosed && seedPStart.Distance(seedPEnd) >= 0.05) {
         currPt = seedPStart;
-        currOutDir = getCurveTangentAtParam(seedEdge, seedFirstParam).Reversed();
+        currOutDir = seedStartDir.Reversed();
 
         while (true) {
             auto step = findNextContinuousEdge(currPt, currOutDir, visited, edgeShapes, maxAngleRad);
@@ -890,7 +925,14 @@ EdgeChainResult OcctCadKernel::findTangentContinuousEdgeChain(
         gp_Pnt chainEndPt = finalChain.back().isReversed
             ? lastCurve.Value(lastCurve.FirstParameter())
             : lastCurve.Value(lastCurve.LastParameter());
-        if (chainStartPt.Distance(chainEndPt) < 0.05) {
+        gp_Dir chainStartDir = finalChain.front().isReversed
+            ? getCurveTangentAtParam(firstE, firstCurve.LastParameter()).Reversed()
+            : getCurveTangentAtParam(firstE, firstCurve.FirstParameter());
+        gp_Dir chainEndDir = finalChain.back().isReversed
+            ? getCurveTangentAtParam(lastE, lastCurve.FirstParameter()).Reversed()
+            : getCurveTangentAtParam(lastE, lastCurve.LastParameter());
+        if (chainStartPt.Distance(chainEndPt) < 0.05 &&
+            chainEndDir.Angle(chainStartDir) <= maxAngleRad) {
             loopClosed = true;
         }
     }
@@ -1406,6 +1448,7 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
 
             shapes_[rec.handleId] = solid;
             edgeShapes_[rec.handleId] = std::move(edgeList);
+            faceShapes_[rec.handleId] = std::move(faceShapes);
             solids_[rec.handleId] = std::move(rec);
 
             tessellate(node.cadHandleId, 0.2, 2.0, node.renderMesh, node.collisionMesh);

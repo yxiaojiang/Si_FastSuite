@@ -6,4 +6,4 @@
 4. **焊丝尖端只豁免本焊缝的两块母材，而且只在约 10 mm 半径内。** 夹具和其他工件不自动豁免。更深的侵入仍算碰撞。球体都在枪轴上，绕枪轴扭转不会改变间隙，不能把它当成真实网格扫描。
 5. **仿真只写 `TargetCache`。** 不回写目标上的配置字。无效逆解、超限位和锁死构型分开记录。圆弧运动不写成直线。
 6. **演示夹具是真实干涉，用后移起弧点解决目标点。** 前侧板底边的角平分线指向 `Table_Clamp_Block_1`。5 mm 起弧时，枪尖后 45 mm 的喷嘴球吃进夹具约 9 mm。`extendStartTrimUntilTorchClears` 沿焊缝把起点收到 32 mm，枪姿不变，目标点安全间隙 5 mm 满足。插补采样也查焊枪球，终点那一帧不再重复计。零位到接近点改由 `insertSafeTransitBeforeApproach` 插入正上方的直线点 `CLEARANCE_1`，再直线下降，不再扫过 `Workpiece_BoxWall_Front`。演示退出码 0。回退段对这块板的间隙仍低于 5 mm。
-7. **复合曲率焊缝累计弧长采样与角平分线姿态（M07）。** `buildSeamFromEdgeChain` 沿边链累计弧长均匀离散采样，对每段子边分别判定母材侧面法向或跨实体装配面法向，生成角平分线局部右手姿态矩阵（$\det(R)=1.0$），保证切线平滑过渡。`CreateSeamFromPickedEdgeCommand` 增加连续边扩展支持，边链 $>1$ 自动创建链式复合焊缝，撤销/重做严格对称且准确维护 dirty 状态。
+7. **复合曲率焊缝累计弧长采样与动态角平分线姿态（M07）。** `buildSeamFromEdgeChain` 沿边链累计弧长均匀离散采样，保留 `isClosed` 标志，对每个采样点调用 `evaluateFaceOutwardNormal` 动态求取两侧母材面（含圆柱/圆锥/圆角曲面）的局部外法向，生成随曲率平滑旋转的角平分线右手姿态矩阵（$\det(R)=1.0$），邻接面缺失时按拓扑最近邻继承。`CreateSeamFromPickedEdgeCommand` 在 `chain.edges.size() > 1 || chain.isClosed` 时自动创建链式/闭环焊缝（避免单边圆环被默认首尾裁剪 10 mm），并拦截重复拾取同一边链（No-op 不入栈），保证 Undo/Redo 与 dirty 状态严格对称。

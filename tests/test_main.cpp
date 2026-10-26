@@ -1472,23 +1472,40 @@ void testTangentContinuousEdgeChaining() {
     check(flangeEdges.size() > 0, "Pipe Flange has CAD edges", "count=" + std::to_string(flangeEdges.size()));
 
     bool foundClosed = false;
+    bool foundDynamicRadialBisector = false;
     olp::cad::EdgeChainResult flangeChain;
+    std::vector<int> flangeWpHandles = {flangeCadHandle};
     for (size_t i = 0; i < flangeEdges.size(); ++i) {
         auto chain = cad.findTangentContinuousEdgeChain(flangeCadHandle, static_cast<int>(i), 30.0);
         if (chain.isClosed) {
-            foundClosed = true;
-            flangeChain = chain;
-            break;
+            if (!foundClosed) {
+                foundClosed = true;
+                flangeChain = chain;
+            }
+            auto candSeamOpt = olp::algo::SeamAndToolpathAlgo::buildSeamFromEdgeChain(
+                cad, flangeCadHandle, chain, flangeWpHandles, 10.0, 0.0, 0.0);
+            if (candSeamOpt.has_value()) {
+                double minBisX = 1e9, maxBisX = -1e9;
+                for (const auto& sf : candSeamOpt->sampledFrames) {
+                    minBisX = std::min(minBisX, sf.bisector.x);
+                    maxBisX = std::max(maxBisX, sf.bisector.x);
+                }
+                if (maxBisX - minBisX > 0.5) {
+                    foundDynamicRadialBisector = true;
+                    flangeChain = chain;
+                    break;
+                }
+            }
         }
     }
     check(foundClosed, "Pipe Flange detects closed loop edge chain (isClosed = true)");
 
-    std::vector<int> flangeWpHandles = {flangeCadHandle};
     auto flangeSeamOpt = olp::algo::SeamAndToolpathAlgo::buildSeamFromEdgeChain(
         cad, flangeCadHandle, flangeChain, flangeWpHandles, 10.0, 0.0, 0.0);
     check(flangeSeamOpt.has_value(), "buildSeamFromEdgeChain succeeds for Pipe Flange closed loop");
     if (flangeSeamOpt.has_value()) {
         const auto& fseam = *flangeSeamOpt;
+        check(fseam.isClosed, "Pipe Flange SeamDefinition preserves isClosed = true");
         check(fseam.sampledFrames.size() >= 4, "Pipe Flange circular seam has multiple sampled frames");
         double minX = 1e9, maxX = -1e9;
         for (const auto& sf : fseam.sampledFrames) {
@@ -1496,6 +1513,8 @@ void testTangentContinuousEdgeChaining() {
             maxX = std::max(maxX, sf.position.x);
         }
         check(maxX - minX > 5.0, "Pipe Flange circular seam positions span true 3D diameter (not collapsed)");
+        check(foundDynamicRadialBisector,
+              "Pipe Flange cylindrical/conical flank normal & bisector rotate dynamically around circumference");
     }
 
     // 3. Composite seam definition build
@@ -1555,6 +1574,14 @@ void testTangentContinuousEdgeChaining() {
     cmdMgr.redo();
     check(doc.seams.size() == 1, "Redo restores created chained seam");
     check(doc.isDirty, "Redo marks document dirty again");
+
+    // Verify duplicate pick on same chain is rejected as no-op to preserve Undo symmetry
+    auto dupCmd = std::make_unique<olp::app::CreateSeamFromPickedEdgeCommand>(
+        doc, cad, tubeCadHandle, seedEdgeIdx, 20.0, true, 15.0);
+    cmdMgr.executeCommand(std::move(dupCmd));
+    check(doc.seams.size() == 1, "Duplicate pick on existing seam chain is ignored (no duplicate seam)");
+    cmdMgr.undo();
+    check(doc.seams.empty(), "Single Undo cleanly removes the seam after duplicate pick no-op");
 #endif
 }
 

@@ -73,12 +73,14 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromEdgeChain(
         core::Vec3 normal2{0.0, -1.0, 0.0};
         int face1Idx{-1};
         int face2Idx{-1};
+        int face2HandleId{-1};
         std::string face2PartId{};
         bool valid{false};
     };
 
     auto determineFlanks = [&](int edgeIdx) -> FlankInfo {
         FlankInfo info;
+        info.face2HandleId = sourceCadHandleId;
         if (edgeIdx < 0 || edgeIdx >= static_cast<int>(allEdges.size())) {
             return info;
         }
@@ -89,6 +91,7 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromEdgeChain(
         if (crossMatch.has_value()) {
             info.normal2 = crossMatch->outwardNormal;
             info.face2Idx = crossMatch->faceIndex;
+            info.face2HandleId = crossMatch->partHandleId;
             info.face2PartId = "part_" + std::to_string(crossMatch->partHandleId);
             for (int adjIdx : edge.adjacentFaceIndices) {
                 if (adjIdx >= 0 && adjIdx < static_cast<int>(allFaces.size())) {
@@ -104,6 +107,7 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromEdgeChain(
         } else if (edge.adjacentFaceIndices.size() >= 2) {
             info.face1Idx = edge.adjacentFaceIndices[0];
             info.face2Idx = edge.adjacentFaceIndices[1];
+            info.face2HandleId = sourceCadHandleId;
             info.face2PartId = "part_" + std::to_string(sourceCadHandleId);
             if (info.face1Idx >= 0 && info.face1Idx < static_cast<int>(allFaces.size()) &&
                 info.face2Idx >= 0 && info.face2Idx < static_cast<int>(allFaces.size())) {
@@ -123,9 +127,13 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromEdgeChain(
 
     for (size_t i = 0; i < edgeFlanks.size(); ++i) {
         if (!edgeFlanks[i].valid) {
-            for (size_t j = 0; j < edgeFlanks.size(); ++j) {
-                if (edgeFlanks[j].valid) {
-                    edgeFlanks[i] = edgeFlanks[j];
+            for (size_t offset = 1; offset < edgeFlanks.size(); ++offset) {
+                if (i >= offset && edgeFlanks[i - offset].valid) {
+                    edgeFlanks[i] = edgeFlanks[i - offset];
+                    break;
+                }
+                if (i + offset < edgeFlanks.size() && edgeFlanks[i + offset].valid) {
+                    edgeFlanks[i] = edgeFlanks[i + offset];
                     break;
                 }
             }
@@ -146,6 +154,7 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromEdgeChain(
     seam.face2Index = edgeFlanks[0].face2Idx;
     seam.startTrimMm = std::max(0.0, startTrimMm);
     seam.endTrimMm = std::max(0.0, endTrimMm);
+    seam.isClosed = chain.isClosed;
 
     for (const auto& ce : chain.edges) {
         seam.edgeChain.push_back(cadKernel.computeEdgeSignature(sourceCadHandleId, ce.edgeIndex));
@@ -174,7 +183,17 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromEdgeChain(
                     tan = -tan;
                 }
                 const auto& flank = edgeFlanks[i];
-                auto frameOpt = computeSeamFrame(pt, tan, flank.normal1, flank.normal2);
+                core::Vec3 n1 = flank.normal1;
+                core::Vec3 n2 = flank.normal2;
+                cadKernel.evaluateFaceOutwardNormal(sourceCadHandleId, flank.face1Idx, pt, n1);
+                cadKernel.evaluateFaceOutwardNormal(flank.face2HandleId, flank.face2Idx, pt, n2);
+
+                auto frameOpt = computeSeamFrame(pt, tan, n1, n2);
+                if (!frameOpt.has_value()) {
+                    n1 = flank.normal1;
+                    n2 = flank.normal2;
+                    frameOpt = computeSeamFrame(pt, tan, n1, n2);
+                }
                 if (!frameOpt.has_value()) {
                     return std::nullopt;
                 }
@@ -183,9 +202,9 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromEdgeChain(
                 sf.arcLengthMm = globalS;
                 sf.position = pt;
                 sf.tangentX = tan;
-                sf.normalFace1 = flank.normal1;
-                sf.normalFace2 = flank.normal2;
-                sf.bisector = (flank.normal1 + flank.normal2).normalized();
+                sf.normalFace1 = n1;
+                sf.normalFace2 = n2;
+                sf.bisector = (n1 + n2).normalized();
                 sf.frame = *frameOpt;
                 return sf;
             }
@@ -285,6 +304,8 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromPickedEdge
     const double sEnd = std::max(sStart, totalLen - std::min(seam.endTrimMm, totalLen * 0.25));
     const double step = std::max(5.0, sampleStepMm);
 
+    const int face2HandleId = crossMatch.has_value() ? crossMatch->partHandleId : sourceCadHandleId;
+
     auto appendSample = [&](double s) -> bool {
         core::Vec3 pt{}, tan{};
         if (!cadKernel.evaluateEdgeAtArcLength(sourceCadHandleId, edgeIndex, s, pt, tan)) {
@@ -293,7 +314,17 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromPickedEdge
         if (seam.reversed) {
             tan = -tan;
         }
-        auto frameOpt = computeSeamFrame(pt, tan, normal1, normal2);
+        core::Vec3 n1 = normal1;
+        core::Vec3 n2 = normal2;
+        cadKernel.evaluateFaceOutwardNormal(sourceCadHandleId, face1Idx, pt, n1);
+        cadKernel.evaluateFaceOutwardNormal(face2HandleId, face2Idx, pt, n2);
+
+        auto frameOpt = computeSeamFrame(pt, tan, n1, n2);
+        if (!frameOpt.has_value()) {
+            n1 = normal1;
+            n2 = normal2;
+            frameOpt = computeSeamFrame(pt, tan, n1, n2);
+        }
         if (!frameOpt.has_value()) {
             return false;
         }
@@ -301,9 +332,9 @@ std::optional<core::SeamDefinition> SeamAndToolpathAlgo::buildSeamFromPickedEdge
         sf.arcLengthMm = s;
         sf.position = pt;
         sf.tangentX = tan;
-        sf.normalFace1 = normal1;
-        sf.normalFace2 = normal2;
-        sf.bisector = (normal1 + normal2).normalized();
+        sf.normalFace1 = n1;
+        sf.normalFace2 = n2;
+        sf.bisector = (n1 + n2).normalized();
         sf.frame = *frameOpt;
         seam.sampledFrames.push_back(sf);
         return true;
