@@ -51,6 +51,17 @@
 
 ## 双模型协作与工程约束
 
+- **CRDocs 代码审查与交接机制（强制规程）**：
+  - 工程根目录 `CRDocs/` 是执行者（Executor，如 Claude / Gemini）与独立审核者（Reviewer，如 Codex / Opus）之间唯一的代码审查交接区。后续所有代码审核必须严格按该机制执行。
+  - **文件分工与所有权**：
+    - `CRDocs/README.md`：固定协作规则与角色定义。
+    - `CRDocs/STATUS.md`：由当前交棒方更新，记录当前 Task ID、轮次、状态（`IDLE` / `IMPLEMENTING` / `READY_FOR_REVIEW` / `CHANGES_REQUESTED` / `APPROVED` / `BLOCKED`）。
+    - `CRDocs/IMPLEMENTATION.md`：由执行者填写，记录实际修改、判定未改、边界与测试证据（严禁把“已修改”当作“已验证”）。
+    - `CRDocs/REVIEW.md`：由审核者填写，独立审查源码与 diff，将问题按 `P0` 阻断、`P1` 必修、`P2` 延期记录，标记 `OPEN` / `RESOLVED` / `DEFERRED` / `WONT_FIX`。
+    - `CRDocs/DEFERRED.md`：由审核者将当前不阻断的 P2 或未来阶段问题移入，写明触发阶段与验收条件。
+  - **用户最简交互**：
+    - 对执行者指令：`读取 CRDocs，按 REVIEW.md 修改，完成后交接。`
+    - 对审核者指令：`读取 CRDocs，审核本轮实际改动并更新审核状态。`
 - **提问阶段只出分析与方案**：用户在提问/方案评估阶段只要分析和文档输出；收到明确代码实施指令后才修改工程代码文件。
 - **双模型（Gemini + Opus）互审取长补短机制**：
   - 每次重大需求建立时，先由一方输出全景架构与模块拆解文档（存放在 `Docs/`），另一方在此基础上结合真实源码/硬件边界/工业暗坑进行独立审阅，重点补充：**范围切割（P0/P1/P2）、高风险预研前置（Phase 0）、行业暗坑、具体技术选型与量化验收标准**。

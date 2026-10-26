@@ -46,4 +46,4 @@ M08（路径生成与编辑：单段非闭合直线智能退化与闭环/多段�
 
 ## 5. 索引
 
-设计基线：`Docs/OLP_System_Design_Claude.md`、`Docs/FASTSUITE_OLP_System_Architecture.md`。排期：根目录 `Plan.md`。设计复盘：`.claude/contexts/OLP-archive.md`。已做步骤：`.claude/contexts/steps/00-index.md`。
+设计基线：`Docs/OLP_System_Design_Claude.md`、`Docs/FASTSUITE_OLP_System_Architecture.md`。排期：根目录 `Plan.md`。代码审查交接：`CRDocs/`（按 `README.md` 执行者与审核者双角色状态机）。设计复盘：`.claude/contexts/OLP-archive.md`。已做步骤：`.claude/contexts/steps/00-index.md`。
