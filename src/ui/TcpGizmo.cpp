@@ -57,7 +57,10 @@ void TcpGizmo::updateDragDelta(
             snap.currentPreviewPoseInUFrame = snap.initialPoseInUFrame * deltaT;
         } else if (refFrame_ == GizmoRefFrame::Seam && hasSeamFrame_) {
             const core::Transform4d seam = seamFrameInUFrame_;
-            snap.currentPreviewPoseInUFrame = seam * deltaT * seam.inverse() * snap.initialPoseInUFrame;
+            snap.currentPreviewPoseInUFrame.pos =
+                snap.initialPoseInUFrame.pos + seam.rot * deltaT.pos;
+            snap.currentPreviewPoseInUFrame.rot =
+                (seam.rot * deltaT.rot * seam.rot.transposed()) * snap.initialPoseInUFrame.rot;
         } else if (refFrame_ == GizmoRefFrame::World) {
             const core::Transform4d worldToUFrame = uframeInWorld_.inverse();
             snap.currentPreviewPoseInUFrame.pos =

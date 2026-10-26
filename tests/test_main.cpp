@@ -1270,6 +1270,157 @@ void testBRepMeshRenderingAndEdgePicking() {
 #endif
 }
 
+void testTcpGizmoMountAndInteraction() {
+    std::cout << "\n--- Test 13: TcpGizmo Mount and Interactive Drag in OcctViewport ---\n";
+    olp::app::ProjectDocument doc;
+    olp::app::CommandManager cmdMgr(50);
+    olp::cad::OcctCadKernel cad;
+
+    // 1. Setup scene with a frame node (UFRAME)
+    olp::core::SceneNode uframeNode;
+    uframeNode.id = "UFRAME_1";
+    uframeNode.name = "UFRAME_1";
+    uframeNode.type = olp::core::SceneNodeType::Frame;
+    uframeNode.localTransform = olp::core::Transform4d::fromTranslation(100.0, 200.0, 300.0);
+    doc.sceneNodes.push_back(uframeNode);
+
+    // 2. Setup controller, program, operation, and 2 targets
+    olp::core::ControllerUnit cu;
+    olp::core::Program prog;
+    olp::core::Operation op;
+    op.id = "op_gizmo";
+
+    olp::core::Target t1;
+    t1.id = "target_gizmo_1";
+    t1.name = "T1";
+    t1.poseInUFrame = olp::core::Transform4d::fromTranslation(10.0, 20.0, 30.0);
+
+    olp::core::Target t2;
+    t2.id = "target_gizmo_2";
+    t2.name = "T2";
+    t2.poseInUFrame = olp::core::Transform4d::fromTranslation(50.0, 60.0, 70.0);
+
+    op.targets.push_back(t1);
+    op.targets.push_back(t2);
+    prog.operations.push_back(op);
+    cu.programs.push_back(prog);
+    doc.controllers.push_back(cu);
+
+    olp::ui::OcctViewport viewport(doc, cmdMgr, &cad);
+
+    // 3. Test mounting gizmo to target_gizmo_1
+    const bool mountOk = viewport.setTargetGizmo("target_gizmo_1");
+    check(mountOk, "Mount TcpGizmo to target_gizmo_1");
+    check(viewport.activeTargetId() == "target_gizmo_1", "activeTargetId matches selected target");
+
+    // 4. Test reference frame switching
+    viewport.setGizmoReferenceFrame(olp::ui::GizmoRefFrame::World);
+    check(viewport.gizmoReferenceFrame() == olp::ui::GizmoRefFrame::World, "Gizmo reference frame switched to World");
+    viewport.setGizmoReferenceFrame(olp::ui::GizmoRefFrame::Tool);
+    check(viewport.gizmoReferenceFrame() == olp::ui::GizmoRefFrame::Tool, "Gizmo reference frame switched to Tool");
+
+    // 4b. Test Seam reference frame and in-place rotation
+    olp::core::SeamDefinition seam;
+    seam.id = "seam_gizmo";
+    olp::core::SeamSampleFrame sf0;
+    sf0.position = {110.0, 220.0, 330.0}; // world pos: (100,200,300) + (10,20,30)
+    sf0.frame = olp::core::Transform4d::fromTranslation(110.0, 220.0, 330.0);
+    sf0.frame.rot = olp::core::Mat3::rotZ(olp::core::deg2rad(45.0));
+    seam.sampledFrames.push_back(sf0);
+    doc.seams.push_back(seam);
+    doc.controllers[0].programs[0].operations[0].seamId = "seam_gizmo";
+
+    viewport.setTargetGizmo("target_gizmo_1");
+    viewport.setGizmoReferenceFrame(olp::ui::GizmoRefFrame::Seam);
+    check(viewport.gizmoReferenceFrame() == olp::ui::GizmoRefFrame::Seam, "Gizmo reference frame switched to Seam");
+
+    // 5. Test snap steps configuration
+    viewport.setGizmoSnapSteps(true, 5.0, 2.0);
+
+    // 6. Test interactive drag with zero document mutation
+    bool previewFired = false;
+    olp::ui::GizmoPreviewState lastPreview{};
+    viewport.tcpGizmo().setPreviewCallback([&](const olp::ui::GizmoPreviewState& st) {
+        previewFired = true;
+        lastPreview = st;
+    });
+
+    // In-place rotation in Seam frame: rotating torch angles must NOT cause position to jump or orbit
+    const auto initialPoseBeforeRot = doc.findTarget("target_gizmo_1")->poseInUFrame;
+    viewport.tcpGizmo().beginDrag({"target_gizmo_1"});
+    viewport.tcpGizmo().updateDragDelta(olp::core::Vec3(0.0, 0.0, 0.0), olp::core::Vec3(0.0, 10.0, 0.0));
+    check(std::abs(lastPreview.previewPoseInUFrame.pos.x - initialPoseBeforeRot.pos.x) < 1e-6 &&
+          std::abs(lastPreview.previewPoseInUFrame.pos.y - initialPoseBeforeRot.pos.y) < 1e-6 &&
+          std::abs(lastPreview.previewPoseInUFrame.pos.z - initialPoseBeforeRot.pos.z) < 1e-6,
+          "Rotation in Seam frame is in-place (zero orbital translation jump)");
+    check(lastPreview.previewPoseInUFrame.rot.angularDistanceRad(initialPoseBeforeRot.rot) > 0.1,
+          "Rotation in Seam frame modifies torch orientation");
+    viewport.tcpGizmo().cancelDrag();
+
+    // Switch back to Tool frame for linear drag test
+    viewport.setGizmoReferenceFrame(olp::ui::GizmoRefFrame::Tool);
+
+    const bool dragStarted = viewport.tcpGizmo().beginDrag({"target_gizmo_1"});
+    check(dragStarted && viewport.tcpGizmo().isDragging(), "TcpGizmo drag started");
+
+    viewport.tcpGizmo().updateDragDelta(olp::core::Vec3(15.0, 0.0, 0.0), olp::core::Vec3(0.0, 0.0, 0.0));
+    check(previewFired, "Gizmo drag triggers preview callback");
+    check(lastPreview.primaryTargetId == "target_gizmo_1", "Preview state matches primary target");
+
+    // Rule 3 verification: zero document mutation during drag
+    const auto* docTarget = doc.findTarget("target_gizmo_1");
+    check(docTarget != nullptr && std::abs(docTarget->poseInUFrame.pos.x - 10.0) < 1e-6,
+          "Zero document mutation during drag (target poseInUFrame remains initial)");
+    check(cmdMgr.undoCount() == 0, "No commands pushed during drag");
+
+    // Rule 4 verification: mouse release commits exactly 1 command
+    const bool committed = viewport.tcpGizmo().commitDrag();
+    check(committed, "Commit drag succeeds");
+    check(!viewport.tcpGizmo().isDragging(), "TcpGizmo isDragging is false after commit");
+    check(cmdMgr.undoCount() == 1, "Exactly 1 ModifyTargetPoseCommand committed to Undo stack");
+    check(std::abs(doc.findTarget("target_gizmo_1")->poseInUFrame.pos.x - 25.0) < 1e-6,
+          "Target poseInUFrame updated to new position (X = 25.0 mm)");
+
+    // Test Undo / Redo of gizmo drag
+    cmdMgr.undo();
+    check(std::abs(doc.findTarget("target_gizmo_1")->poseInUFrame.pos.x - 10.0) < 1e-6,
+          "Undo restores target initial pose (X = 10.0 mm)");
+    cmdMgr.redo();
+    check(std::abs(doc.findTarget("target_gizmo_1")->poseInUFrame.pos.x - 25.0) < 1e-6,
+          "Redo re-applies target modified pose (X = 25.0 mm)");
+
+    // 7. Test Esc cancellation restores pose with zero commands
+    viewport.tcpGizmo().beginDrag({"target_gizmo_1"});
+    viewport.tcpGizmo().updateDragDelta(olp::core::Vec3(100.0, 0.0, 0.0), olp::core::Vec3(0.0, 0.0, 0.0));
+    viewport.tcpGizmo().cancelDrag();
+    check(!viewport.tcpGizmo().isDragging(), "TcpGizmo isDragging is false after cancel");
+    check(cmdMgr.undoCount() == 1, "Undo stack untouched after cancelDrag");
+    check(std::abs(doc.findTarget("target_gizmo_1")->poseInUFrame.pos.x - 25.0) < 1e-6,
+          "Target pose unchanged after cancelDrag");
+
+    // 8. Test multi-selection drag (Rule 5: exactly 1 MacroCommand)
+    viewport.setMultiTargetProvider([&]() {
+        return std::vector<std::string>{"target_gizmo_1", "target_gizmo_2"};
+    });
+    viewport.tcpGizmo().beginDrag({"target_gizmo_1", "target_gizmo_2"});
+    viewport.tcpGizmo().updateDragDelta(olp::core::Vec3(0.0, 10.0, 0.0), olp::core::Vec3(0.0, 0.0, 0.0));
+    viewport.tcpGizmo().commitDrag();
+    check(cmdMgr.undoCount() == 2, "Multi-target drag commits exactly 1 MacroCommand");
+    check(std::abs(doc.findTarget("target_gizmo_1")->poseInUFrame.pos.y - 30.0) < 1e-6 &&
+          std::abs(doc.findTarget("target_gizmo_2")->poseInUFrame.pos.y - 70.0) < 1e-6,
+          "Both targets updated by drag delta (T1.Y = 30.0, T2.Y = 70.0)");
+
+    // Undo multi-target drag rolls back both targets together in 1 step
+    cmdMgr.undo();
+    check(std::abs(doc.findTarget("target_gizmo_1")->poseInUFrame.pos.y - 20.0) < 1e-6 &&
+          std::abs(doc.findTarget("target_gizmo_2")->poseInUFrame.pos.y - 60.0) < 1e-6,
+          "Undo multi-target MacroCommand rolls back both targets in 1 step");
+
+    // 9. Test clearing gizmo
+    viewport.clearTargetGizmo();
+    check(viewport.activeTargetId().empty(), "clearTargetGizmo clears activeTargetId");
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1298,6 +1449,7 @@ int main(int argc, char* argv[]) {
      testApproachTransitClearsWall();
      testMainWindowZones();
     testBRepMeshRenderingAndEdgePicking();
+    testTcpGizmoMountAndInteraction();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

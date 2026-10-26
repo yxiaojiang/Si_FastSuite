@@ -452,6 +452,35 @@ void ShellWindow::buildChrome() {
         controller_.selectSceneNode(nodeId.toStdString());
     });
 
+    viewport_->tcpGizmo().setPreviewCallback([this](const GizmoPreviewState& preview) {
+        const auto wpr = preview.previewPoseInUFrame.toWPR();
+        statusBar()->showMessage(QString::fromUtf8("Gizmo 微调中: %1 [X=%2, Y=%3, Z=%4, W=%5°, P=%6°, R=%7°]")
+            .arg(QString::fromStdString(preview.primaryTargetId))
+            .arg(wpr.x, 0, 'f', 1)
+            .arg(wpr.y, 0, 'f', 1)
+            .arg(wpr.z, 0, 'f', 1)
+            .arg(wpr.wDeg, 0, 'f', 1)
+            .arg(wpr.pDeg, 0, 'f', 1)
+            .arg(wpr.rDeg, 0, 'f', 1));
+    });
+
+    viewport_->setMultiTargetProvider([this]() -> std::vector<std::string> {
+        std::vector<std::string> ids;
+        if (targetTable_ != nullptr) {
+            const auto selectedItems = targetTable_->selectedItems();
+            std::set<std::string> uniqueIds;
+            for (auto* item : selectedItems) {
+                if (item != nullptr && item->column() == 0) {
+                    const std::string id = item->data(Qt::UserRole).toString().toStdString();
+                    if (!id.empty() && uniqueIds.insert(id).second) {
+                        ids.push_back(id);
+                    }
+                }
+            }
+        }
+        return ids;
+    });
+
     sceneTree_ = new QTreeWidget();
     sceneTree_->setHeaderLabels({QString::fromUtf8("名称"), QString::fromUtf8("类型"), QString::fromUtf8("角色")});
     sceneTree_->header()->setStretchLastSection(true);
@@ -851,7 +880,13 @@ void ShellWindow::fillIssues() {
 void ShellWindow::applySelection() {
     if (!controller_.selectedTargetId().empty()) {
         showPropertiesForTarget(QString::fromStdString(controller_.selectedTargetId()));
+        if (viewport_ != nullptr) {
+            viewport_->setTargetGizmo(controller_.selectedTargetId());
+        }
         return;
+    }
+    if (viewport_ != nullptr) {
+        viewport_->clearTargetGizmo();
     }
     if (!controller_.selectedSceneNodeId().empty()) {
         showPropertiesForScene(QString::fromStdString(controller_.selectedSceneNodeId()));

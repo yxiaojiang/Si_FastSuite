@@ -70,6 +70,17 @@ public:
     void syncScene();
     TcpGizmo& tcpGizmo() noexcept { return tcpGizmo_; }
 
+    bool setTargetGizmo(const std::string& targetId);
+    const std::string& activeTargetId() const noexcept { return activeTargetId_; }
+    void clearTargetGizmo();
+    void syncGizmoPosition();
+    void setGizmoReferenceFrame(GizmoRefFrame refFrame);
+    GizmoRefFrame gizmoReferenceFrame() const noexcept { return tcpGizmo_.referenceFrame(); }
+    void setGizmoSnapSteps(bool enabled, double linearStepMm = 1.0, double angularStepDeg = 1.0);
+    void setMultiTargetProvider(std::function<std::vector<std::string>()> provider) {
+        multiTargetProvider_ = std::move(provider);
+    }
+
     void setEdgePickedCallback(std::function<void(const PickedEdge&)> cb) { edgePickedCb_ = std::move(cb); }
     const std::optional<PickedEdge>& lastPickedEdge() const noexcept { return lastPickedEdge_; }
     void clearPickedEdge() noexcept { lastPickedEdge_.reset(); }
@@ -81,6 +92,7 @@ public:
 Q_SIGNALS:
     void edgePicked(const QString& nodeId, int cadHandleId, int edgeIndex);
     void sceneNodePicked(const QString& nodeId);
+    void targetGizmoChanged(const QString& targetId);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -90,6 +102,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 #endif
 
 private:
@@ -98,6 +111,9 @@ private:
     void redrawView();
     void updateSelectionModes();
     bool performPicking(int pixelX, int pixelY);
+    void setupTargetGizmoPresentation();
+    core::Transform4d computeActiveUFrameInWorld() const noexcept;
+    core::Transform4d findTargetSeamFrameWorld(const std::string& targetId) const;
 
     app::ProjectDocument& doc_;
     app::CommandManager& cmdMgr_;
@@ -107,6 +123,8 @@ private:
     TcpGizmo tcpGizmo_;
     std::unique_ptr<ViewState> view_;
     bool fitted_{false};
+    std::string activeTargetId_{};
+    std::function<std::vector<std::string>()> multiTargetProvider_{};
     std::optional<PickedEdge> lastPickedEdge_{};
     std::function<void(const PickedEdge&)> edgePickedCb_{};
 };

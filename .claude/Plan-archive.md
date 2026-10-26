@@ -1,5 +1,14 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-26：TcpGizmo（AIS_Manipulator）挂载与三维交互微调姿态
+
+1. **[DONE] TcpGizmo 挂载与视口交互。** 在 `OcctViewport` 中实现 `AIS_Manipulator` 挂载与三维手柄交互调姿，严格遵守 M03 五项设计原则：1. 通过专用黄色 4mm 球体视觉代理对象（`targetGizmoProxyAis`）挂载，绝不调用 `Attach()` 绑定底层文档数据；2. 支持 Tool、World、UFrame、Seam 四大参考坐标系无缝切换与步长吸附，计算真实局部坐标变换矩阵；针对焊缝模式消除轨道位移跳跃，实现原地姿态微调并按距离匹配最近采样帧；3. 拖拽过程中仅发射预览信号，零文档污染，Undo 栈保持干净；4. 鼠标松开提交单一 `ModifyTargetPoseCommand` 命令，零位移不入栈，Esc 键干净取消恢复初态；5. 多选路径点批量平移/旋转并打包压入单个 `MacroCommand`；6. 视口析构时前置 `clearTargetGizmo()` 确保 OCCT Handle 引用生命周期安全。新增自动化测试 Test 13（23 项断言），全部 103 项测试通过，`--verify` 退出码 0。
+2. **随后完成**：见下一活跃推进项。
+
+## 2026-10-26：真实零件 B-Rep 网格渲染与焊缝边拾取（Edge Picking）
+
+1. **[DONE] B-Rep 渲染与边拾取。** `OcctCadKernel` 在导入 STEP 时持久化保存各 Solid 的 `TopoDS_Shape` 与边拓扑序列 `edgeShapes_`。通过 `BRepMesh_IncrementalMesh` 生成精细三角网格与粗碰撞网格，结合 `BRepTools::Clean` 彻底消除粗细离散污染。视口直接读取真实 CAD 实体创建 `AIS_Shape`，工件 SteelBlue、夹具 Orange、机器人 GoldenRod，支持 `ShadedWithEdges`（黑边界线）。焊缝通过 `BRepBuilderAPI_MakePolygon` 生成青色三维亮线。激活 `TopAbs_EDGE` 选择模式，像素容差 5px，悬停高亮，4px 拖动解耦。通过 `SelectDetected()` 识别边，经剥离局部变换的拓扑与几何双重校验映射回 `edgeIndex`，以 4.0 像素品红色粗线高亮显示，发射 `edgePicked` 信号。实现 `CreateSeamFromPickedEdgeCommand` 撤销/重做命令（严格保证 clean/dirty 对称）。工具栏「拾取」按钮正式启用。新增自动化测试 Test 12，`olp_tests` 78 项全过，`--verify` 退出码 0。
+
 ## 2026-10-26：三维视口背景防黑屏物理隔离
 
 1. **[DONE] 视口背景防黑屏物理隔离。** Qt 6 Windows 平台忽略 `WA_PaintOnScreen`，在 `paintEvent`（OpenGL `SwapBuffers`）后 `QBackingStore::flush()` 会对 `OcctViewport` 执行全黑 `GDI BitBlt` 覆盖。现由 `OcctViewport` 内部建立专用 Win32 透传子窗口 `SiFastSuiteOcctRenderHost`（`WM_NCHITTEST -> HTTRANSPARENT`）承载 `WNT_Window`，配合父级 `WS_CLIPCHILDREN` 硬件裁剪与全局 `AA_DontCreateNativeWidgetSiblings`，彻底阻断 GDI 覆盖黑屏与停靠面板原生句柄传染。`olp_tests` 56 项全过，`--verify` 退出码 0。

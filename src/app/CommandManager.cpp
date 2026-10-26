@@ -18,6 +18,21 @@ core::Target* ProjectDocument::findTarget(const std::string& targetId) {
     return nullptr;
 }
 
+const core::Target* ProjectDocument::findTarget(const std::string& targetId) const {
+    for (const auto& cu : controllers) {
+        for (const auto& prog : cu.programs) {
+            for (const auto& op : prog.operations) {
+                for (const auto& t : op.targets) {
+                    if (t.id == targetId) {
+                        return &t;
+                    }
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
 core::Operation* ProjectDocument::findOperation(const std::string& operationId) {
     for (auto& cu : controllers) {
         for (auto& prog : cu.programs) {
@@ -31,10 +46,50 @@ core::Operation* ProjectDocument::findOperation(const std::string& operationId) 
     return nullptr;
 }
 
+const core::Operation* ProjectDocument::findOperation(const std::string& operationId) const {
+    for (const auto& cu : controllers) {
+        for (const auto& prog : cu.programs) {
+            for (const auto& op : prog.operations) {
+                if (op.id == operationId) {
+                    return &op;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
 core::SceneNode* ProjectDocument::findSceneNode(const std::string& nodeId) {
     for (auto& n : sceneNodes) {
         if (n.id == nodeId) {
             return &n;
+        }
+    }
+    return nullptr;
+}
+
+const core::SceneNode* ProjectDocument::findSceneNode(const std::string& nodeId) const {
+    for (const auto& n : sceneNodes) {
+        if (n.id == nodeId) {
+            return &n;
+        }
+    }
+    return nullptr;
+}
+
+core::SeamDefinition* ProjectDocument::findSeam(const std::string& seamId) {
+    for (auto& s : seams) {
+        if (s.id == seamId) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+
+const core::SeamDefinition* ProjectDocument::findSeam(const std::string& seamId) const {
+    for (const auto& s : seams) {
+        if (s.id == seamId) {
+            return &s;
         }
     }
     return nullptr;

@@ -18,8 +18,13 @@ public:
     bool isDirty{false};
 
     core::Target* findTarget(const std::string& targetId);
+    const core::Target* findTarget(const std::string& targetId) const;
     core::Operation* findOperation(const std::string& operationId);
+    const core::Operation* findOperation(const std::string& operationId) const;
     core::SceneNode* findSceneNode(const std::string& nodeId);
+    const core::SceneNode* findSceneNode(const std::string& nodeId) const;
+    core::SeamDefinition* findSeam(const std::string& seamId);
+    const core::SeamDefinition* findSeam(const std::string& seamId) const;
 };
 
 // M01: Abstract Command Interface (all document mutations MUST go through commands)

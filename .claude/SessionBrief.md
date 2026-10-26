@@ -6,40 +6,40 @@
 
 ## 1. 当前目标
 
-在 `OcctViewport` 中实现真实零件 B-Rep 网格渲染与工件焊缝边拾取（Edge Picking）已全部落地，经由独立审计员 Argon 深度代码审查（修复了局部变换下的边拓扑匹配、高亮位置同步、撤销重做状态对称性与离散净化）并通过 78 项自动化验证。下一步把 `TcpGizmo` 挂到视口画面上，实现选中 Target 时的三维手柄交互微调。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
+在 `OcctViewport` 中实现三维位姿交互手柄 `TcpGizmo`（基于 OCCT `AIS_Manipulator`）已全部落地，经由独立审计员 Argon 深度代码审查（修复了焊缝参考系局部变换双重叠加、姿态微调轨道跳跃、非线性焊缝采样帧匹配以及视口析构时的清理时序）并通过 103 项自动化验证。下一步推进 M07 焊缝定义深化：切线连续边链扩展（Edge Chain）与相交两侧面（Flank Faces）法向识别与角平分线姿态生成。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
 
 ## 2. 这轮已经落地的事实
 
-1. **真实零件 B-Rep 网格渲染与着色模式**：
-   - `OcctCadKernel` 在 `importStepWithOcct` 时持久化保存每个 Solid 的 `TopoDS_Shape` 与边拓扑序列 `edgeShapes_`。
-   - 实现真实 `tessellate()`，利用 OCCT `BRepMesh_IncrementalMesh`（配合 `BRepTools::Clean` 隔离粗细网格离散）生成精细渲染三角网格与粗碰撞网格，同步更新 `renderMesh`/`collisionMesh`，不再使用 12 三角面外包围盒占位。
-   - `OcctViewport::syncScene()` 改为直接读取零件真实 B-Rep 实体并创建 `AIS_Shape`，应用零件局部坐标系变化 `SetLocalTransformation`。
-   - 工件设为钢蓝色（SteelBlue）、夹具为橙色（Orange）、机器人为金黄色（GoldenRod），支持 `ShadedWithEdges`（黑边界线）、`Shaded` 与 `Wireframe` 模式。
-   - 场景中已生成的焊缝通过 `BRepBuilderAPI_MakePolygon` 以 3.0 像素青色亮线在视口三维空间直接绘制。
+1. **TcpGizmo 视口手柄挂载与视觉代理**：
+   - 遵循 M03 五项设计原则：`AIS_Manipulator` 绝不调用 `Attach()` 绑定底层文档数据，而是挂载在专用黄色 4mm 视觉球体代理（`targetGizmoProxyAis`）上，并通过 `Deactivate` 屏蔽选择冲突。
+   - `OcctViewport` 增加 `setTargetGizmo(targetId)`、`clearTargetGizmo()`、`syncGizmoPosition()`、`setGizmoReferenceFrame()` 与 `setGizmoSnapSteps()` 接口。
+   - 场景重绘 `syncScene()` 时自动维护手柄与视觉代理生命周期；视口析构 `~OcctViewport()` 前置清除代理，杜绝 OCCT 内部 Handle 悬挂引用。
 
-2. **工件焊缝边拾取（Edge Picking）**：
-   - `OcctViewport` 设置像素容差 5px，开启鼠标悬停动态预选高亮（`MoveTo`）。
-   - 在编程工作台或边拾取模式下，针对工件实体自动激活边选择模式（`TopAbs_EDGE`），区分单击与旋转拖拽操作。
-   - 单击拾取时通过 `SelectDetected()` 识别目标子形状，由 `OcctCadKernel::findEdgeIndex` 完成拓扑（`IsSame` 与剥离位置的拓扑同源 `IsPartner`）和局部几何双重校验映射回 `edgeIndex`，并以 4.0 像素品红色粗线在正确局部变换下实时高亮选中边。
-   - 触发 `edgePicked` 信号与回调，记录几何起点、终点、中点、切线和弧长，状态栏同步输出信息。
-   - 新增 `CreateSeamFromPickedEdgeCommand` 命令，实现从拾取边创建焊缝并在 Undo/Redo 栈上完整回滚与重做（保证 clean/dirty 对称）。
-   - 主窗口工具栏中的「拾取」按钮正式启用并联动视口边拾取模式。
+2. **多参考坐标系变换与无轨道跳跃微调**：
+   - 全面支持 Tool、World、UFrame、Seam 四种参考系平移与旋转微调，并支持线性与角度步长吸附（Snap）。
+   - 在焊缝参考系下，通过 `findTargetSeamFrameWorld` 动态匹配离目标点最近的几何采样帧并统一到局部坐标系；在 `TcpGizmo` 中彻底解耦位置与旋转变换，消除调整焊枪倾角时的轨道位移跳跃，确保围绕 TCP 原地微调姿态。
 
-3. **测试与运行状态**：
-   - `build-full` 下 `olp_tests.exe` 全部 78 项测试通过，退出码 0。
+3. **拖拽实时预览与单命令入栈**：
+   - 拖拽过程严格遵守零文档污染（Zero Document Mutation）：仅发出 `previewCallback_` 预览信号，`ProjectDocument` 与撤销栈完全不被污染；状态栏实时显示当前拖拽坐标与欧拉角姿态。
+   - 鼠标松开（MouseRelease）计算位移与角度变化，只有真正发生变化时才向 Undo 栈提交唯一定稿命令（单选为 `ModifyTargetPoseCommand`，多选通过 `multiTargetProvider_` 打包为 `MacroCommand`）；未移动不入栈；Esc 键干净取消拖拽并回滚初始状态。
+   - 主窗口 `ShellWindow` 属性区与路径点表格联动选中 Target，手柄随 Target 切换即时更新位置。
+
+4. **测试与运行状态**：
+   - 新增 Test 13 自动化测试（涵盖挂载、参考系切换、步长吸附、焊缝原地调姿无跳跃、拖拽零污染、单命令入栈、Esc 取消、多选宏命令及清理验证等 23 项断言）。
+   - `build-full` 下 `olp_tests.exe` 全部 103 项测试通过，退出码 0。
    - `SiFastSuiteOLP.exe --verify` 运行 5 个阶段完整通过，退出码 0。
 
 ## 3. 未关闭风险
 
 1. 耦合符号、圈数记在哪三个轴、法兰相对示教器的位姿，都没有真机或 ROBOGUIDE 对拍。用户决定先不装 ROBOGUIDE，继续开发，关节程序仍只能当草稿。
 2. 回退段对 `Workpiece_BoxWall_Front` 的间隙低于 5 mm，不挡退出码。
-3. 视口尚未将 `TcpGizmo`（AIS_Manipulator / 三维手柄）绘制到选中的路径点上。
-4. 客户实景和 3D PDF 五天熔断仍未开始。
+3. 客户实景和 3D PDF 五天熔断仍未开始。
 
 ## 4. 下一步
 
-1. 将 `TcpGizmo` 挂到视口画面上，选中路径点（Target）时显示位姿手柄，并在视口中支持平移/旋转微调与预览入栈。
-2. 真机到位后再核对 J2/J3。3D PDF 五天熔断仍未开始。
+1. 实现切线连续边链自动扩展（沿工件边链切线平滑连接多段边合并为单条复合焊缝，支持角度阈值配置）。
+2. 实现交接两侧面（Flank Faces）识别与双面夹角平分线计算，自动生成角焊缝法向基准姿态。
+3. 真机到位后再核对 J2/J3。3D PDF 五天熔断仍未开始。
 
 ## 5. 索引
 
