@@ -5,16 +5,23 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QDockWidget>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenuBar>
+#include <QPainter>
+#include <QPen>
+#include <QPixmap>
+#include <QPolygonF>
 #include <QPlainTextEdit>
 #include <QSlider>
 #include <QStatusBar>
 #include <QTableWidget>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -23,6 +30,159 @@
 
 namespace olp::ui {
 namespace {
+
+enum class IconKind {
+    New, Open, Save, Import, Sample,
+    Undo, Redo, Copy, Paste, Delete,
+    Layout, Program, Fit,
+    Pick, Path, Sim, Export
+};
+
+QIcon commandIcon(IconKind kind, const QColor& ink) {
+    QPixmap pix(32, 32);
+    pix.fill(Qt::transparent);
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(ink, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    switch (kind) {
+    case IconKind::New:
+        painter.drawRoundedRect(8, 6, 14, 18, 2, 2);
+        painter.drawLine(12, 14, 18, 14);
+        painter.drawLine(15, 11, 15, 17);
+        break;
+    case IconKind::Open:
+        painter.drawRect(7, 12, 18, 12);
+        painter.drawLine(7, 12, 12, 8);
+        painter.drawLine(12, 8, 20, 8);
+        painter.drawLine(20, 8, 20, 12);
+        break;
+    case IconKind::Save:
+        painter.drawRoundedRect(8, 6, 16, 18, 2, 2);
+        painter.drawRect(12, 6, 8, 6);
+        painter.drawLine(11, 18, 21, 18);
+        break;
+    case IconKind::Import:
+        painter.drawLine(16, 6, 16, 18);
+        painter.drawLine(11, 14, 16, 19);
+        painter.drawLine(21, 14, 16, 19);
+        painter.drawLine(8, 24, 24, 24);
+        break;
+    case IconKind::Sample:
+        painter.drawRect(8, 10, 16, 12);
+        painter.drawLine(8, 10, 16, 6);
+        painter.drawLine(24, 10, 16, 6);
+        break;
+    case IconKind::Undo:
+        painter.drawArc(10, 8, 12, 12, 30 * 16, 180 * 16);
+        painter.drawLine(10, 14, 6, 11);
+        painter.drawLine(10, 14, 8, 18);
+        break;
+    case IconKind::Redo:
+        painter.drawArc(10, 8, 12, 12, 0, 180 * 16);
+        painter.drawLine(22, 14, 26, 11);
+        painter.drawLine(22, 14, 24, 18);
+        break;
+    case IconKind::Copy:
+        painter.drawRect(12, 8, 12, 14);
+        painter.drawRect(8, 12, 12, 14);
+        break;
+    case IconKind::Paste:
+        painter.drawRoundedRect(9, 8, 14, 16, 2, 2);
+        painter.drawLine(12, 8, 12, 6);
+        painter.drawLine(12, 6, 20, 6);
+        painter.drawLine(20, 6, 20, 8);
+        break;
+    case IconKind::Delete:
+        painter.drawLine(10, 11, 22, 11);
+        painter.drawRect(11, 11, 10, 12);
+        painter.drawLine(14, 8, 18, 8);
+        break;
+    case IconKind::Layout:
+        painter.drawRect(7, 7, 8, 8);
+        painter.drawRect(17, 7, 8, 8);
+        painter.drawRect(7, 17, 8, 8);
+        painter.drawRect(17, 17, 8, 8);
+        break;
+    case IconKind::Program:
+        painter.drawEllipse(QPointF(9, 10), 2.5, 2.5);
+        painter.drawEllipse(QPointF(18, 16), 2.5, 2.5);
+        painter.drawEllipse(QPointF(24, 10), 2.5, 2.5);
+        painter.drawLine(11, 11, 16, 15);
+        painter.drawLine(20, 15, 22, 11);
+        break;
+    case IconKind::Fit:
+        painter.drawLine(7, 12, 7, 7);
+        painter.drawLine(7, 7, 12, 7);
+        painter.drawLine(20, 7, 25, 7);
+        painter.drawLine(25, 7, 25, 12);
+        painter.drawLine(25, 20, 25, 25);
+        painter.drawLine(25, 25, 20, 25);
+        painter.drawLine(12, 25, 7, 25);
+        painter.drawLine(7, 25, 7, 20);
+        break;
+    case IconKind::Pick:
+        painter.drawLine(10, 22, 16, 10);
+        painter.drawLine(16, 10, 22, 16);
+        painter.drawLine(14, 16, 18, 20);
+        break;
+    case IconKind::Path:
+        painter.drawLine(7, 22, 14, 12);
+        painter.drawLine(14, 12, 20, 18);
+        painter.drawLine(20, 18, 26, 8);
+        break;
+    case IconKind::Sim:
+        painter.drawPolygon(QPolygonF({QPointF(12, 8), QPointF(24, 16), QPointF(12, 24)}));
+        break;
+    case IconKind::Export:
+        painter.drawLine(16, 20, 16, 8);
+        painter.drawLine(11, 12, 16, 7);
+        painter.drawLine(21, 12, 16, 7);
+        painter.drawLine(8, 24, 24, 24);
+        break;
+    }
+    return QIcon(pix);
+}
+
+QAction* disabledAction(QWidget* owner, const QString& text, const QString& tip, IconKind kind, const QColor& ink) {
+    auto* action = new QAction(commandIcon(kind, ink), text, owner);
+    action->setToolTip(tip);
+    action->setStatusTip(tip);
+    action->setEnabled(false);
+    return action;
+}
+
+QWidget* commandGroup(QWidget* parent, const QString& title, const QList<QAction*>& actions) {
+    auto* group = new QWidget(parent);
+    auto* column = new QVBoxLayout(group);
+    column->setContentsMargins(8, 4, 8, 2);
+    column->setSpacing(1);
+    auto* row = new QHBoxLayout();
+    row->setSpacing(2);
+    for (auto* action : actions) {
+        auto* button = new QToolButton(group);
+        button->setDefaultAction(action);
+        button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        button->setIconSize(QSize(24, 24));
+        button->setAutoRaise(true);
+        button->setMinimumWidth(52);
+        row->addWidget(button);
+    }
+    auto* caption = new QLabel(title, group);
+    caption->setAlignment(Qt::AlignCenter);
+    caption->setStyleSheet(QString::fromUtf8("color: #5d6c78; font-size: 11px;"));
+    column->addLayout(row);
+    column->addWidget(caption);
+    return group;
+}
+
+QWidget* groupDivider(QWidget* parent) {
+    auto* line = new QFrame(parent);
+    line->setFrameShape(QFrame::VLine);
+    line->setStyleSheet(QString::fromUtf8("color: #c5d0d8;"));
+    line->setFixedWidth(8);
+    return line;
+}
 
 QString roleText(core::CollisionRole role) {
     switch (role) {
@@ -148,23 +308,48 @@ void ShellWindow::buildChrome() {
         "QMenuBar { background: #243746; color: #f2f5f7; }"
         "QMenuBar::item:selected { background: #3d5d78; }"
         "QMenu { background: #f7f9fb; color: #1c2830; }"
-        "QToolBar { background: #eef3f7; border: 0; spacing: 6px; padding: 4px; }"
-        "QToolButton { padding: 6px 12px; color: #1c2830; }"
-        "QToolButton:checked { background: #1f6f8b; color: white; border-radius: 3px; }"
+        "QToolBar { background: #f4f7fa; border: 0; border-bottom: 1px solid #d5dee6; spacing: 0; padding: 0; }"
+        "QToolButton { color: #1c2830; padding: 2px 4px; border: 1px solid transparent; border-radius: 4px; background: transparent; }"
+        "QToolButton:hover { background: #e5f1f7; }"
+        "QToolButton:checked { background: #d5edf6; color: #143644; border-color: #1f6f8b; }"
+        "QToolButton:disabled { color: #93a1ab; }"
         "QDockWidget::title { background: #2c4558; color: white; padding: 6px; }"
         "QStatusBar { background: #243746; color: #f2f5f7; }"
         "QTreeWidget, QTableWidget, QListWidget, QPlainTextEdit { background: #fbfcfd; color: #1c2830; }"
         "QHeaderView::section { background: #e4ebf1; padding: 4px; }"));
 
+    const QColor fileInk(31, 95, 148);
+    const QColor editInk(47, 79, 99);
+    const QColor benchInk(20, 122, 138);
+    const QColor viewInk(36, 122, 74);
+    const QColor pathInk(176, 96, 32);
+    const QString later = QString::fromUtf8("后续接入，现在还不能用。");
+
     auto* fileMenu = menuBar()->addMenu(QString::fromUtf8("文件"));
-    auto* loadAction = fileMenu->addAction(QString::fromUtf8("加载示例工位"));
+    auto* newAction = disabledAction(this, QString::fromUtf8("新建"), later, IconKind::New, fileInk);
+    auto* openAction = disabledAction(this, QString::fromUtf8("打开"), later, IconKind::Open, fileInk);
+    auto* saveAction = disabledAction(this, QString::fromUtf8("保存"), later, IconKind::Save, fileInk);
+    auto* importAction = disabledAction(this, QString::fromUtf8("导入"), later, IconKind::Import, fileInk);
+    auto* loadAction = fileMenu->addAction(commandIcon(IconKind::Sample, fileInk), QString::fromUtf8("加载示例工位"));
+    fileMenu->insertAction(loadAction, newAction);
+    fileMenu->insertAction(loadAction, openAction);
+    fileMenu->insertAction(loadAction, saveAction);
+    fileMenu->insertAction(loadAction, importAction);
+    loadAction->setToolTip(QString::fromUtf8("导入示例焊接工位并生成焊缝。"));
     connect(loadAction, &QAction::triggered, this, &ShellWindow::loadSample);
     fileMenu->addSeparator();
     fileMenu->addAction(QString::fromUtf8("退出"), this, &QWidget::close);
 
     auto* editMenu = menuBar()->addMenu(QString::fromUtf8("编辑"));
-    undoAction_ = editMenu->addAction(QString::fromUtf8("撤销"));
-    redoAction_ = editMenu->addAction(QString::fromUtf8("重做"));
+    undoAction_ = editMenu->addAction(commandIcon(IconKind::Undo, editInk), QString::fromUtf8("撤销"));
+    redoAction_ = editMenu->addAction(commandIcon(IconKind::Redo, editInk), QString::fromUtf8("重做"));
+    auto* copyAction = disabledAction(this, QString::fromUtf8("复制"), later, IconKind::Copy, editInk);
+    auto* pasteAction = disabledAction(this, QString::fromUtf8("粘贴"), later, IconKind::Paste, editInk);
+    auto* deleteAction = disabledAction(this, QString::fromUtf8("删除"), later, IconKind::Delete, editInk);
+    editMenu->addSeparator();
+    editMenu->addAction(copyAction);
+    editMenu->addAction(pasteAction);
+    editMenu->addAction(deleteAction);
     connect(undoAction_, &QAction::triggered, this, [this] {
         controller_.commandManager().undo();
         refreshFromDocument();
@@ -176,8 +361,12 @@ void ShellWindow::buildChrome() {
 
     auto* workbenchMenu = menuBar()->addMenu(QString::fromUtf8("工作台"));
     auto* workbenchGroup = new QActionGroup(this);
-    layoutAction_ = workbenchMenu->addAction(QString::fromUtf8("布局工作台"));
-    olpAction_ = workbenchMenu->addAction(QString::fromUtf8("编程工作台"));
+    layoutAction_ = workbenchMenu->addAction(commandIcon(IconKind::Layout, benchInk), QString::fromUtf8("布局工作台"));
+    olpAction_ = workbenchMenu->addAction(commandIcon(IconKind::Program, benchInk), QString::fromUtf8("编程工作台"));
+    layoutAction_->setIconText(QString::fromUtf8("布局"));
+    olpAction_->setIconText(QString::fromUtf8("编程"));
+    layoutAction_->setToolTip(QString::fromUtf8("布局工作台：看工位、装夹和坐标系。"));
+    olpAction_->setToolTip(QString::fromUtf8("编程工作台：看程序、路径点和问题。"));
     layoutAction_->setCheckable(true);
     olpAction_->setCheckable(true);
     workbenchGroup->addAction(layoutAction_);
@@ -192,22 +381,54 @@ void ShellWindow::buildChrome() {
                 "SiFastSuite OLP。左键旋转，中键或右键平移，滚轮向前拉近、向后拉远。"));
         });
 
-    auto* toolbar = addToolBar(QString::fromUtf8("主工具栏"));
-    toolbar->setMovable(false);
-    toolbar->addAction(loadAction);
-    toolbar->addSeparator();
-    toolbar->addAction(layoutAction_);
-    toolbar->addAction(olpAction_);
-    toolbar->addSeparator();
-    toolbar->addAction(undoAction_);
-    toolbar->addAction(redoAction_);
-    toolbar->addSeparator();
-    auto* fitAction = toolbar->addAction(QString::fromUtf8("整个工作台"));
+    auto* fitAction = new QAction(commandIcon(IconKind::Fit, viewInk), QString::fromUtf8("整个工作台"), this);
+    fitAction->setIconText(QString::fromUtf8("全景"));
+    fitAction->setToolTip(QString::fromUtf8("把整个工作台收进视口。"));
     connect(fitAction, &QAction::triggered, this, [this] {
         if (viewport_ != nullptr) {
             viewport_->fitAll();
         }
     });
+    viewMenu->addAction(fitAction);
+    auto* pickAction = disabledAction(this, QString::fromUtf8("拾取"), QString::fromUtf8("拾取焊缝边。") + later, IconKind::Pick, pathInk);
+    pickAction->setIconText(QString::fromUtf8("拾取"));
+    auto* pathAction = disabledAction(this, QString::fromUtf8("生成路径"), QString::fromUtf8("按焊缝生成路径。") + later, IconKind::Path, pathInk);
+    pathAction->setIconText(QString::fromUtf8("路径"));
+    auto* simAction = disabledAction(this, QString::fromUtf8("仿真"), QString::fromUtf8("播放机器人轨迹。") + later, IconKind::Sim, pathInk);
+    auto* exportAction = disabledAction(this, QString::fromUtf8("导出"), QString::fromUtf8("导出 FANUC 程序。") + later, IconKind::Export, pathInk);
+    loadAction->setIconText(QString::fromUtf8("示例"));
+    newAction->setIconText(QString::fromUtf8("新建"));
+    openAction->setIconText(QString::fromUtf8("打开"));
+    saveAction->setIconText(QString::fromUtf8("保存"));
+    importAction->setIconText(QString::fromUtf8("导入"));
+    undoAction_->setIconText(QString::fromUtf8("撤销"));
+    redoAction_->setIconText(QString::fromUtf8("重做"));
+    copyAction->setIconText(QString::fromUtf8("复制"));
+    pasteAction->setIconText(QString::fromUtf8("粘贴"));
+    deleteAction->setIconText(QString::fromUtf8("删除"));
+
+    auto* ribbon = new QWidget();
+    auto* ribbonLayout = new QHBoxLayout(ribbon);
+    ribbonLayout->setContentsMargins(4, 0, 4, 0);
+    ribbonLayout->setSpacing(0);
+    ribbonLayout->addWidget(commandGroup(ribbon, QString::fromUtf8("文件"),
+        {newAction, openAction, saveAction, importAction, loadAction}));
+    ribbonLayout->addWidget(groupDivider(ribbon));
+    ribbonLayout->addWidget(commandGroup(ribbon, QString::fromUtf8("编辑"),
+        {undoAction_, redoAction_, copyAction, pasteAction, deleteAction}));
+    ribbonLayout->addWidget(groupDivider(ribbon));
+    ribbonLayout->addWidget(commandGroup(ribbon, QString::fromUtf8("工作台"),
+        {layoutAction_, olpAction_}));
+    ribbonLayout->addWidget(groupDivider(ribbon));
+    ribbonLayout->addWidget(commandGroup(ribbon, QString::fromUtf8("编程"),
+        {pickAction, pathAction, simAction, exportAction}));
+    ribbonLayout->addWidget(groupDivider(ribbon));
+    ribbonLayout->addWidget(commandGroup(ribbon, QString::fromUtf8("视图"), {fitAction}));
+    ribbonLayout->addStretch(1);
+
+    auto* toolbar = addToolBar(QString::fromUtf8("主工具栏"));
+    toolbar->setMovable(false);
+    toolbar->addWidget(ribbon);
 
     viewport_ = new OcctViewport(controller_.document(), controller_.commandManager(), this);
     setCentralWidget(viewport_);

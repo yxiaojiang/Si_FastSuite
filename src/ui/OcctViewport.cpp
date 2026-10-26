@@ -7,7 +7,15 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPalette>
+#include <QTimer>
 #include <QWheelEvent>
+#endif
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #endif
 
 #include <algorithm>
@@ -52,10 +60,11 @@ OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMg
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
     setAttribute(Qt::WA_OpaquePaintEvent);
+    setAttribute(Qt::WA_NoMousePropagation);
     setBackgroundRole(QPalette::NoRole);
     setAutoFillBackground(false);
+    const QColor background(30, 34, 38);
     QPalette pal = palette();
-    const QColor background(18, 20, 23);
     pal.setColor(QPalette::Window, background);
     pal.setColor(QPalette::Base, background);
     setPalette(pal);
@@ -84,6 +93,7 @@ OcctViewport::~OcctViewport() = default;
 void OcctViewport::redrawView() {
 #ifdef OLP_HAS_OCCT
     if (view_ != nullptr && !view_->view.IsNull()) {
+        view_->view->MustBeResized();
         view_->view->Redraw();
     }
 #endif
@@ -194,7 +204,7 @@ void OcctViewport::ensureView() {
         if (!window->IsMapped()) {
             window->Map();
         }
-        view_->view->SetBackgroundColor(Quantity_Color(18.0 / 255.0, 20.0 / 255.0, 23.0 / 255.0, Quantity_TOC_RGB));
+        view_->view->SetBackgroundColor(Quantity_Color(30.0 / 255.0, 34.0 / 255.0, 38.0 / 255.0, Quantity_TOC_RGB));
         view_->view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_WHITE, 0.08, V3d_WIREFRAME);
         view_->view->MustBeResized();
         view_->view->SetProj(V3d_TypeOfOrientation_Zup_AxoRight);
@@ -233,18 +243,53 @@ void OcctViewport::paintEvent(QPaintEvent* event) {
     }
 #endif
     QPainter painter(this);
-    painter.fillRect(rect(), QColor(18, 20, 23));
+    painter.fillRect(rect(), QColor(30, 34, 38));
     (void)event;
+}
+
+bool OcctViewport::nativeEvent(const QByteArray& eventType, void* message, qintptr* result) {
+#if defined(_WIN32) && defined(OLP_HAS_OCCT)
+    if ((eventType == "windows_generic_MSG" || eventType == "windows_dispatcher_MSG")
+        && view_ && !view_->view.IsNull() && message != nullptr) {
+        auto* msg = static_cast<MSG*>(message);
+        if (msg->message == WM_ERASEBKGND) {
+            if (result != nullptr) {
+                *result = 1;
+            }
+            return true;
+        }
+        if (msg->message == WM_PAINT) {
+            PAINTSTRUCT paint{};
+            BeginPaint(msg->hwnd, &paint);
+            if (!painting_) {
+                painting_ = true;
+                view_->view->MustBeResized();
+                view_->view->Redraw();
+                painting_ = false;
+            }
+            EndPaint(msg->hwnd, &paint);
+            if (result != nullptr) {
+                *result = 0;
+            }
+            return true;
+        }
+    }
+#else
+    (void)eventType;
+    (void)message;
+    (void)result;
+#endif
+    return QWidget::nativeEvent(eventType, message, result);
 }
 
 void OcctViewport::focusInEvent(QFocusEvent* event) {
     QWidget::focusInEvent(event);
-    redrawView();
+    QTimer::singleShot(0, this, [this] { redrawView(); });
 }
 
 void OcctViewport::focusOutEvent(QFocusEvent* event) {
     QWidget::focusOutEvent(event);
-    redrawView();
+    QTimer::singleShot(0, this, [this] { redrawView(); });
 }
 
 void OcctViewport::mousePressEvent(QMouseEvent* event) {

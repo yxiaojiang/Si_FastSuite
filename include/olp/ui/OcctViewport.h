@@ -60,6 +60,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
     QPaintEngine* paintEngine() const override;
 #endif
 
@@ -74,6 +75,7 @@ private:
     TcpGizmo tcpGizmo_;
     std::unique_ptr<ViewState> view_;
     bool fitted_{false};
+    bool painting_{false};
 };
 
 } // namespace olp::ui
