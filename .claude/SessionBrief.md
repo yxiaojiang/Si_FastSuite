@@ -6,7 +6,7 @@
 
 ## 1. 当前目标
 
-四件曲面 STEP 已由 OpenCASCADE 导入。演示焊缝起点已沿焊缝收到 32 mm，焊枪离开 `Table_Clamp_Block_1`，角平分线没改。用户决定暂不装 ROBOGUIDE，耦合符号保持 +1 并继续标为待核。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
+用户已确认从主界面开始。分区骨架已经能打开。四件曲面 STEP 已由 OpenCASCADE 导入。演示焊缝起点已沿焊缝收到 32 mm，焊枪离开 `Table_Clamp_Block_1`，角平分线没改。用户决定暂不装 ROBOGUIDE，耦合符号保持 +1 并继续标为待核。完整排期见根目录 `Plan.md` 与 `Docs/OLP_System_Design_Claude.md`（v1.1）。
 
 ## 2. 这轮已经落地的事实
 
@@ -18,18 +18,18 @@
 
 J2/J3 耦合写在 URDF 关节空间，系数目前是正一。只动 J2、示教器 J3 保持零时，前臂绝对角应保持不变。圈数暂按 J1、J4、J6 记，发那科 `$TURN_AXIS` 常是 J4、J5、J6，这个对应未核。关节限位按 URDF 几何角检查。耦合后的 J3 用哪套限位也待核。
 
-`build-full` 的 `olp_tests` 四十四项通过。仓库自带的平面方盒整场景仍可导入，共十二个实体，没有「安装法兰过渡台」。默认 5 mm 起弧仍会让喷嘴球吃进夹具约 9 mm；`extendStartTrimUntilTorchClears` 把起点收到 32 mm 后，安全间隙 5 mm 满足，主程序退出码是 0。文件写到 `build/`。焊丝尖端只豁免本焊缝两块母材，并且只在十毫米半径内。仿真只写 `TargetCache`。无效逆解和圆弧运动不会写成 `.ls`。HTML 仍是二维 TCP 折线。`build-full` 是本地构建目录，不进仓库。下载脚本 `C:\vcpkg\vcpkg\olp-download.ps1` 也不在仓库里。
+`build-full` 的 `olp_tests` 五十六项通过，主程序退出码 0。仓库自带的平面方盒整场景仍可导入，共十二个实体，没有「安装法兰过渡台」。默认 5 mm 起弧仍会让喷嘴球吃进夹具约 9 mm；`extendStartTrimUntilTorchClears` 把起点收到 32 mm 后，目标点的安全间隙 5 mm 满足。插补采样查焊枪球。零位到接近点不再走一条关节运动：`insertSafeTransitBeforeApproach` 在接近点正上方插入直线点 `CLEARANCE_1`，再直线下降，焊枪不再扫过 `Workpiece_BoxWall_Front`。回退段对这块板的间隙仍低于 5 mm，没有吃进，不挡退出码。`.ls` 里这两点都是 `L`、200 mm/s。文件写到 `build/`。焊丝尖端只豁免本焊缝两块母材，并且只在十毫米半径内。仿真只写 `TargetCache`。无效逆解和圆弧运动不会写成 `.ls`。HTML 仍是二维 TCP 折线。直接运行 `SiFastSuiteOLP.exe` 会打开主窗口并加载示例工位；`--verify` 仍是无窗口校验。窗口有布局工作台和编程工作台，停靠区是场景、程序、路径点、属性、关节点动、问题。中间三维区仍是占位，不能旋转或拾取。点动只显示角度，不写入程序。`build-full` 是本地构建目录，不进仓库。下载脚本 `C:\vcpkg\vcpkg\olp-download.ps1` 也不在仓库里。
 
 ## 3. 未关闭风险
 
 1. 耦合符号、圈数记在哪三个轴、法兰相对示教器的位姿，都没有真机或 ROBOGUIDE 对拍。用户决定先不装 ROBOGUIDE，继续开发，关节程序仍只能当草稿。
-2. 插补过程中的焊枪扫掠还没做碰撞检查，目前只查目标点。客户实景和 3D PDF 五天熔断都没开始。
+2. 回退段对 `Workpiece_BoxWall_Front` 的间隙低于 5 mm，不挡退出码。三维视口还没接上，客户实景和 3D PDF 五天熔断都没开始。
 3. 算法层不得依赖 Qt。改文档走 `CommandManager`。肩部奇异是几何代理。FANUC 世界原点未对真机。
 
 ## 4. 下一步
 
-1. 给插补中的焊枪扫掠补碰撞检查。现在只查目标点。
-2. 视口和 3D PDF 仍先不做。真机到位后再核对 J2/J3。
+1. 按 `.claude/contexts/steps/ui.md` 第 4、5 条接视口。场景树和点动两个工作台都留着，编程台只额外显示程序树和「路径点 | 问题」。`OcctViewport` 归窗口壳，不放进 `MainWindow`。先做旋转、平移、缩放和适应窗口。
+2. 真机到位后再核对 J2/J3。3D PDF 五天熔断仍未开始。
 
 ## 5. 索引
 

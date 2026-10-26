@@ -126,7 +126,14 @@ add_library(olp_ui STATIC
     src/ui/TcpGizmo.cpp
     src/ui/OcctViewport.cpp
     src/ui/MainWindow.cpp
+    src/ui/SampleSession.cpp
 )
+if(Qt6_FOUND)
+    target_sources(olp_ui PRIVATE
+        src/ui/ShellWindow.cpp
+        include/olp/ui/ShellWindow.h
+    )
+endif()
 target_include_directories(olp_ui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
@@ -158,5 +165,9 @@ if(OLP_BUILD_TESTS)
         tests/test_main.cpp
     )
     target_link_libraries(olp_tests PRIVATE olp_ui)
+    if(Qt6_FOUND)
+        get_filename_component(OLP_QT_ROOT "${Qt6_DIR}/../../.." ABSOLUTE)
+        target_compile_definitions(olp_tests PRIVATE "OLP_QT_PLUGINS=\"${OLP_QT_ROOT}/plugins\"")
+    endif()
     add_test(NAME SiFastSuiteOLP_AllTests COMMAND olp_tests)
 endif()

@@ -1,7 +1,9 @@
 #include "olp/algo/CollisionAndSim.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <string>
 
 namespace olp::algo {
 
@@ -89,9 +91,7 @@ bool CollisionAndSimEngine::checkTorchPoseCollision(
 
             if (dist < outMinClearanceMm) {
                 outMinClearanceMm = dist;
-                if (dist <= 0.0) {
-                    outCollidingPartName = node.name;
-                }
+                outCollidingPartName = node.name;
             }
         }
     }
@@ -259,10 +259,13 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
             const int numSteps = std::max(2, static_cast<int>( std::ceil(segDuration / sampleStepSec) ));
             std::array<double, 6> prevStepJoints = currentJoints;
             bool postedSegmentIssue = false;
+            bool postedSweepIssue = false;
 
             for (int step = 1; step <= numSteps; ++step) {
                 const double alpha = static_cast<double>(step) / static_cast<double>(numSteps);
                 std::array<double, 6> interpJoints{};
+                bool sampleIsCommanded = true;
+                core::Transform4d sampleWorld = targetWorld;
 
                 if (target.motion == core::MotionType::J) {
                     for (size_t k = 0; k < 6; ++k) {
@@ -270,14 +273,14 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
                     }
                 } else {
                     // Section 6.3: Linear Cartesian interpolation + SLERP with configuration consistency check
-                    const core::Transform4d interpWorld =
-                        core::Transform4d::interpolateSlerp(currentTcpWorld, targetWorld, alpha);
-                    const core::Transform4d interpBase = worldToBase * interpWorld;
+                    sampleWorld = core::Transform4d::interpolateSlerp(currentTcpWorld, targetWorld, alpha);
+                    const core::Transform4d interpBase = worldToBase * sampleWorld;
                     const auto stepSols = kinematics_.inverseKinematics(interpBase, utoolOffset, false);
                     const auto stepChosen = kinematics_.selectBestSolution(
                         stepSols, prevStepJoints, chosen->config, true);
 
                     if (!stepChosen.has_value()) {
+                        sampleIsCommanded = false;
                         sim.hasConfigJumpInLinear = true;
                         interpJoints = chosen->jointsRad;
                         if (!postedSegmentIssue) {
@@ -312,6 +315,30 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
 
                 prevStepJoints = interpJoints;
                 const auto fk = kinematics_.forwardKinematics(interpJoints, utoolOffset);
+                const core::Transform4d fkTcpWorld = robotBaseInWorld * fk.tcpPoseInBase;
+                if (target.motion == core::MotionType::J) {
+                    sampleWorld = fkTcpWorld;
+                }
+
+                // The last sample is the target pose, already checked above.
+                if (sampleIsCommanded && step < numSteps && !postedSweepIssue) {
+                    double sweepClearance = 0.0;
+                    std::string sweepHit;
+                    const bool sweepCollided = checkTorchPoseCollision(
+                        sampleWorld, sceneNodes, op.targetWorkpieceId, isWeldRole,
+                        sweepClearance, sweepHit, op.exemptionPartIds);
+                    if (sweepCollided || sweepClearance < settings_.collisionSafeClearanceMm) {
+                        postedSweepIssue = true;
+                        const bool hardHit = sweepCollided;
+                        sim.issues.push_back({
+                            inOutProgram.id, op.id, target.id, target.name,
+                            hardHit ? core::TargetValidationState::Collision
+                                    : core::TargetValidationState::NearCollision,
+                            hardHit ? ("Sweep collides with " + sweepHit)
+                                    : ("Sweep clearance below safe distance (" + sweepHit + ")")
+                        });
+                    }
+                }
 
                 BakedFrame frame;
                 frame.timeSec = currentTime + alpha * segDuration;
@@ -319,7 +346,7 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
                 for (size_t k = 0; k < 7; ++k) {
                     frame.linkWorldTransforms[k] = robotBaseInWorld * fk.linkTransforms[k];
                 }
-                frame.tcpWorldPos = (robotBaseInWorld * fk.tcpPoseInBase).pos;
+                frame.tcpWorldPos = fkTcpWorld.pos;
                 frame.arcActive = arcOn;
                 sim.frames.push_back(frame);
             }
@@ -381,6 +408,382 @@ OperationTorchClearance CollisionAndSimEngine::measureOperationTorchClearance(
     }
     out.meetsSafeDistance = out.minClearanceMm >= settings_.collisionSafeClearanceMm;
     return out;
+}
+
+namespace {
+
+struct TorchSphereSpec {
+    double offsetAlongNegZMm;
+    double radiusMm;
+};
+
+constexpr std::array<TorchSphereSpec, 4> kTorchSpheres{{
+    {0.0, 2.0},
+    {45.0, 16.0},
+    {95.0, 22.0},
+    {150.0, 25.0}
+}};
+
+double lowestSphereBelowTcp(const core::Transform4d& tcpWorld) noexcept {
+    const core::Vec3 retreatDir = -tcpWorld.rot.colZ();
+    double lowest = 0.0;
+    for (const auto& sph : kTorchSpheres) {
+        lowest = std::min(lowest, retreatDir.z * sph.offsetAlongNegZMm - sph.radiusMm);
+    }
+    return lowest;
+}
+
+core::Vec3 horizontalUnit(const core::Vec3& dir, const core::Vec3& fallback) noexcept {
+    core::Vec3 flat{dir.x, dir.y, 0.0};
+    if (flat.norm() < 1e-6) {
+        flat = {fallback.x, fallback.y, 0.0};
+    }
+    if (flat.norm() < 1e-6) {
+        flat = {1.0, 0.0, 0.0};
+    }
+    return flat.normalized();
+}
+
+} // namespace
+
+CollisionAndSimEngine::TransitProbeKind CollisionAndSimEngine::probeTorchTransit(
+    const std::array<double, 6>& startJoints,
+    const core::Transform4d& startTcpWorld,
+    const core::Transform4d& endWorld,
+    core::MotionType motion,
+    double speedValue,
+    const core::Transform4d& robotBaseInWorld,
+    const core::Transform4d& utoolOffset,
+    const std::vector<core::SceneNode>& sceneNodes,
+    const std::string& activeWorkpieceId,
+    const std::vector<std::string>& exemptionPartIds,
+    double sampleStepSec,
+    std::array<double, 6>& outEndJoints) const {
+    const core::Transform4d worldToBase = robotBaseInWorld.inverse();
+    const auto ikCandidates = kinematics_.inverseKinematics(worldToBase * endWorld, utoolOffset, false);
+    const auto chosen = kinematics_.selectBestSolution(
+        ikCandidates, startJoints, std::nullopt, true);
+    if (!chosen.has_value()) {
+        return TransitProbeKind::Blocked;
+    }
+    outEndJoints = chosen->jointsRad;
+
+    double endClearance = 0.0;
+    std::string endHit;
+    const bool endHits = checkTorchPoseCollision(
+        endWorld, sceneNodes, activeWorkpieceId, false, endClearance, endHit, exemptionPartIds);
+    if (endHits) {
+        return TransitProbeKind::Blocked;
+    }
+
+    double segDuration = 0.5;
+    if (motion == core::MotionType::L) {
+        const double distMm = (endWorld.pos - startTcpWorld.pos).norm();
+        const double spd = std::max(1.0, speedValue);
+        segDuration = std::max(0.1, distMm / spd);
+    } else {
+        const double jDist = OpwKinematics::weightedJointDistance(startJoints, chosen->jointsRad);
+        segDuration = std::max(0.2, jDist / 1.5);
+    }
+    const double stepSec = std::max(1e-3, sampleStepSec);
+    const int numSteps = std::max(2, static_cast<int>(std::ceil(segDuration / stepSec)));
+
+    bool near = endClearance < settings_.collisionSafeClearanceMm;
+    std::array<double, 6> prevStepJoints = startJoints;
+    for (int step = 1; step < numSteps; ++step) {
+        const double alpha = static_cast<double>(step) / static_cast<double>(numSteps);
+        core::Transform4d sampleWorld = endWorld;
+        std::array<double, 6> interpJoints{};
+
+        if (motion == core::MotionType::J) {
+            for (size_t k = 0; k < 6; ++k) {
+                interpJoints[k] = startJoints[k] + alpha * (chosen->jointsRad[k] - startJoints[k]);
+            }
+        } else {
+            sampleWorld = core::Transform4d::interpolateSlerp(startTcpWorld, endWorld, alpha);
+            const auto stepSols = kinematics_.inverseKinematics(worldToBase * sampleWorld, utoolOffset, false);
+            const auto stepChosen = kinematics_.selectBestSolution(
+                stepSols, prevStepJoints, chosen->config, true);
+            if (!stepChosen.has_value()) {
+                return TransitProbeKind::Blocked;
+            }
+            double maxStep = 0.0;
+            for (size_t k = 0; k < 6; ++k) {
+                maxStep = std::max(
+                    maxStep,
+                    std::abs(core::normalizeAngleRad(stepChosen->jointsRad[k] - prevStepJoints[k])));
+            }
+            if (maxStep > core::deg2rad(15.0)) {
+                return TransitProbeKind::Blocked;
+            }
+            interpJoints = stepChosen->jointsRad;
+        }
+
+        prevStepJoints = interpJoints;
+        if (motion == core::MotionType::J) {
+            const auto fk = kinematics_.forwardKinematics(interpJoints, utoolOffset);
+            sampleWorld = robotBaseInWorld * fk.tcpPoseInBase;
+        }
+
+        double sweepClearance = 0.0;
+        std::string sweepHit;
+        const bool sweepHits = checkTorchPoseCollision(
+            sampleWorld, sceneNodes, activeWorkpieceId, false,
+            sweepClearance, sweepHit, exemptionPartIds);
+        if (sweepHits) {
+            return TransitProbeKind::Blocked;
+        }
+        if (sweepClearance < settings_.collisionSafeClearanceMm) {
+            near = true;
+        }
+    }
+    return near ? TransitProbeKind::Near : TransitProbeKind::Clear;
+}
+
+bool CollisionAndSimEngine::insertSafeTransitBeforeApproach(
+    core::Program& inOutProgram,
+    const core::Transform4d& robotBaseInWorld,
+    const core::Transform4d& uframeInWorld,
+    const core::Transform4d& utoolOffset,
+    const std::vector<core::SceneNode>& sceneNodes,
+    double sampleStepSec) const {
+    if (inOutProgram.operations.empty()) {
+        return true;
+    }
+    core::Operation* approachOp = nullptr;
+    int approachIndex = -1;
+    for (auto& op : inOutProgram.operations) {
+        if (!op.enabled) {
+            continue;
+        }
+        for (int i = 0; i < static_cast<int>(op.targets.size()); ++i) {
+            if (op.targets[static_cast<size_t>(i)].role == core::TargetRole::APPROACH) {
+                approachOp = &op;
+                approachIndex = i;
+                break;
+            }
+        }
+        if (approachOp != nullptr) {
+            break;
+        }
+    }
+    if (approachOp == nullptr || approachIndex < 0) {
+        return true;
+    }
+    for (int i = 0; i < approachIndex; ++i) {
+        const std::string& name = approachOp->targets[static_cast<size_t>(i)].name;
+        if (name.rfind("CLEARANCE_", 0) != 0) {
+            return false;
+        }
+    }
+
+    const double stepSec = std::max(1e-3, sampleStepSec);
+    const std::array<double, 6> homeJoints = inOutProgram.startState.homeJointsRad;
+    core::Transform4d tcp =
+        robotBaseInWorld * kinematics_.forwardKinematics(homeJoints, utoolOffset).tcpPoseInBase;
+    std::array<double, 6> joints = homeJoints;
+    bool chainBlocked = false;
+    for (int i = 0; i <= approachIndex; ++i) {
+        const auto& target = approachOp->targets[static_cast<size_t>(i)];
+        const core::Transform4d world = uframeInWorld * target.poseInUFrame;
+        std::array<double, 6> endJoints{};
+        const auto kind = probeTorchTransit(
+            joints, tcp, world, target.motion, target.speedValue,
+            robotBaseInWorld, utoolOffset, sceneNodes,
+            approachOp->targetWorkpieceId, approachOp->exemptionPartIds,
+            stepSec, endJoints);
+        if (kind == TransitProbeKind::Blocked) {
+            chainBlocked = true;
+            break;
+        }
+        joints = endJoints;
+        tcp = world;
+    }
+    if (!chainBlocked) {
+        return true;
+    }
+
+    const core::Transform4d homeTcp =
+        robotBaseInWorld * kinematics_.forwardKinematics(homeJoints, utoolOffset).tcpPoseInBase;
+    const core::Transform4d approachWorld =
+        uframeInWorld * approachOp->targets[static_cast<size_t>(approachIndex)].poseInUFrame;
+
+    double partTop = homeTcp.pos.z;
+    for (const auto& node : sceneNodes) {
+        if (!node.visible || node.type != core::SceneNodeType::Part) {
+            continue;
+        }
+        if (node.collisionRole == core::CollisionRole::Ignored ||
+            node.collisionRole == core::CollisionRole::Environment) {
+            continue;
+        }
+        partTop = std::max(partTop, node.collisionMesh.bboxMax.z);
+    }
+    const double hang = std::min(lowestSphereBelowTcp(homeTcp), lowestSphereBelowTcp(approachWorld));
+    const double safeZ = partTop - hang + settings_.collisionSafeClearanceMm + 25.0;
+    const double floorZ = std::max(homeTcp.pos.z, std::max(approachWorld.pos.z, safeZ));
+    const core::Vec3 retreat = horizontalUnit(-approachWorld.rot.colZ(), -homeTcp.rot.colZ());
+
+    struct TransitPoint {
+        core::Transform4d world{};
+        core::MotionType motion{core::MotionType::L};
+        double speed{200.0};
+        bool isApproach{false};
+    };
+    std::vector<TransitPoint> chosen;
+    auto tryPath = [&](std::vector<TransitPoint> points) -> bool {
+        if (points.empty() || !points.back().isApproach) {
+            return false;
+        }
+        std::array<double, 6> cursorJoints = homeJoints;
+        core::Transform4d cursorTcp = homeTcp;
+        for (const auto& pt : points) {
+            std::array<double, 6> endJoints{};
+            const auto kind = probeTorchTransit(
+                cursorJoints, cursorTcp, pt.world, pt.motion, pt.speed,
+                robotBaseInWorld, utoolOffset, sceneNodes,
+                approachOp->targetWorkpieceId, approachOp->exemptionPartIds,
+                stepSec, endJoints);
+            if (kind == TransitProbeKind::Blocked) {
+                return false;
+            }
+            cursorJoints = endJoints;
+            cursorTcp = pt.world;
+        }
+        chosen = std::move(points);
+        return true;
+    };
+
+    TransitPoint approachStep;
+    approachStep.world = approachWorld;
+    approachStep.motion = core::MotionType::L;
+    approachStep.speed = 200.0;
+    approachStep.isApproach = true;
+    if (tryPath({approachStep})) {
+        chosen = std::vector<TransitPoint>{approachStep};
+    }
+
+    const double lifts[] = {0.0, 200.0, 450.0, 800.0};
+    const double retreats[] = {0.0, 120.0, 280.0};
+    auto makePose = [](const core::Vec3& pos, const core::Mat3& rot) {
+        core::Transform4d pose;
+        pose.pos = pos;
+        pose.rot = rot;
+        return pose;
+    };
+    if (chosen.empty()) {
+        for (double extra : lifts) {
+            const double z = floorZ + extra;
+            for (double retreatDist : retreats) {
+                const core::Vec3 xy = approachWorld.pos + retreat * retreatDist;
+                if ((core::Vec3{xy.x, xy.y, z} - approachWorld.pos).norm() < 5.0) {
+                    continue;
+                }
+                TransitPoint via;
+                via.speed = 200.0;
+                via.motion = core::MotionType::L;
+                via.world = makePose({xy.x, xy.y, z}, approachWorld.rot);
+                if (tryPath({via, approachStep})) {
+                    break;
+                }
+                via.world = makePose({xy.x, xy.y, z}, homeTcp.rot);
+                if (tryPath({via, approachStep})) {
+                    break;
+                }
+            }
+            if (!chosen.empty()) {
+                break;
+            }
+
+            std::vector<TransitPoint> lifted;
+            TransitPoint hover;
+            hover.world = makePose({homeTcp.pos.x, homeTcp.pos.y, z}, homeTcp.rot);
+            hover.motion = core::MotionType::L;
+            hover.speed = 200.0;
+            if ((hover.world.pos - homeTcp.pos).norm() >= 5.0) {
+                lifted.push_back(hover);
+            }
+            TransitPoint cruise;
+            cruise.world = makePose({approachWorld.pos.x, approachWorld.pos.y, z}, approachWorld.rot);
+            cruise.motion = core::MotionType::L;
+            cruise.speed = 200.0;
+            if ((cruise.world.pos - approachWorld.pos).norm() >= 5.0) {
+                lifted.push_back(cruise);
+            }
+            lifted.push_back(approachStep);
+            if (tryPath(lifted)) {
+                break;
+            }
+
+            const core::Vec3 parked = approachWorld.pos + retreat * 200.0;
+            TransitPoint park;
+            park.world = makePose({parked.x, parked.y, z}, approachWorld.rot);
+            park.motion = core::MotionType::L;
+            park.speed = 200.0;
+            std::vector<TransitPoint> parkedPath;
+            if ((hover.world.pos - homeTcp.pos).norm() >= 5.0) {
+                parkedPath.push_back(hover);
+            }
+            if ((park.world.pos - approachWorld.pos).norm() >= 5.0) {
+                parkedPath.push_back(park);
+            }
+            if ((cruise.world.pos - approachWorld.pos).norm() >= 5.0 &&
+                (cruise.world.pos - park.world.pos).norm() >= 5.0) {
+                parkedPath.push_back(cruise);
+            }
+            parkedPath.push_back(approachStep);
+            if (tryPath(parkedPath)) {
+                break;
+            }
+        }
+    }
+    if (chosen.empty()) {
+        for (double extra : lifts) {
+            const double z = floorZ + extra;
+            if ((core::Vec3{approachWorld.pos.x, approachWorld.pos.y, z} - approachWorld.pos).norm() < 5.0) {
+                continue;
+            }
+            TransitPoint via;
+            via.world = makePose(
+                {approachWorld.pos.x, approachWorld.pos.y, z}, approachWorld.rot);
+            via.motion = core::MotionType::J;
+            via.speed = 50.0;
+            if (tryPath({via, approachStep})) {
+                break;
+            }
+        }
+    }
+    if (chosen.empty()) {
+        return false;
+    }
+
+    core::Target approach = approachOp->targets[static_cast<size_t>(approachIndex)];
+    std::vector<core::Target> rebuilt;
+    rebuilt.reserve(approachOp->targets.size() + chosen.size());
+    int ordinal = 1;
+    for (const auto& pt : chosen) {
+        if (pt.isApproach) {
+            approach.motion = pt.motion;
+            approach.speedValue = pt.speed;
+            rebuilt.push_back(approach);
+            continue;
+        }
+        core::Target via;
+        via.id = approachOp->id + "_T_CLEARANCE_" + std::to_string(ordinal);
+        via.name = "CLEARANCE_" + std::to_string(ordinal);
+        via.role = core::TargetRole::VIA;
+        via.motion = pt.motion;
+        via.speedValue = pt.speed;
+        via.termination = core::TerminationType::FINE;
+        via.poseInUFrame = uframeInWorld.inverse() * pt.world;
+        rebuilt.push_back(std::move(via));
+        ++ordinal;
+    }
+    for (size_t i = static_cast<size_t>(approachIndex) + 1; i < approachOp->targets.size(); ++i) {
+        rebuilt.push_back(approachOp->targets[i]);
+    }
+    approachOp->targets = std::move(rebuilt);
+    return true;
 }
 
 } // namespace olp::algo

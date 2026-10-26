@@ -8,6 +8,12 @@
 #include "olp/io/FanucLsPostProcessor.h"
 #include "olp/ui/MainWindow.h"
 
+#ifdef OLP_HAS_QT6
+#include "olp/ui/ShellWindow.h"
+#include <QApplication>
+#include <QStringList>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -915,6 +921,237 @@ void testPathEditsAndCommandGates() {
           ") uframe=(" + std::to_string(uframePreview.x) + "," + std::to_string(uframePreview.y) + ")");
 }
 
+void testSweepCollisionBetweenClearTargets() {
+    std::cout << "\n--- Test 9: Torch sweep collision between clear targets ---\n";
+    const auto robot = olp::device::RobotModel::createFanucM10iA();
+    olp::algo::OpwKinematics kin(robot);
+    olp::core::UnitsSettings settings;
+    olp::algo::CollisionAndSimEngine engine(kin, settings);
+    const auto utool = olp::core::Transform4d::identity();
+    const auto home = robot.homeJointsRad;
+    auto endJoints = home;
+    endJoints[0] += 0.4;
+
+    const double jDist = olp::algo::OpwKinematics::weightedJointDistance(home, endJoints);
+    const double sampleStep = 0.05;
+    const double segDuration = std::max(0.2, jDist / 1.5);
+    const int numSteps = std::max(2, static_cast<int>(std::ceil(segDuration / sampleStep)));
+    const int midStep = std::max(1, numSteps / 2);
+    const double alpha = static_cast<double>(midStep) / static_cast<double>(numSteps);
+    std::array<double, 6> midJoints{};
+    for (size_t k = 0; k < 6; ++k) {
+        midJoints[k] = home[k] + alpha * (endJoints[k] - home[k]);
+    }
+    const auto midTcp = kin.forwardKinematics(midJoints, utool).tcpPoseInBase;
+    const olp::core::Vec3 gateCenter = midTcp.pos + (-midTcp.rot.colZ()) * 95.0;
+    constexpr double half = 6.0;
+
+    olp::core::SceneNode gate;
+    gate.id = "sweep_gate";
+    gate.name = "Sweep_Gate";
+    gate.type = olp::core::SceneNodeType::Part;
+    gate.visible = true;
+    gate.collisionRole = olp::core::CollisionRole::Fixture;
+    gate.collisionMesh.bboxMin = gateCenter - olp::core::Vec3{half, half, half};
+    gate.collisionMesh.bboxMax = gateCenter + olp::core::Vec3{half, half, half};
+    const std::vector<olp::core::SceneNode> scene{gate};
+
+    const auto startTcp = kin.forwardKinematics(home, utool).tcpPoseInBase;
+    const auto endTcp = kin.forwardKinematics(endJoints, utool).tcpPoseInBase;
+    double startClearance = 0.0;
+    double endClearance = 0.0;
+    std::string startHit;
+    std::string endHit;
+    const bool startHits = engine.checkTorchPoseCollision(
+        startTcp, scene, "", false, startClearance, startHit);
+    const bool endHits = engine.checkTorchPoseCollision(
+        endTcp, scene, "", false, endClearance, endHit);
+    check(!startHits && !endHits,
+          "Sweep gate misses both ends of the joint move",
+          "start=" + std::to_string(startClearance) + " end=" + std::to_string(endClearance));
+
+    olp::core::Program program;
+    program.id = "prog_sweep";
+    program.startState.homeJointsRad = home;
+    olp::core::Operation op;
+    op.id = "op_sweep";
+    olp::core::Target target;
+    target.id = "via_end";
+    target.name = "Joint_End";
+    target.role = olp::core::TargetRole::VIA;
+    target.motion = olp::core::MotionType::J;
+    target.poseInUFrame = endTcp;
+    op.targets.push_back(target);
+    program.operations.push_back(op);
+
+    const auto sim = engine.validateAndSimulateProgram(
+        program,
+        olp::core::Transform4d::identity(),
+        olp::core::Transform4d::identity(),
+        utool,
+        scene,
+        sampleStep);
+    bool sweepHit = false;
+    std::string issueText;
+    for (const auto& issue : sim.issues) {
+        issueText += issue.description + "; ";
+        if (issue.state == olp::core::TargetValidationState::Collision &&
+            issue.description.find("Sweep collides with Sweep_Gate") != std::string::npos) {
+            sweepHit = true;
+        }
+    }
+    const bool endpointClear =
+        program.operations[0].targets[0].cache.status != olp::core::TargetValidationState::Collision;
+    check(sweepHit && endpointClear,
+          "Joint interpolation reports a torch sweep through a fixture the targets miss",
+          issueText);
+}
+
+void testApproachTransitClearsWall() {
+    std::cout << "\n--- Test 10: Home-to-approach transit clears a wall ---\n";
+    const auto robot = olp::device::RobotModel::createFanucM10iA();
+    olp::algo::OpwKinematics kin(robot);
+    olp::core::UnitsSettings settings;
+    olp::algo::CollisionAndSimEngine engine(kin, settings);
+    const auto utool = olp::core::Transform4d::identity();
+    const auto home = robot.homeJointsRad;
+    const auto homeTcp = kin.forwardKinematics(home, utool).tcpPoseInBase;
+
+    olp::core::Transform4d approach = homeTcp;
+    approach.pos.x += 250.0;
+    approach.pos.z -= 180.0;
+
+    olp::core::SceneNode wall;
+    wall.id = "transit_wall";
+    wall.name = "Transit_Wall";
+    wall.type = olp::core::SceneNodeType::Part;
+    wall.visible = true;
+    wall.collisionRole = olp::core::CollisionRole::Fixture;
+    // Sits on the straight descent, and stops short of the approach so the torch
+    // body (150 mm back along tool -Z, radius 25 mm) is outside the box.
+    wall.collisionMesh.bboxMin = {homeTcp.pos.x + 30.0, homeTcp.pos.y - 600.0, approach.pos.z - 40.0};
+    wall.collisionMesh.bboxMax = {homeTcp.pos.x + 70.0, homeTcp.pos.y + 600.0, homeTcp.pos.z - 30.0};
+    const std::vector<olp::core::SceneNode> scene{wall};
+
+    double startClearance = 0.0;
+    double endClearance = 0.0;
+    std::string startHit;
+    std::string endHit;
+    const bool startHits = engine.checkTorchPoseCollision(
+        homeTcp, scene, "", false, startClearance, startHit);
+    const bool endHits = engine.checkTorchPoseCollision(
+        approach, scene, "", false, endClearance, endHit);
+    check(!startHits && !endHits,
+          "Transit wall misses the home pose and the approach pose",
+          "start=" + std::to_string(startClearance) + " end=" + std::to_string(endClearance));
+
+    olp::core::Program program;
+    program.id = "prog_transit";
+    program.startState.homeJointsRad = home;
+    olp::core::Operation op;
+    op.id = "op_transit";
+    olp::core::Target target;
+    target.id = "approach";
+    target.name = "APPROACH";
+    target.role = olp::core::TargetRole::APPROACH;
+    target.motion = olp::core::MotionType::J;
+    target.speedValue = 50.0;
+    target.poseInUFrame = approach;
+    const olp::core::Vec3 approachPos = target.poseInUFrame.pos;
+    op.targets.push_back(target);
+    program.operations.push_back(op);
+
+    const auto identity = olp::core::Transform4d::identity();
+    auto before = engine.validateAndSimulateProgram(
+        program, identity, identity, utool, scene, 0.05);
+    bool sweepHit = false;
+    for (const auto& issue : before.issues) {
+        if (issue.state == olp::core::TargetValidationState::Collision &&
+            issue.description.find("Sweep collides with Transit_Wall") != std::string::npos) {
+            sweepHit = true;
+        }
+    }
+    check(sweepHit, "Joint move from home to the approach sweeps the wall");
+
+    const bool inserted = engine.insertSafeTransitBeforeApproach(
+        program, identity, identity, utool, scene, 0.05);
+    check(inserted, "A torch transit over the wall is found");
+
+    bool clearancePoint = false;
+    for (const auto& kept : program.operations[0].targets) {
+        if (kept.role == olp::core::TargetRole::APPROACH) {
+            check((kept.poseInUFrame.pos - approachPos).norm() < 1e-6,
+                  "The approach pose itself stays where it was");
+        }
+        if (kept.name.rfind("CLEARANCE_", 0) == 0) {
+            clearancePoint = true;
+        }
+    }
+    check(clearancePoint, "The transit adds a clearance point above the wall");
+
+    auto after = engine.validateAndSimulateProgram(
+        program, identity, identity, utool, scene, 0.05);
+    bool blocking = false;
+    std::string issueText;
+    for (const auto& issue : after.issues) {
+        issueText += issue.targetName + ": " + issue.description + "; ";
+        if (issue.state == olp::core::TargetValidationState::Collision ||
+            issue.state == olp::core::TargetValidationState::Unreachable ||
+            issue.state == olp::core::TargetValidationState::JointLimitExceeded ||
+            issue.state == olp::core::TargetValidationState::ConfigJump) {
+            blocking = true;
+        }
+    }
+    check(!blocking, "The clearance transit has no blocking collision or reach issue", issueText);
+}
+
+void testMainWindowZones() {
+    std::cout << "\n--- Test 11: Main window zones ---\n";
+#ifndef OLP_HAS_QT6
+    check(false, "Qt6 is required to build the main window");
+#else
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+#ifdef OLP_QT_PLUGINS
+    qputenv("QT_PLUGIN_PATH", OLP_QT_PLUGINS);
+#endif
+    int argc = 1;
+    char exe[] = "olp_tests";
+    char* argv[] = {exe, nullptr};
+    QApplication app(argc, argv);
+    olp::ui::MainWindow window;
+    olp::ui::ShellWindow shell(window);
+    shell.show();
+    const QStringList titles = shell.dockTitles();
+    const QStringList required = {
+        QString::fromUtf8("场景"),
+        QString::fromUtf8("程序"),
+        QString::fromUtf8("路径点"),
+        QString::fromUtf8("属性"),
+        QString::fromUtf8("关节点动"),
+        QString::fromUtf8("问题")
+    };
+    QString missing;
+    for (const auto& title : required) {
+        if (!titles.contains(title)) {
+            missing += title + " ";
+        }
+    }
+    check(missing.isEmpty(), "Main window has the six functional docks", missing.toStdString());
+    check(shell.zoneChecked(QString::fromUtf8("场景")) && !shell.zoneChecked(QString::fromUtf8("程序")),
+          "Layout workbench shows the scene dock");
+    shell.showOlpWorkbench();
+    check(shell.zoneChecked(QString::fromUtf8("程序")) &&
+              shell.zoneChecked(QString::fromUtf8("路径点")) &&
+              shell.zoneChecked(QString::fromUtf8("关节点动")) &&
+              shell.zoneChecked(QString::fromUtf8("问题")) &&
+              !shell.zoneChecked(QString::fromUtf8("场景")),
+          "Programming workbench shows the program, points, jog, and issues");
+    shell.showLayoutWorkbench();
+    check(shell.zoneChecked(QString::fromUtf8("场景")) && shell.zoneChecked(QString::fromUtf8("属性")),
+          "Switching back to the layout workbench restores the scene dock");
+#endif
+}
+
 } // namespace
 
 int main() {
@@ -932,6 +1169,9 @@ int main() {
     testGizmoAndUndoRedo100Steps();
     testFanucLsGeneration();
     testPathEditsAndCommandGates();
+    testSweepCollisionBetweenClearTargets();
+    testApproachTransitClearsWall();
+    testMainWindowZones();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

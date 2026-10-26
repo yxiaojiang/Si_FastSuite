@@ -2,6 +2,7 @@
 
 #include "olp/algo/OpwKinematics.h"
 #include "olp/core/ProjectModel.h"
+#include <array>
 #include <string>
 #include <vector>
 
@@ -97,9 +98,38 @@ public:
         const std::vector<core::SceneNode>& sceneNodes,
         double sampleStepSec = 0.05) const;
 
+    // Joint motion from home to APPROACH can arc the torch through a part even when
+    // both poses are clear. Insert linear clearance points, or switch that move to
+    // linear, until the same sweep check used by simulation is not a hard hit.
+    // Returns false when an APPROACH exists and no sampled transit stays clear.
+    bool insertSafeTransitBeforeApproach(
+        core::Program& inOutProgram,
+        const core::Transform4d& robotBaseInWorld,
+        const core::Transform4d& uframeInWorld,
+        const core::Transform4d& utoolOffset,
+        const std::vector<core::SceneNode>& sceneNodes,
+        double sampleStepSec = 0.05) const;
+
 private:
     const OpwKinematics& kinematics_;
     core::UnitsSettings settings_;
+
+    enum class TransitProbeKind { Clear, Near, Blocked };
+
+    // Same sample count, IK lock, and torch spheres as validateAndSimulateProgram.
+    TransitProbeKind probeTorchTransit(
+        const std::array<double, 6>& startJoints,
+        const core::Transform4d& startTcpWorld,
+        const core::Transform4d& endWorld,
+        core::MotionType motion,
+        double speedValue,
+        const core::Transform4d& robotBaseInWorld,
+        const core::Transform4d& utoolOffset,
+        const std::vector<core::SceneNode>& sceneNodes,
+        const std::string& activeWorkpieceId,
+        const std::vector<std::string>& exemptionPartIds,
+        double sampleStepSec,
+        std::array<double, 6>& outEndJoints) const;
 
     static double pointToAabbSignedDistance(
         const core::Vec3& pt,
