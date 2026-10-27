@@ -59,6 +59,8 @@ endif()
 
 add_library(olp_cad STATIC
     src/cad/OcctCadKernel.cpp
+    src/cad/OcctCadKernelQuery.cpp
+    src/cad/OcctCadKernelMesh.cpp
 )
 target_include_directories(olp_cad PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -85,6 +87,7 @@ add_library(olp_algo STATIC
     src/algo/OpwKinematics.cpp
     src/algo/SeamAndToolpathAlgo.cpp
     src/algo/CollisionAndSim.cpp
+    src/algo/simulation/TrajectorySimulator.cpp
 )
 target_include_directories(olp_algo PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -125,13 +128,22 @@ target_link_libraries(olp_app PUBLIC olp_core olp_cad olp_device olp_algo olp_io
 add_library(olp_ui STATIC
     src/ui/TcpGizmo.cpp
     src/ui/OcctViewport.cpp
+    src/ui/OcctViewportPicking.cpp
+    src/ui/OcctViewportGizmo.cpp
+    src/ui/OcctViewportPlayback.cpp
     src/ui/MainWindow.cpp
     src/ui/SampleSession.cpp
 )
 if(Qt6_FOUND)
     target_sources(olp_ui PRIVATE
         src/ui/ShellWindow.cpp
+        src/ui/TwistScanWidget.cpp
+        src/ui/IssueListPanel.cpp
+        src/ui/TargetWaypointTable.cpp
+        src/ui/TargetPropertyPanel.cpp
+        src/ui/TimelinePanel.cpp
         include/olp/ui/ShellWindow.h
+        include/olp/ui/TwistScanWidget.h
         include/olp/ui/OcctViewport.h
     )
 endif()
@@ -164,6 +176,13 @@ if(OLP_BUILD_TESTS)
     enable_testing()
     add_executable(olp_tests
         tests/test_main.cpp
+        tests/test_kinematics.cpp
+        tests/test_cad.cpp
+        tests/test_toolpath.cpp
+        tests/test_process.cpp
+        tests/test_collision.cpp
+        tests/test_ui.cpp
+        tests/test_simulation.cpp
     )
     target_link_libraries(olp_tests PRIVATE olp_ui)
     if(Qt6_FOUND)

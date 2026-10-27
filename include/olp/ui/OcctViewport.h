@@ -70,6 +70,9 @@ public:
 
     void fitAll();
     void syncScene();
+    void setPlaybackTrail(const std::vector<core::Vec3>& tcpPoints);
+    void setPlaybackTcp(const core::Vec3& tcpWorld, bool arcActive);
+    void clearPlaybackPreview();
     TcpGizmo& tcpGizmo() noexcept { return tcpGizmo_; }
 
     bool setTargetGizmo(const std::string& targetId);

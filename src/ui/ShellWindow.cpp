@@ -1,4 +1,10 @@
 #include "olp/ui/ShellWindow.h"
+#include "olp/ui/IssueListPanel.h"
+#include "olp/ui/TargetPropertyPanel.h"
+#include "olp/ui/TargetWaypointTable.h"
+#include "olp/ui/TwistScanWidget.h"
+#include "olp/ui/TimelinePanel.h"
+#include "ShellLabels.h"
 
 #include "olp/ui/OcctViewport.h"
 
@@ -192,53 +198,6 @@ QWidget* groupDivider(QWidget* parent) {
     return line;
 }
 
-QString roleText(core::CollisionRole role) {
-    switch (role) {
-    case core::CollisionRole::Workpiece: return QString::fromUtf8("工件");
-    case core::CollisionRole::Fixture: return QString::fromUtf8("夹具");
-    case core::CollisionRole::Environment: return QString::fromUtf8("环境");
-    case core::CollisionRole::RobotLink: return QString::fromUtf8("机器人连杆");
-    case core::CollisionRole::WeldingTorch: return QString::fromUtf8("焊枪");
-    case core::CollisionRole::Ignored: return QString::fromUtf8("忽略");
-    }
-    return QString::fromUtf8("其他");
-}
-
-QString typeText(core::SceneNodeType type) {
-    switch (type) {
-    case core::SceneNodeType::Group: return QString::fromUtf8("组");
-    case core::SceneNodeType::Part: return QString::fromUtf8("零件");
-    case core::SceneNodeType::Robot: return QString::fromUtf8("机器人");
-    case core::SceneNodeType::Tool: return QString::fromUtf8("工具");
-    case core::SceneNodeType::Frame: return QString::fromUtf8("坐标系");
-    }
-    return QString::fromUtf8("对象");
-}
-
-QString motionText(core::MotionType motion) {
-    switch (motion) {
-    case core::MotionType::J: return "J";
-    case core::MotionType::L: return "L";
-    case core::MotionType::C: return "C";
-    }
-    return "?";
-}
-
-QString statusText(core::TargetValidationState state) {
-    switch (state) {
-    case core::TargetValidationState::Unchecked: return QString::fromUtf8("未检查");
-    case core::TargetValidationState::Valid: return QString::fromUtf8("通过");
-    case core::TargetValidationState::Unreachable: return QString::fromUtf8("不可达");
-    case core::TargetValidationState::JointLimitExceeded: return QString::fromUtf8("超限位");
-    case core::TargetValidationState::NearJointLimit: return QString::fromUtf8("靠近限位");
-    case core::TargetValidationState::Singularity: return QString::fromUtf8("奇异");
-    case core::TargetValidationState::ConfigJump: return QString::fromUtf8("构型跳变");
-    case core::TargetValidationState::Collision: return QString::fromUtf8("碰撞");
-    case core::TargetValidationState::NearCollision: return QString::fromUtf8("间隙不足");
-    }
-    return QString::fromUtf8("未知");
-}
-
 QDockWidget* makeDock(QMainWindow* owner, const QString& title, QWidget* body) {
     auto* dock = new QDockWidget(title, owner);
     dock->setObjectName(title);
@@ -247,267 +206,7 @@ QDockWidget* makeDock(QMainWindow* owner, const QString& title, QWidget* body) {
     return dock;
 }
 
-const core::Target* findTargetById(const app::ProjectDocument& doc, const std::string& id) {
-    for (const auto& cu : doc.controllers) {
-        for (const auto& program : cu.programs) {
-            for (const auto& op : program.operations) {
-                for (const auto& target : op.targets) {
-                    if (target.id == id) {
-                        return &target;
-                    }
-                }
-            }
-        }
-    }
-    return nullptr;
-}
-
 } // namespace
-
-QString formatSpeedCellText(const core::Target& target) {
-    if (target.useWeldSpeed) {
-        return QString("WELD_SPEED (%1 mm/s)").arg(target.speedValue, 0, 'f', 0);
-    }
-    if (target.motion == core::MotionType::J) {
-        return QString("%1%").arg(target.speedValue, 0, 'f', 0);
-    }
-    return QString("%1 mm/s").arg(target.speedValue, 0, 'f', 0);
-}
-
-ParsedSpeedCell parseSpeedCellText(const QString& rawText, double fallbackSpeed) {
-    ParsedSpeedCell res;
-    const QString text = rawText.trimmed();
-    if (text.isEmpty()) {
-        return res;
-    }
-
-    const bool hasWeld = text.contains("weld", Qt::CaseInsensitive);
-    const bool isCmMin = text.contains("cm/min", Qt::CaseInsensitive);
-
-    QString clean = text;
-    clean = clean.remove("WELD_SPEED", Qt::CaseInsensitive)
-                 .remove("cm/min", Qt::CaseInsensitive)
-                 .remove("mm/s", Qt::CaseInsensitive)
-                 .remove("%")
-                 .remove("(")
-                 .remove(")")
-                 .remove("[")
-                 .remove("]")
-                 .trimmed();
-
-    bool ok = false;
-    double v = clean.toDouble(&ok);
-    if (!ok && clean.isEmpty() && hasWeld) {
-        res.useWeldSpeed = true;
-        res.speedValue = (fallbackSpeed > 0.0) ? fallbackSpeed : 10.0;
-        res.valid = true;
-        return res;
-    }
-
-    if (ok && v > 0.0) {
-        if (isCmMin) {
-            v = (v * 10.0) / 60.0; // cm/min -> mm/s
-        }
-        res.speedValue = v;
-        res.useWeldSpeed = hasWeld;
-        res.valid = true;
-        return res;
-    }
-
-    return res;
-}
-
-TwistScanWidget::TwistScanWidget(QWidget* parent) : QWidget(parent) {
-    setMinimumSize(220, 110);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    setMouseTracking(true);
-}
-
-void TwistScanWidget::setSamples(const std::vector<algo::TwistScanSample>& samples, double currentAngleDeg) {
-    samples_ = samples;
-    currentAngleDeg_ = currentAngleDeg;
-    hoveredIndex_ = -1;
-    update();
-}
-
-std::optional<double> TwistScanWidget::findOptimalFeasibleAngleDeg() const {
-    if (samples_.empty()) return std::nullopt;
-
-    const size_t n = samples_.size();
-    auto isFeasible = [](const algo::TwistScanSample& s) {
-        return s.reachable && s.collisionFree && !s.nearSingularityOrLimit && s.minClearanceMm >= 5.0;
-    };
-
-    size_t bestStart = 0;
-    size_t bestLen = 0;
-    size_t curStart = 0;
-    size_t curLen = 0;
-
-    for (size_t i = 0; i < 2 * n; ++i) {
-        if (isFeasible(samples_[i % n])) {
-            if (curLen == 0) curStart = i;
-            ++curLen;
-            if (curLen > bestLen) {
-                bestLen = curLen;
-                bestStart = curStart;
-            }
-            if (curLen >= n) break;
-        } else {
-            curLen = 0;
-        }
-    }
-
-    if (bestLen == 0) {
-        for (size_t i = 0; i < 2 * n; ++i) {
-            if (samples_[i % n].reachable && samples_[i % n].collisionFree) {
-                if (curLen == 0) curStart = i;
-                ++curLen;
-                if (curLen > bestLen) {
-                    bestLen = curLen;
-                    bestStart = curStart;
-                }
-                if (curLen >= n) break;
-            } else {
-                curLen = 0;
-            }
-        }
-    }
-
-    if (bestLen == 0) return std::nullopt;
-
-    const size_t midIdx = (bestStart + bestLen / 2) % n;
-    return samples_[midIdx].twistAngleDeg;
-}
-
-void TwistScanWidget::paintEvent(QPaintEvent*) {
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-
-    const int w = width();
-    const int h = height();
-    const int cx = w / 2;
-    const int cy = h / 2;
-    const int rOut = std::min(cx, cy) - 6;
-    const int rIn = std::max(10, rOut - 16);
-
-    if (samples_.empty()) {
-        painter.setPen(QPen(QColor(100, 100, 100, 140), 1.0, Qt::DashLine));
-        painter.setBrush(QColor(40, 44, 52, 120));
-        painter.drawEllipse(QPointF(cx, cy), rOut, rOut);
-        painter.setBrush(QColor(30, 33, 39));
-        painter.drawEllipse(QPointF(cx, cy), rIn, rIn);
-        painter.setPen(QColor(180, 180, 180));
-        painter.setFont(QFont("Segoe UI", 9));
-        painter.drawText(rect(), Qt::AlignCenter, QString::fromUtf8("选择路径点以扫描自转角"));
-        return;
-    }
-
-    const size_t n = samples_.size();
-    const double stepDeg = 360.0 / static_cast<double>(n);
-
-    for (size_t i = 0; i < n; ++i) {
-        const auto& s = samples_[i];
-        QColor color;
-        if (!s.reachable || !s.collisionFree) {
-            color = QColor(225, 55, 55); // Red
-        } else if (s.nearSingularityOrLimit || s.minClearanceMm < 5.0) {
-            color = QColor(235, 185, 25); // Yellow
-        } else {
-            color = QColor(45, 195, 80); // Green
-        }
-
-        if (static_cast<int>(i) == hoveredIndex_) {
-            color = color.lighter(130);
-        }
-
-        const double a1 = core::deg2rad(s.twistAngleDeg);
-        const double a2 = core::deg2rad(s.twistAngleDeg + stepDeg);
-
-        QPolygonF sectorPoly;
-        sectorPoly << QPointF(cx + rIn * std::cos(a1), cy - rIn * std::sin(a1))
-                   << QPointF(cx + rOut * std::cos(a1), cy - rOut * std::sin(a1))
-                   << QPointF(cx + rOut * std::cos(a2), cy - rOut * std::sin(a2))
-                   << QPointF(cx + rIn * std::cos(a2), cy - rIn * std::sin(a2));
-
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(color);
-        painter.drawPolygon(sectorPoly);
-    }
-
-    // Inner background circle
-    painter.setPen(QPen(QColor(30, 33, 39), 1.5));
-    painter.setBrush(QColor(36, 40, 48));
-    painter.drawEllipse(QPointF(cx, cy), rIn, rIn);
-
-    // Current angle needle / pointer
-    const double curRad = core::deg2rad(currentAngleDeg_);
-    const QPointF needleTip(cx + (rOut + 2) * std::cos(curRad), cy - (rOut + 2) * std::sin(curRad));
-    const QPointF needleBase(cx + (rIn - 4) * std::cos(curRad), cy - (rIn - 4) * std::sin(curRad));
-    painter.setPen(QPen(QColor(255, 255, 255), 2.5, Qt::SolidLine, Qt::RoundCap));
-    painter.drawLine(needleBase, needleTip);
-
-    // Center text
-    painter.setPen(QColor(240, 240, 240));
-    painter.setFont(QFont("Segoe UI", 9, QFont::Bold));
-    painter.drawText(QRect(cx - rIn, cy - rIn, 2 * rIn, 2 * rIn), Qt::AlignCenter,
-                     QString("%1°").arg(currentAngleDeg_, 0, 'f', 0));
-}
-
-void TwistScanWidget::mousePressEvent(QMouseEvent* event) {
-    if (samples_.empty()) return;
-    const double dx = event->pos().x() - (width() / 2);
-    const double dy = (height() / 2) - event->pos().y();
-    if (std::hypot(dx, dy) < 8.0) return;
-
-    double deg = core::rad2deg(std::atan2(dy, dx));
-    deg = std::round(deg / 5.0) * 5.0;
-    if (deg > 180.0) deg -= 360.0;
-    if (deg <= -180.0) deg += 360.0;
-    emit angleSelected(deg);
-}
-
-void TwistScanWidget::mouseMoveEvent(QMouseEvent* event) {
-    if (samples_.empty()) return;
-    const double dx = event->pos().x() - (width() / 2);
-    const double dy = (height() / 2) - event->pos().y();
-    const double r = std::hypot(dx, dy);
-    const int rOut = std::min(width(), height()) / 2 - 6;
-    const int rIn = std::max(10, rOut - 16);
-
-    if (r >= rIn - 4 && r <= rOut + 4) {
-        double deg = core::rad2deg(std::atan2(dy, dx));
-        if (deg > 180.0) deg -= 360.0;
-        if (deg < -180.0) deg += 360.0;
-
-        int closest = 0;
-        double minDiff = 1e9;
-        for (size_t i = 0; i < samples_.size(); ++i) {
-            const double diff = std::abs(core::normalizeAngleRad(core::deg2rad(samples_[i].twistAngleDeg - deg)));
-            if (diff < minDiff) {
-                minDiff = diff;
-                closest = static_cast<int>(i);
-            }
-        }
-        hoveredIndex_ = closest;
-        const auto& s = samples_[static_cast<size_t>(closest)];
-        QString statusDesc = QString::fromUtf8("可行安全");
-        if (!s.reachable) statusDesc = QString::fromUtf8("不可达 (超出工作空间)");
-        else if (!s.collisionFree) statusDesc = QString::fromUtf8("碰撞干涉");
-        else if (s.nearSingularityOrLimit) statusDesc = QString::fromUtf8("警示 (接近奇异或关节限位)");
-        else if (s.minClearanceMm < 5.0) statusDesc = QString::fromUtf8("间隙偏小 (< 5mm)");
-
-        setToolTip(QString::fromUtf8("自转角: %1°\n评估: %2\n最小间隙: %3 mm")
-            .arg(s.twistAngleDeg, 0, 'f', 1)
-            .arg(statusDesc)
-            .arg(s.minClearanceMm, 0, 'f', 1));
-        update();
-    } else {
-        if (hoveredIndex_ != -1) {
-            hoveredIndex_ = -1;
-            update();
-        }
-    }
-}
 
 ShellWindow::ShellWindow(MainWindow& controller, QWidget* parent)
     : QMainWindow(parent), controller_(controller) {
@@ -806,19 +505,11 @@ void ShellWindow::buildChrome() {
         }
     });
 
-    targetTable_ = new QTableWidget(0, 7);
-    targetTable_->setHorizontalHeaderLabels({
-        QString::fromUtf8("名称"),
-        QString::fromUtf8("运动"),
-        QString::fromUtf8("速度"),
-        QString::fromUtf8("平滑度"),
-        QString::fromUtf8("工艺事件"),
-        QString::fromUtf8("状态"),
-        QString::fromUtf8("间隙 mm")
-    });
-    targetTable_->horizontalHeader()->setStretchLastSection(true);
-    targetTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    targetTable_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    targetTable_ = new TargetWaypointTable(
+        controller_,
+        inItemChanged_,
+        [this] { return isRefreshing(); },
+        [this] { QTimer::singleShot(0, this, [this] { refreshFromDocument(); }); });
     targetDock_ = makeDock(this, QString::fromUtf8("路径点"), targetTable_);
     connect(targetTable_, &QTableWidget::currentCellChanged, this, [this](int row, int, int, int) {
         if (row < 0 || isRefreshing()) {
@@ -831,254 +522,11 @@ void ShellWindow::buildChrome() {
                 item->data(Qt::UserRole + 1).toString().toStdString());
         }
     });
-    connect(targetTable_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
-        if (item == nullptr || isRefreshing()) {
-            return;
-        }
-        const int row = item->row();
-        const int col = item->column();
-        auto* nameItem = targetTable_->item(row, 0);
-        if (nameItem == nullptr) return;
-        const std::string targetId = nameItem->data(Qt::UserRole).toString().toStdString();
-        if (targetId.empty()) return;
-
-        const auto* target = controller_.document().findTarget(targetId);
-        if (target == nullptr) return;
-
-        app::TargetProcessParams params;
-        const QString text = item->text().trimmed();
-
-        if (col == 1) { // 运动: J or L
-            if (text.compare("J", Qt::CaseInsensitive) == 0) {
-                params.motion = core::MotionType::J;
-            } else if (text.compare("L", Qt::CaseInsensitive) == 0) {
-                params.motion = core::MotionType::L;
-            } else {
-                QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
-                return;
-            }
-        } else if (col == 2) { // 速度: e.g. "200", "200 mm/s", "50%", "50 cm/min", "WELD_SPEED (80 mm/s)"
-            const auto parsed = parseSpeedCellText(text, target->speedValue);
-            if (parsed.valid) {
-                params.speedValue = parsed.speedValue;
-                params.useWeldSpeed = parsed.useWeldSpeed;
-            } else {
-                QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
-                return;
-            }
-        } else if (col == 3) { // 平滑度 / 终止类型: FINE or CNT [n]
-            if (text.compare("FINE", Qt::CaseInsensitive) == 0) {
-                params.termination = core::TerminationType::FINE;
-                params.cntValue = 0;
-            } else if (text.startsWith("CNT", Qt::CaseInsensitive)) {
-                params.termination = core::TerminationType::CNT;
-                QString numStr = text.mid(3).trimmed();
-                bool ok = false;
-                int val = numStr.toInt(&ok);
-                params.cntValue = ok ? std::clamp(val, 0, 100) : 50;
-            } else {
-                bool ok = false;
-                int val = text.toInt(&ok);
-                if (ok) {
-                    params.termination = core::TerminationType::CNT;
-                    params.cntValue = std::clamp(val, 0, 100);
-                } else {
-                    QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
-                    return;
-                }
-            }
-        } else if (col == 4) { // 工艺事件
-            if (text.startsWith("Arc Start", Qt::CaseInsensitive) || text.startsWith("ArcStart", Qt::CaseInsensitive)) {
-                int sched = 1;
-                int lbracket = text.indexOf('[');
-                int rbracket = text.indexOf(']');
-                if (lbracket >= 0 && rbracket > lbracket) {
-                    bool ok = false;
-                    int s = text.mid(lbracket + 1, rbracket - lbracket - 1).toInt(&ok);
-                    if (ok && s >= 1 && s <= 32) sched = s;
-                }
-                params.events = std::vector<core::ProcessEvent>{{core::ProcessEventType::ArcStart, sched, 0.0, ""}};
-            } else if (text.startsWith("Arc End", Qt::CaseInsensitive) || text.startsWith("ArcEnd", Qt::CaseInsensitive)) {
-                int sched = 1;
-                int lbracket = text.indexOf('[');
-                int rbracket = text.indexOf(']');
-                if (lbracket >= 0 && rbracket > lbracket) {
-                    bool ok = false;
-                    int s = text.mid(lbracket + 1, rbracket - lbracket - 1).toInt(&ok);
-                    if (ok && s >= 1 && s <= 32) sched = s;
-                }
-                params.events = std::vector<core::ProcessEvent>{{core::ProcessEventType::ArcEnd, sched, 0.0, ""}};
-            } else if (text == "-" || text.isEmpty() || text.compare("None", Qt::CaseInsensitive) == 0) {
-                params.events = std::vector<core::ProcessEvent>{};
-            } else {
-                QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
-                return;
-            }
-        } else {
-            return;
-        }
-
-        struct ItemChangeScope {
-            bool& flag;
-            explicit ItemChangeScope(bool& f) : flag(f) { flag = true; }
-            ~ItemChangeScope() { flag = false; }
-        } itemScope(inItemChanged_);
-
-        if (controller_.modifyTargetProcessParams(targetId, params)) {
-            statusBar()->showMessage(QString::fromUtf8("已更新目标点工艺参数。"), 3000);
-        } else {
-            QTimer::singleShot(0, this, [this] { refreshFromDocument(); });
-        }
-    });
-
-    propertyText_ = new QPlainTextEdit();
-    propertyText_->setReadOnly(true);
-
-    auto* propertyContainer = new QWidget();
-    auto* propLayout = new QVBoxLayout(propertyContainer);
-    propLayout->setContentsMargins(4, 4, 4, 4);
-    propLayout->setSpacing(6);
-    propLayout->addWidget(propertyText_, 1);
-
-    spinTuningWidget_ = new QGroupBox(QString::fromUtf8("焊枪自转角微调 (TCP Z 自转)"));
-    auto* spinLayout = new QVBoxLayout(spinTuningWidget_);
-    spinLayout->setContentsMargins(6, 6, 6, 6);
-    spinLayout->setSpacing(4);
-
-    twistScanWidget_ = new TwistScanWidget(this);
-    spinLayout->addWidget(twistScanWidget_);
-
-    connect(twistScanWidget_, &TwistScanWidget::angleSelected, this, [this](double clickedAngleDeg) {
-        const auto selectedIds = selectedTargetIdsFromTable();
-        std::vector<std::string> ids = selectedIds;
-        if (ids.empty() && !controller_.selectedTargetId().empty()) {
-            ids.push_back(controller_.selectedTargetId());
-        }
-        if (ids.empty()) return;
-        double currentZAngleDeg = 0.0;
-        const auto* target = controller_.document().findTarget(ids.front());
-        if (target != nullptr) {
-            currentZAngleDeg = core::rad2deg(std::atan2(target->userDeltaOffset.rot.m[1][0], target->userDeltaOffset.rot.m[0][0]));
-        }
-        const double deltaDeg = clickedAngleDeg - currentZAngleDeg;
-        if (std::abs(deltaDeg) > 1e-4) {
-            if (controller_.rotateTargetsTcpZ(ids, core::deg2rad(deltaDeg))) {
-                statusBar()->showMessage(QString::fromUtf8("已将目标点绕 TCP Z 轴自转至 %1°").arg(clickedAngleDeg, 0, 'f', 1), 3000);
-                refreshFromDocument();
-            }
-        }
-    });
-
-    auto* optBtn = new QPushButton(QString::fromUtf8("★ 一键微调至最优自转角"));
-    optBtn->setToolTip(QString::fromUtf8("自动在 72 组采样中定位远离碰撞与奇异的最大连续可行域中心角"));
-    connect(optBtn, &QPushButton::clicked, this, [this] {
-        if (!twistScanWidget_) return;
-        const auto optAngle = twistScanWidget_->findOptimalFeasibleAngleDeg();
-        if (!optAngle.has_value()) {
-            statusBar()->showMessage(QString::fromUtf8("未找到完全无碰撞且远离奇异的自转角。"), 3000);
-            return;
-        }
-        const auto selectedIds = selectedTargetIdsFromTable();
-        std::vector<std::string> ids = selectedIds;
-        if (ids.empty() && !controller_.selectedTargetId().empty()) {
-            ids.push_back(controller_.selectedTargetId());
-        }
-        if (ids.empty()) return;
-
-        double currentZAngleDeg = 0.0;
-        const auto* target = controller_.document().findTarget(ids.front());
-        if (target != nullptr) {
-            currentZAngleDeg = core::rad2deg(std::atan2(target->userDeltaOffset.rot.m[1][0], target->userDeltaOffset.rot.m[0][0]));
-        }
-        const double deltaDeg = *optAngle - currentZAngleDeg;
-        if (std::abs(deltaDeg) > 1e-4) {
-            if (controller_.rotateTargetsTcpZ(ids, core::deg2rad(deltaDeg))) {
-                statusBar()->showMessage(QString::fromUtf8("已自动微调至最优自转角 %1° (增量 %2°)").arg(*optAngle, 0, 'f', 1).arg(deltaDeg, 0, 'f', 1), 3000);
-                refreshFromDocument();
-            }
-        } else {
-            statusBar()->showMessage(QString::fromUtf8("当前已处于最优自转角 %1°。").arg(*optAngle, 0, 'f', 1), 3000);
-        }
-    });
-    spinLayout->addWidget(optBtn);
-
-    // Row 1: Fast step buttons
-    auto* stepBtnLayout = new QHBoxLayout();
-    stepBtnLayout->setSpacing(4);
-    const std::vector<std::pair<QString, double>> stepAngles = {
-        {"-15°", -15.0},
-        {"-5°", -5.0},
-        {"-1°", -1.0},
-        {"+1°", +1.0},
-        {"+5°", +5.0},
-        {"+15°", +15.0}
-    };
-    for (const auto& [lbl, deg] : stepAngles) {
-        auto* btn = new QPushButton(lbl);
-        btn->setToolTip(QString::fromUtf8("绕焊枪 TCP 本地 Z 轴自转 %1").arg(lbl));
-        connect(btn, &QPushButton::clicked, this, [this, deg] {
-            const auto selectedIds = selectedTargetIdsFromTable();
-            std::vector<std::string> ids = selectedIds;
-            if (ids.empty() && !controller_.selectedTargetId().empty()) {
-                ids.push_back(controller_.selectedTargetId());
-            }
-            if (ids.empty()) return;
-            if (controller_.rotateTargetsTcpZ(ids, core::deg2rad(deg))) {
-                statusBar()->showMessage(QString::fromUtf8("已将目标点绕 TCP Z 轴自转 %1°").arg(deg, 0, 'f', 1), 3000);
-                refreshFromDocument();
-            }
-        });
-        stepBtnLayout->addWidget(btn);
-    }
-    spinLayout->addLayout(stepBtnLayout);
-
-    // Row 2: Custom spinbox and step rotation
-    auto* customLayout = new QHBoxLayout();
-    auto* angleSpin = new QDoubleSpinBox();
-    angleSpin->setRange(0.1, 180.0);
-    angleSpin->setValue(10.0);
-    angleSpin->setSuffix("°");
-    angleSpin->setSingleStep(1.0);
-
-    auto* ccwBtn = new QPushButton(QString::fromUtf8("逆时针 ⟲"));
-    connect(ccwBtn, &QPushButton::clicked, this, [this, angleSpin] {
-        const auto selectedIds = selectedTargetIdsFromTable();
-        std::vector<std::string> ids = selectedIds;
-        if (ids.empty() && !controller_.selectedTargetId().empty()) {
-            ids.push_back(controller_.selectedTargetId());
-        }
-        if (ids.empty()) return;
-        const double deg = -angleSpin->value();
-        if (controller_.rotateTargetsTcpZ(ids, core::deg2rad(deg))) {
-            statusBar()->showMessage(QString::fromUtf8("已将目标点绕 TCP Z 轴自转 %1°").arg(deg, 0, 'f', 1), 3000);
-            refreshFromDocument();
-        }
-    });
-
-    auto* cwBtn = new QPushButton(QString::fromUtf8("顺时针 ⟳"));
-    connect(cwBtn, &QPushButton::clicked, this, [this, angleSpin] {
-        const auto selectedIds = selectedTargetIdsFromTable();
-        std::vector<std::string> ids = selectedIds;
-        if (ids.empty() && !controller_.selectedTargetId().empty()) {
-            ids.push_back(controller_.selectedTargetId());
-        }
-        if (ids.empty()) return;
-        const double deg = angleSpin->value();
-        if (controller_.rotateTargetsTcpZ(ids, core::deg2rad(deg))) {
-            statusBar()->showMessage(QString::fromUtf8("已将目标点绕 TCP Z 轴自转 +%1°").arg(deg, 0, 'f', 1), 3000);
-            refreshFromDocument();
-        }
-    });
-
-    customLayout->addWidget(angleSpin);
-    customLayout->addWidget(ccwBtn);
-    customLayout->addWidget(cwBtn);
-    spinLayout->addLayout(customLayout);
-
-    propLayout->addWidget(spinTuningWidget_);
-    spinTuningWidget_->setVisible(false);
-
-    propertyDock_ = makeDock(this, QString::fromUtf8("属性"), propertyContainer);
+    propertyPanel_ = new TargetPropertyPanel(
+        controller_,
+        [this] { return selectedTargetIdsFromTable(); },
+        [this] { refreshFromDocument(); });
+    propertyDock_ = makeDock(this, QString::fromUtf8("属性"), propertyPanel_);
 
     auto* jogBody = new QWidget();
     auto* jogLayout = new QVBoxLayout(jogBody);
@@ -1114,7 +562,7 @@ void ShellWindow::buildChrome() {
     jogLayout->addStretch(1);
     jogDock_ = makeDock(this, QString::fromUtf8("关节点动"), jogBody);
 
-    issueList_ = new QListWidget();
+    issueList_ = new IssueListPanel();
     connect(issueList_, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
         if (!item) return;
         const QString targetId = item->data(Qt::UserRole).toString();
@@ -1153,19 +601,35 @@ void ShellWindow::buildChrome() {
     viewMenu->addAction(jogDock_->toggleViewAction());
     viewMenu->addAction(issueDock_->toggleViewAction());
 
-    auto* timeline = new QWidget();
-    auto* timelineLayout = new QHBoxLayout(timeline);
-    timelineLayout->setContentsMargins(8, 2, 8, 2);
-    timelineLabel_ = new QLabel(QString::fromUtf8("时间轴"));
-    timelineSlider_ = new QSlider(Qt::Horizontal);
-    timelineSlider_->setEnabled(false);
-    timelineSlider_->setRange(0, 0);
-    auto* timelineNote = new QLabel(QString::fromUtf8("播放条在仿真画面接入后可用。"));
-    timelineLayout->addWidget(timelineLabel_);
-    timelineLayout->addWidget(timelineSlider_, 1);
-    timelineLayout->addWidget(timelineNote);
+    timeline_ = new TimelinePanel(controller_, this);
+    timeline_->setViewportHooks(
+        [this](const algo::BakedFrame& frame) {
+            if (viewport_ == nullptr) {
+                return;
+            }
+            viewport_->setPlaybackTcp(frame.tcpWorldPos, frame.arcActive);
+            if (jogReadout_ == nullptr) {
+                return;
+            }
+            QStringList parts;
+            for (int joint = 0; joint < 6; ++joint) {
+                parts.push_back(QString("J%1 %2°").arg(joint + 1).arg(
+                    core::rad2deg(frame.jointsRad[static_cast<size_t>(joint)]), 0, 'f', 1));
+            }
+            jogReadout_->setText(QString::fromUtf8("仿真（未写入程序）：") + parts.join("  "));
+        },
+        [this](const std::vector<core::Vec3>& trail) {
+            if (viewport_ != nullptr) {
+                viewport_->setPlaybackTrail(trail);
+            }
+        },
+        [this] {
+            if (viewport_ != nullptr) {
+                viewport_->clearPlaybackPreview();
+            }
+        });
     auto* timelineBar = new QToolBar(QString::fromUtf8("时间轴"));
-    timelineBar->addWidget(timeline);
+    timelineBar->addWidget(timeline_);
     addToolBar(Qt::BottomToolBarArea, timelineBar);
 
     resizeDocks({sceneDock_, programDock_}, {280, 280}, Qt::Horizontal);
@@ -1217,10 +681,6 @@ void ShellWindow::loadSample() {
         viewport_->syncScene();
     }
     const int frames = controller_.lastFrameCount();
-    if (timelineSlider_ != nullptr && frames > 0) {
-        timelineSlider_->setRange(0, frames - 1);
-        timelineLabel_->setText(QString::fromUtf8("时间轴  %1 帧").arg(frames));
-    }
     QApplication::restoreOverrideCursor();
     std::ostringstream summary;
     summary.setf(std::ios::fixed);
@@ -1245,6 +705,9 @@ void ShellWindow::refreshFromDocument() {
     fillIssues();
     syncJogFromRobot();
     updateUndoActions();
+    if (timeline_ != nullptr) {
+        timeline_->invalidate();
+    }
     if (viewport_ != nullptr) {
         viewport_->syncScene();
     }
@@ -1331,141 +794,17 @@ void ShellWindow::rebuildProgramTree() {
 
 void ShellWindow::rebuildTargetTable() {
     RefreshGuard guard(refreshDepth_);
-    targetTable_->setRowCount(0);
-    const core::Operation* operation = nullptr;
-    const std::string& selected = controller_.selectedOperationId();
-    for (const auto& cu : controller_.document().controllers) {
-        for (const auto& program : cu.programs) {
-            for (const auto& op : program.operations) {
-                if (operation == nullptr) {
-                    operation = &op;
-                }
-                if (!selected.empty() && op.id == selected) {
-                    operation = &op;
-                }
-            }
-        }
-    }
-    if (operation == nullptr) {
-        return;
-    }
-    int row = 0;
-    for (const auto& target : operation->targets) {
-        targetTable_->insertRow(row);
-        auto* name = new QTableWidgetItem(QString::fromStdString(target.name));
-        name->setData(Qt::UserRole, QString::fromStdString(target.id));
-        name->setData(Qt::UserRole + 1, QString::fromStdString(operation->id));
-        name->setFlags(name->flags() & ~Qt::ItemIsEditable);
-        targetTable_->setItem(row, 0, name);
-
-        targetTable_->setItem(row, 1, new QTableWidgetItem(motionText(target.motion)));
-
-        targetTable_->setItem(row, 2, new QTableWidgetItem(formatSpeedCellText(target)));
-
-        const QString term = (target.termination == core::TerminationType::FINE)
-            ? QString("FINE")
-            : QString("CNT %1").arg(target.cntValue);
-        targetTable_->setItem(row, 3, new QTableWidgetItem(term));
-
-        QString evStr = "-";
-        for (const auto& ev : target.events) {
-            if (ev.type == core::ProcessEventType::ArcStart) {
-                evStr = QString("Arc Start[%1]").arg(ev.scheduleNumber);
-                break;
-            } else if (ev.type == core::ProcessEventType::ArcEnd) {
-                evStr = QString("Arc End[%1]").arg(ev.scheduleNumber);
-                break;
-            }
-        }
-        targetTable_->setItem(row, 4, new QTableWidgetItem(evStr));
-
-        auto* statusItem = new QTableWidgetItem(statusText(target.cache.status));
-        statusItem->setFlags(statusItem->flags() & ~Qt::ItemIsEditable);
-        targetTable_->setItem(row, 5, statusItem);
-
-        auto* clearanceItem = new QTableWidgetItem(
-            QString::number(target.cache.minClearanceMm, 'f', 1));
-        clearanceItem->setFlags(clearanceItem->flags() & ~Qt::ItemIsEditable);
-        targetTable_->setItem(row, 6, clearanceItem);
-
-        ++row;
-    }
+    targetTable_->rebuild();
 }
 
 void ShellWindow::showPropertiesForScene(const QString& nodeId) {
-    if (spinTuningWidget_) {
-        spinTuningWidget_->setVisible(false);
-    }
-    if (nodeId.isEmpty()) {
-        return;
-    }
-    const auto* node = controller_.document().findSceneNode(nodeId.toStdString());
-    if (node == nullptr) {
-        return;
-    }
-    const auto wpr = node->localTransform.toWPR();
-    std::ostringstream text;
-    text.setf(std::ios::fixed);
-    text.precision(1);
-    text << node->name << "\n"
-         << "类型  " << typeText(node->type).toStdString() << "\n"
-         << "碰撞角色  " << roleText(node->collisionRole).toStdString() << "\n"
-         << "可见  " << (node->visible ? "是" : "否") << "\n"
-         << "位置 mm  " << wpr.x << "  " << wpr.y << "  " << wpr.z << "\n"
-         << "姿态 WPR °  " << wpr.wDeg << "  " << wpr.pDeg << "  " << wpr.rDeg << "\n";
-    propertyText_->setPlainText(QString::fromStdString(text.str()));
+    propertyPanel_->showSceneNode(nodeId);
 }
 
 void ShellWindow::showPropertiesForTarget(const QString& targetId) {
-    if (spinTuningWidget_) {
-        spinTuningWidget_->setVisible(true);
-    }
-    const auto* target = findTargetById(controller_.document(), targetId.toStdString());
-    if (target == nullptr) {
-        return;
-    }
-    const auto wpr = target->poseInUFrame.toWPR();
-    std::ostringstream text;
-    text.setf(std::ios::fixed);
-    text.precision(1);
-    text << target->name << "\n"
-         << "运动  " << motionText(target->motion).toStdString() << "\n"
-         << "速度  " << (target->useWeldSpeed ? "WELD_SPEED (" + std::to_string(static_cast<int>(target->speedValue)) + " mm/s)" : std::to_string(static_cast<int>(target->speedValue))) << "\n"
-         << "平滑度  " << (target->termination == core::TerminationType::FINE ? "FINE" : "CNT " + std::to_string(target->cntValue)) << "\n";
-    if (!target->events.empty()) {
-        for (const auto& ev : target->events) {
-            if (ev.type == core::ProcessEventType::ArcStart) {
-                text << "工艺事件  Arc Start[" << ev.scheduleNumber << "]\n";
-            } else if (ev.type == core::ProcessEventType::ArcEnd) {
-                text << "工艺事件  Arc End[" << ev.scheduleNumber << "]\n";
-            }
-        }
-    }
-    text << "状态  " << statusText(target->cache.status).toStdString() << "\n"
-         << "间隙 mm  " << target->cache.minClearanceMm << "\n";
-    if (target->cache.valid) {
-        text << "构型  " << target->cache.solvedConfig.toString() << "\n";
-        text << "可操作度  " << target->cache.manipulabilityIndex << "\n";
-        text << "关节角 °  J1:" << core::rad2deg(target->cache.jointsRad[0])
-             << " J2:" << core::rad2deg(target->cache.jointsRad[1])
-             << " J3:" << core::rad2deg(target->cache.jointsRad[2])
-             << " J4:" << core::rad2deg(target->cache.jointsRad[3])
-             << " J5:" << core::rad2deg(target->cache.jointsRad[4])
-             << " J6:" << core::rad2deg(target->cache.jointsRad[5]) << "\n";
-    }
-    text << "UFRAME 位置 mm  " << wpr.x << "  " << wpr.y << "  " << wpr.z << "\n"
-         << "UFRAME 姿态 WPR °  " << wpr.wDeg << "  " << wpr.pDeg << "  " << wpr.rDeg << "\n";
-    if (!target->cache.issueMessage.empty()) {
-        text << "说明  " << target->cache.issueMessage << "\n";
-    }
-    propertyText_->setPlainText(QString::fromStdString(text.str()));
-
-    if (twistScanWidget_ != nullptr) {
-        const double curZDeg = core::rad2deg(std::atan2(target->userDeltaOffset.rot.m[1][0], target->userDeltaOffset.rot.m[0][0]));
-        const auto samples = controller_.scanSelectedTargetTwistAngles(5.0);
-        twistScanWidget_->setSamples(samples, curZDeg);
-    }
+    propertyPanel_->showTarget(targetId);
 }
+
 
 void ShellWindow::updateUndoActions() {
     if (undoAction_ == nullptr) {
@@ -1476,71 +815,9 @@ void ShellWindow::updateUndoActions() {
 }
 
 void ShellWindow::fillIssues() {
-    issueList_->clear();
-    std::set<std::pair<std::string, std::string>> seen;
-
-    auto addIssueItem = [this, &seen](const std::string& opId, const std::string& tid,
-                                      const std::string& opName, const std::string& tName,
-                                      core::TargetValidationState state, const std::string& msg) {
-        if (msg.empty() || state == core::TargetValidationState::Valid ||
-            state == core::TargetValidationState::Unchecked) {
-            return;
-        }
-        if (!seen.insert({tid, msg}).second) {
-            return;
-        }
-        auto* item = new QListWidgetItem();
-        item->setText(QString("[%1] %2: %3")
-            .arg(QString::fromStdString(opName.empty() ? opId : opName))
-            .arg(QString::fromStdString(tName.empty() ? tid : tName))
-            .arg(QString::fromStdString(msg)));
-        item->setData(Qt::UserRole, QString::fromStdString(tid));
-        item->setData(Qt::UserRole + 1, QString::fromStdString(opId));
-
-        if (state == core::TargetValidationState::Collision ||
-            state == core::TargetValidationState::Unreachable ||
-            state == core::TargetValidationState::JointLimitExceeded ||
-            state == core::TargetValidationState::ConfigJump) {
-            item->setForeground(QColor(220, 50, 50));
-        } else {
-            item->setForeground(QColor(230, 140, 20));
-        }
-        issueList_->addItem(item);
-    };
-
-    // 1. SimulationResult issues (includes segment no-inverse, sweep collision, sweep clearance, ConfigJump)
-    for (const auto& issue : controller_.lastSimulationResult().issues) {
-        const auto* op = controller_.document().findOperation(issue.operationId);
-        if (op == nullptr) {
-            continue;
-        }
-        const auto* t = controller_.document().findTarget(issue.targetId);
-        if (t == nullptr) {
-            continue;
-        }
-        std::string opName = op->name.empty() ? issue.operationId : op->name;
-        std::string tName = issue.targetName.empty() ? t->name : issue.targetName;
-        addIssueItem(issue.operationId, issue.targetId, opName, tName, issue.state, issue.description);
-    }
-
-    // 2. Direct TargetCache issues from Document
-    for (const auto& cu : controller_.document().controllers) {
-        for (const auto& program : cu.programs) {
-            for (const auto& op : program.operations) {
-                for (const auto& target : op.targets) {
-                    addIssueItem(op.id, target.id, op.name, target.name, target.cache.status, target.cache.issueMessage);
-                }
-            }
-        }
-    }
-
-    if (issueList_->count() == 0) {
-        auto* cleanItem = new QListWidgetItem(QString::fromUtf8("未发现干涉或运动学异常 (全部正常)"));
-        cleanItem->setForeground(QColor(50, 160, 80));
-        cleanItem->setFlags(cleanItem->flags() & ~Qt::ItemIsSelectable);
-        issueList_->addItem(cleanItem);
-    }
+    issueList_->refill(controller_);
 }
+
 
 void ShellWindow::applySelection() {
     if (!controller_.selectedTargetId().empty()) {
@@ -1614,10 +891,7 @@ void ShellWindow::applySelection() {
                 if (op.id != controller_.selectedOperationId()) {
                     continue;
                 }
-                propertyText_->setPlainText(QString::fromUtf8("操作  ")
-                    + QString::fromStdString(op.name)
-                    + QString::fromUtf8("\n路径点  ")
-                    + QString::number(static_cast<int>(op.targets.size())));
+                propertyPanel_->showOperationSummary(op.name, static_cast<int>(op.targets.size()));
                 return;
             }
         }
@@ -1650,26 +924,12 @@ void ShellWindow::syncJogFromRobot() {
 }
 
 std::vector<std::string> ShellWindow::selectedTargetIdsFromTable() const {
-    std::vector<std::string> ids;
-    if (targetTable_ == nullptr) return ids;
-
-    std::set<int> rowSet;
-    const auto selectedIndexes = targetTable_->selectionModel() ? targetTable_->selectionModel()->selectedIndexes() : QModelIndexList();
-    for (const auto& idx : selectedIndexes) {
-        rowSet.insert(idx.row());
+    if (targetTable_ == nullptr) {
+        return {};
     }
-
-    for (int r : rowSet) {
-        auto* item = targetTable_->item(r, 0);
-        if (item != nullptr) {
-            const std::string id = item->data(Qt::UserRole).toString().toStdString();
-            if (!id.empty()) {
-                ids.push_back(id);
-            }
-        }
-    }
-    return ids;
+    return targetTable_->selectedTargetIds();
 }
+
 
 } // namespace olp::ui
 

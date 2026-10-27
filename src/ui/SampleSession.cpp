@@ -2,6 +2,7 @@
 
 #include "olp/algo/CollisionAndSim.h"
 #include "olp/algo/OpwKinematics.h"
+#include "olp/algo/TrajectorySimulator.h"
 #include "olp/algo/SeamAndToolpathAlgo.h"
 #include "olp/app/WorkcellLayoutService.h"
 #include "olp/io/FanucLsPostProcessor.h"
@@ -168,9 +169,21 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
         utoolOffset,
         doc.sceneNodes,
         0.05);
-    std::cout << "      -> Baked " << simRes.frames.size() << " animation frames | Cycle Time: "
-              << simRes.totalCycleTimeSec << " s (Weld: " << simRes.arcWeldTimeSec
-              << " s, Air: " << simRes.airCutTimeSec << " s).\n";
+    olp::algo::TrajectorySimulator trajectory(kin, robotModel);
+    const auto motion = trajectory.plan(
+        doc.controllers[0].programs[0],
+        repRes.detectedRobotBaseTransform,
+        uframeInWorld,
+        utoolOffset,
+        30.0);
+    simRes.frames = motion.frames;
+    simRes.totalCycleTimeSec = motion.totalCycleTimeSec;
+    simRes.arcWeldTimeSec = motion.arcWeldTimeSec;
+    simRes.airCutTimeSec = motion.airCutTimeSec;
+    std::cout << "      -> M11 baked " << motion.frames.size()
+              << " frames | Estimated cycle " << motion.totalCycleTimeSec
+              << " s (Weld: " << motion.arcWeldTimeSec
+              << " s, Air: " << motion.airCutTimeSec << " s).\n";
 
     std::cout << "[5/5] Exporting FANUC .ls Program & offline HTML TCP preview...\n";
     SampleSessionResult result;
