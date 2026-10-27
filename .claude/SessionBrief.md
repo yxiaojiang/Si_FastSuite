@@ -1,49 +1,35 @@
 # SessionBrief.md — 当前接手摘要
 
-> 最近刷新：2026-10-26。主线仍是对标 FASTSUITE Edition 2 的机器人焊接离线编程。工作区：`C:\Users\mimovr\Desktop\TEmp\Si_FastSuite`。Qt 6.12.0 在 `D:\Soft\Qt\6.12.0\msvc2022_64`，OpenCASCADE 8.0.0 在 `C:\vcpkg\vcpkg\installed\x64-windows`。
+> 最近刷新：2026-10-27。主线仍是对标 FASTSUITE Edition 2 的机器人焊接离线编程。工作区：`C:\Users\mimovr\Desktop\TEmp\Si_FastSuite`。Qt 6.12.0 在 `D:\Soft\Qt\6.12.0\msvc2022_64`，OpenCASCADE 8.0.0 在 `C:\vcpkg\vcpkg\installed\x64-windows`。
 
 ---
 
 ## 1. 当前目标
 
-M10 机器人运动学可达性、奇异点检测、碰撞检测与自转角扫描（`M10-COLLISION-REACH-001`）已完成 Round 2 缺陷闭环修复（`M10-001` ~ `M10-003` 及 `M10-007`），已转交审核方（`READY_FOR_REVIEW`）。自动化测试由 334 项增至 **368 项全部通过**，端到端验证 `--verify` 退出码为 0。
+M11 轨迹插补 Round 3 已通过，任务号 `M11-TRAJECTORY-001`，状态 `APPROVED`。`M11-001` 关闭：直线短程增量覆盖采样、15° 判断、限速和播放；+180° 圈数对不上时，在同一手臂姿态里按短程增量选解。J4、J6 从两侧跨过折点都落在球面插值上。关节运动仍用原始差值。M10 碰撞采样没有改。审核方复跑自动化测试 **425 passed, 0 failed**。示例工位 `--verify` 退出码 0，1161 帧，38.5067 秒（焊接 33.305 秒，空走 5.20174 秒）。
 
-## 2. 这轮已经落地的事实（M10 Round 2 & M10-007）
+## 2. 这轮已经落地的事实
 
-1. **M10-001 缺陷修复（执行前读取 didMutate 与撤销/重做缓存对称性）**：
-   - `CommandManager::executeCommand` 返回真实变更 `bool`；`smoothTargetOrientations`、`rotateTargetsTcpZ`、`modifyTargetsProcessParams` 执行后触发验证；
-   - `MainWindow` 监听文档变更，通过 `syncRobotJointsFromSelectedTarget()` 同步更新机器人节点关节角；
-   - `RotateTargetAroundTcpZCommand`、`ModifyTargetProcessParamsCommand` 与 `SmoothTargetOrientationsCommand` 的快照完整保存 `core::TargetCache`，并在 undo/redo 时对称备份与还原 `afterSnapshots_`，确保撤销后目标姿态、`userModified`、缓存及场景机器人关节角 100% 还原至自转前，重做后与验证结果一致。
-
-2. **M10-002 缺陷修复（自转扫描锁定当前求解构型与焊丝尖端角色判定）**：
-   - `scanTwistAngles` 接收 `std::optional<FanucConfig>` 与 `bool isWeldingRole`；
-   - `MainWindow::scanSelectedTargetTwistAngles` 准确提取已求解的 `cache.solvedConfig` 与 `cache.jointsRad` 作为锁定构型与参考关节（未求解点用 Home 且不锁硬默认 `N U T`）；
-   - 严格根据点角色设置 `isWeldRole = (role == WELD_START || role == WELD_VIA || role == WELD_END)`，非焊接角色（接近/退避点）焊丝尖端接触母材严格报警判定为干涉。
-
-3. **M10-003 缺陷修复（段内扫掠碰撞与直线段异常进入问题列表）**：
-   - 改造 `ShellWindow::fillIssues()`，完整提取 `SimulationResult.issues`（段内扫掠碰撞、扫掠间隙不足、构型跳变等）与目标点缓存问题，使用 `seen` 集合精准去重；
-   - 条目携带 `operationId` 与 `targetId`，点击/双击条目可直接导航跳转并同步路径点表、视口手柄与 3D 机器人姿态。
-
-4. **M10-007 缺陷修复（撤销后全程序仿真与下游目标点缓存同步）**：
-   - `MainWindow` 注册文档变更监听（`handleDocumentChanged`），在任何命令执行、Undo 或 Redo 时自动对当前操作触发完整程序仿真 `validateOperation`，保证全程序所有下游点的缓存（关节、构型、状态、间隙、问题）与 `lastSimulationResult_` 始终与当前文档姿态 100% 动态对称；
-   - 撤销生成操作时清空 `lastSimulationResult_`，且 `ShellWindow::fillIssues()` 严格过滤已从文档中删除的操作与目标点，彻底杜绝过期条目残留；
-   - Test 17 增补了下游 Target 2/3 在自转前、自转后、Undo、Redo 下的关节、构型与 issues 逐项相等断言，以及撤销生成操作后列表条目为 0 的端到端断言。
-
-5. **自动化测试与验收（Test 17）**：
-   - `olp_tests.exe` 增至 **368 passed, 0 failed**，`SiFastSuiteOLP.exe --verify` 退出码 0。
+1. **插补与节拍在 `src/algo/simulation/`。** 关节运动用同一个路径参数做梯形速度，六轴同时起停。直线运动是位置线性插值加姿态球面插值，逆解锁在终点构型；相邻采样关节步超过 15° 记问题。圆弧先按直线估算，并写一条说明，不做圆弧插补。拐角不混合，每段都停稳。节拍写明是估算，不是 FANUC 真实控制器节拍。焊接时间只计起弧之后、熄弧之前的那段运动，事件仍在到达之后生效。
+2. **播放不改程序。** 时间轴在 `TimelinePanel`。播放、暂停、停止、上一点、下一点、步进 0.1 秒、倍速、拖动进度、从选中点起播都有。播到结尾再按播放才回到程序起始关节；中途播放不倒回。画面只画焊枪 TCP 球和轨迹，点动读数标「仿真（未写入程序）」。不写场景关节，不入命令栈，因此不会重跑 M10 校验。
+3. **碰撞采样保持原样。** `validateAndSimulateProgram` 的时长和采样步没有动。示例会话仍用它决定问题和退出码，再用 M11 的帧和三项时间覆盖导出。回退段对 `Workpiece_BoxWall_Front` 间隙不足仍只是警告，不挡退出码。
+4. **行数。** `ShellWindow.cpp` 935 行。新的仿真、时间轴、视口预览和 Test 18 都在自己的文件里，都低于 1000 行。
+5. **验收数字。** 全量测试从原来的 368 项增到 414 项，新增的是 Test 18。示例工位仍先做碰撞检查，再按新节拍烘焙。界面底部时间轴在加载示例后即可播放，进度条拖动会先暂停再定位。播放条写明几何按插补、节拍为估算。焊道时间按起弧到熄弧之间的运动累计，接近、回退和关节过渡都算空走。文档一旦撤销或重算，播放预览会清掉，避免旧的焊枪球留在新场景上。
+6. **速度。** 关节运动的速度格是百分比，直线运动的速度格是毫米每秒。短距离慢速直线受编程速度限制；关节变化大的轴会被机器人关节速度和加速度卡住。估算加速度取 2000 mm/s²，只用于节拍，不代表控制器里的真实参数。
 
 ## 3. 未关闭风险
 
-1. 耦合符号、圈数记在哪三个轴、法兰相对示教器的位姿，仍无真机或 ROBOGUIDE 对拍。用户决定先不装 ROBOGUIDE，继续开发，关节程序仍只能当草稿。
-2. 回退段对 `Workpiece_BoxWall_Front` 的间隙低于 5 mm，不挡退出码。
-3. 客户实景和 3D PDF 五天熔断仍未开始。
-4. `M10-004` ~ `M10-006`、`M10-008` 留在 `CRDocs/DEFERRED.md`。
+1. J2/J3 耦合符号、圈数记在哪三轴、法兰相对示教器的位姿，仍无真机或 ROBOGUIDE 对拍。关节程序仍只能当草稿。
+2. 回退间隙低于 5 mm，不挡退出码。
+3. 圆弧插补、拐角混合、S 形加减速、连杆网格随播放摆动，都还没做。播放中的关节只出现在点动读数里，文档一刷新就会被场景关节写回去。
+4. `M10-004` 到 `M10-006`、`M10-008`、`M10-009` 以及 `M11-002` 到 `M11-006` 在 `CRDocs/DEFERRED.md`。客户实景和 3D PDF 五天熔断未开始。
+5. 示例工位这条焊缝没有踩到 ±180° 折点。圆弧、拐角混合、S 形加减速仍未做。
 
 ## 4. 下一步
 
-1. 审核方针对 `M10-COLLISION-REACH-001` Round 2 / M10-007 进行复核。
-2. 审核通过后推进 M11（轨迹动画与仿真回放系统）。
+1. 下一步做圆弧插补、拐角混合，或 M12 之后还没补上的交付。后处理文件这轮没有改。
+2. 不要改 M10 的采样公式，也不要改写 `CRDocs/REVIEW.md` 里已经通过的 M10 与 `M11-001` 结论。`M11-002` 到 `M11-006` 仍延期。
 
 ## 5. 索引
 
-设计基线：`Docs/OLP_System_Design_Claude.md`、`Docs/FASTSUITE_OLP_System_Architecture.md`。排期：根目录 `Plan.md`。代码审查交接：`CRDocs/`（按 `README.md` 执行者与审核者双角色状态机）。设计复盘：`.claude/contexts/OLP-archive.md`。已做步骤：`.claude/contexts/steps/00-index.md`。
+设计基线：`Docs/OLP_System_Design_Claude.md`、`Docs/FASTSUITE_OLP_System_Architecture.md`。排期：根目录 `Plan.md`。交接：`CRDocs/`。设计复盘：`.claude/contexts/OLP-archive.md`。已做步骤：`.claude/contexts/steps/00-index.md`。

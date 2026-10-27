@@ -1,3 +1,56 @@
+# 审核结论 — M11-TRAJECTORY-001
+
+> **Task ID**：`M11-TRAJECTORY-001`
+> **Task**：M11 轨迹插补、节拍估算、帧烘焙与时间轴回放
+> **Round**：3
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-27
+> **Executor**：执行方
+> **Verdict**：**APPROVED**（当前 `STATUS.md` 范围）
+>
+> Round 3 复审。审核方复跑 `build-full/Release/olp_tests.exe`：**425 passed, 0 failed**，退出码 0。复跑 `SiFastSuiteOLP.exe --verify`：退出码 0，1161 帧，38.5067 秒（焊接 33.305 秒，空走 5.20174 秒）。`CollisionAndSim.cpp` 与 `OpwKinematics.cpp` 无差异。`M11-001` 关闭。
+
+M10 的 `M10-001` ~ `M10-003`、`M10-007` 维持 **RESOLVED**。`M10-004` ~ `M10-006`、`M10-008`、`M10-009` 仍在 `DEFERRED.md`。本轮不改写下方 M10 结论。
+
+---
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M11-001 | P1 | **RESOLVED** | `src/algo/simulation/TrajectorySimulator.cpp`<br>`tests/test_simulation.cpp` | 直线采样、15° 判断、限速和播放共用短程增量。+180° 圈数对不上时，在同一手臂姿态里按短程增量选解。 |
+| M11-002 | P2 | **DEFERRED** | `TrajectoryPlan::issues`<br>`src/ui/SampleSession.cpp`<br>`src/ui/TimelinePanel.cpp` | 圆弧说明和 15° 问题写在计划里。示例日志和问题列表仍只显示 M10。见 `DEFERRED.md`。 |
+| M11-003 | P2 | **DEFERRED** | `src/ui/TimelinePanel.cpp` | 已有播放计划时，选中另一段程序不会重算。见 `DEFERRED.md`。 |
+| M11-004 | P2 | **DEFERRED** | `TrajectorySimulator.cpp` | 直线采样上限 240，长路径会粗于 5 mm / 2°。见 `DEFERRED.md`。 |
+| M11-005 | P2 | **DEFERRED** | `src/ui/OcctViewportPlayback.cpp` | 播放只画 TCP 球和轨迹，连杆网格不随帧摆动。见 `DEFERRED.md`。 |
+| M11-006 | P2 | **DEFERRED** | `src/ui/TimelinePanel.cpp` | 按操作分项的时间已算进计划，时间轴只显示总时间、焊接时间和空走时间。见 `DEFERRED.md`。 |
+
+---
+
+### M11-001 [P1] RESOLVED
+
+直线采样用 `shortestJointStep` 把关节折成相对上一采样的短程角。15° 判断、梯形限速和 `jointsAt` 读这组增量。段末用同一次判断对齐终点。关节运动仍写入终点主值的原始差值。
+
+锁定圈数找不到解时，`samePostureByShortStep` 在翻转、肘、肩相同且未超限位的候选里，按短程增量的平方和选取，然后再做 15° 判断。超过 15° 时问题句仍是 `Linear segment joint step exceeds 15 degrees`。
+
+Test 18 覆盖 J6 从 179° 到 −179°、从 −179° 到 +179°，以及 J4 从 −170° 到 +170°、从 +170° 到 −170°。后三条断言不报无逆解、不置 `hasConfigJumpInLinear`、相邻关节步小于 15°，每个采样的正运动学落在该点球面插值上（0.5 mm、1° 以内）。审核方复跑这三项均为 PASS。Round 2 里 J4 负侧折点停在 −178°、偏差 3.47 mm 的路径已经消失。
+
+---
+
+## 本轮已核对并保持
+
+- 关节运动六轴共用一条梯形路径参数，同时起停。50% 速度比 100% 更慢。Test 18 的梯形数值与 `makeTrapezoid` 一致。
+- 直线运动在采样点上做位置线性插值和姿态球面插值，逆解锁终点构型。焊接段的构型锁与 M10 相同：起点到达后锁定，熄弧后放开。
+- 起弧、熄弧在到达之后生效。焊接时间只计已经起弧的那段运动。总时间等于焊接加空走，并按操作累加。
+- 烘焙含 0、约 30 FPS 网格、总时长和各段终点。帧上的连杆变换与正运动学一致。
+- 播放、暂停、停止、按点、步进 0.1 秒、倍速、拖动时先暂停、从选中点起播，都接到 `PlaybackCursor`。未到结尾时播放不倒回；到结尾再播才回到程序起始关节。停止回到 0。倍速夹在 0.1 到 8。
+- 播放只改视口里的 TCP 球和轨迹，点动读数写「仿真（未写入程序）」。不写机器人节点，不入命令栈。文档刷新会 `invalidate()` 并清掉预览。
+- 圆弧记一条 `Circular motion is approximated as a straight line in this estimate`，然后按直线估算。拐角各自停稳，没有混合。
+- 示例会话仍用 `validateAndSimulateProgram` 决定问题和退出码，再用 M11 的帧和三项时间覆盖导出。
+- `ShellWindow.cpp` 935 行。新的仿真、时间轴、视口预览和 Test 18 各自成文件，都低于 1000 行。
+
+---
+
 # 审核结论 — M10-COLLISION-REACH-001
 
 > **Task ID**：`M10-COLLISION-REACH-001`
