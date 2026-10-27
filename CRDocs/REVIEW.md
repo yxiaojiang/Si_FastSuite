@@ -1,3 +1,58 @@
+# 审核结论 — M12-POST-FANUC-001
+
+> **Task ID**：`M12-POST-FANUC-001`
+> **Task**：M12 FANUC .ls 后处理器完备化、多操作/多坐标系切换、工艺指令映射、合规校验门禁与 UI 导出联动
+> **Round**：2
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-27
+> **Executor**：执行方
+> **Verdict**：**APPROVED**（当前 `STATUS.md` 范围）
+>
+> Round 2 复审。审核方复跑 `build-full/Release/olp_tests.exe`：**482 passed, 0 failed**，退出码 0。复跑 `SiFastSuiteOLP.exe --verify`：退出码 0，1161 帧，38.5067 秒。`M12-001`、`M12-002`、`M12-003` 关闭。顺带落地的最近整数把 `M12-005` 一并关闭。
+
+M11 的 `M11-001` 维持 **RESOLVED**。`M11-002` ~ `M11-006` 仍在 `DEFERRED.md`。M10 已关闭项不改写。
+
+---
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M12-001 | P1 | **RESOLVED** | `src/io/FanucLsPostProcessor.cpp`<br>`tests/test_postprocessor.cpp` | 速度先取最近整数。关节不在 1..100、直线不足 1 mm/s、CNT 不在 0..100 时记错误并拒绝导出。 |
+| M12-002 | P1 | **RESOLVED** | `src/io/FanucLsPostProcessor.cpp`<br>`tests/test_postprocessor.cpp` | 点名超过 16 字符、程序注释超过 32 字符记错误。运动行和 `/POS` 不再截断。 |
+| M12-003 | P1 | **RESOLVED** | `src/io/FanucLsPostProcessor.cpp`<br>`tests/test_postprocessor.cpp` | 关节运动带 `WELD_SPEED` 记错误并拒绝导出。关节行只写百分比。 |
+| M12-004 | P2 | **DEFERRED** | `src/ui/LsExportDialog.cpp`<br>`src/ui/MainWindow.cpp` | 警告在通过时不显示。Home 两个勾选与正文不一致。对话框只处理第一段程序。见 `DEFERRED.md`。 |
+| M12-005 | P2 | **RESOLVED** | `src/io/FanucLsPostProcessor.cpp` | 8.6 mm/s 写成 `9mm/sec`。向零截断已去掉。 |
+| M12-006 | P2 | **DEFERRED** | `src/io/FanucLsPostProcessor.cpp`<br>`src/ui/LsExportDialog.cpp` | 头部日期、`FILE_NAME`、`PROG_SIZE`、关节行空格和控制器配置尚未按示教器样本收紧。见 `DEFERRED.md`。 |
+
+---
+
+### M12-001 [P1] RESOLVED
+
+校验和生成都先 `std::round`。关节速度不在 1..100、非焊接直线速度不足 1 mm/s、CNT 不在 0..100 时记错误。`generateLsString` 在校验失败时返回空字符串，正文里不再把 0 改成 50% 或 200 mm/s，也不再把 CNT 夹到 100。
+
+0.4% 和 0.4 mm/s 四舍五入后是 0，导出被拒绝。150% 和 CNT 250 同样被拒绝。8.6 mm/s 写成 `9mm/sec`。关节行在校验通过后只写这个整数百分比。Test 19 这几条均为 PASS。
+
+### M12-002 [P1] RESOLVED
+
+点名超过 16 字符、程序注释超过 32 字符记错误，`generateLsString` 返回空字符串。运动行和 `/POS` 直接写 `t.name`，没有 `substr`。`PROGRAM_NAME_16C` 与 `TARGET_NAME_16CH` 都是 16 个字符，对应的 17 字符样本被拒绝。程序注释用 32 个 `C` 通过、33 个 `C` 拒绝。Test 19 先断言长度再断言结果，这几条均为 PASS。
+
+### M12-003 [P1] RESOLVED
+
+`motion == J && useWeldSpeed` 记错误，生成函数在写运动行之前返回。关节分支只写百分比，`WELD_SPEED` 只出现在非关节运动上。Test 19 对这个组合断言校验失败且正文为空，结果为 PASS。
+
+---
+
+## 本轮已核对并保持
+
+- 程序名规则与交接一致：大写字母开头，仅含大写字母、数字和下划线，长度 1..16。空程序、逆解无效、圆弧运动 `C` 会拒绝导出，不会把圆弧写成直线。
+- 示例程序 `build/WELD_001.ls` 的段头、`UFRAME_NUM`/`UTOOL_NUM`、`Arc Start[1]`/`Arc End[1]`、`WELD_SPEED` 和 XYZWR 三位小数与现有 `toWPR()` 一致。配置字来自 `FanucConfig::toString()`，格式为 `N U T, 0, 0, 0`。
+- `startState.homeJointsRad` 与机器人模型的 Home 同为示教器显示角。默认 Home 的 J2 为 0，按现有耦合式写出的 J3 与显示角相同。本条不重开 `RISK-001`。
+- 多操作点号连续，`exportControllerPrograms` 写出两份文件。工具栏「导出」和文件菜单都会打开 `LsExportDialog`。`ShellWindow.cpp` 按编辑器行号为 948 行，交接里的 880 是非空行计数。各改动文件均低于 1000 行。
+- 默认导出的回 Home 仍是注释行。勾选「Home 输出为 GP1 关节点」且同时保留回 Home 时，才会追加 `J P[n:HOME]` 和关节 `/POS`。该勾选组合的界面问题记在 `M12-004`，不挡上述语法。
+
+---
+
 # 审核结论 — M11-TRAJECTORY-001
 
 > **Task ID**：`M11-TRAJECTORY-001`

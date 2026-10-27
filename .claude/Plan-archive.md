@@ -1,5 +1,26 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-27：FANUC .ls 后处理器完备化、合规门禁与 UI 导出（M12）
+
+1. **[DONE] FANUC .ls 后处理器与导出联动（M12）。** 任务号 `M12-POST-FANUC-001`，Round 2 **APPROVED** 关闭。`M12-001`、`M12-002`、`M12-003`、`M12-005` 闭环解决：
+   - 完备 FANUC ASCII `.ls` 结构，精确动态生成 `/ATTR` 的 `LINE_COUNT` 与内存估算；
+   - 前置合规门禁：程序名严格 1..16 大写字母规范；点名超 16 字符与程序注释超 32 字符直接报错阻断导出，杜绝静默截断；
+   - 速度与 CNT 整数四舍五入直出，J 轴超出 1..100%、L 轴不足 1 mm/s、CNT 超出 0..100 报错阻断，杜绝静默改写或夹紧；
+   - 关节运动 J 携带 `useWeldSpeed` 非法组合报错阻断，生成文本绝对杜绝 `J P[...] WELD_SPEED`；
+   - 工艺指令完整映射（`Arc Start/End`、`Weave Sine/End`、`WAIT`、`DO`、`! comment`）；
+   - Home 双模导出（默认注释行 + 可选 GP1 关节点）；
+   - 多操作连续点号与多程序控制器批量导出（`exportControllerPrograms`）；
+   - 控制器与 UI 联动：`MainWindow` 暴露高层导出接口，新增独立 `LsExportDialog` 暗色等宽预览对话框，全面激活工具栏与文件菜单导出动作；
+   - 新增独立测试单元 Test 19（40 项断言），全量测试扩充至 482 项全部通过，`--verify` 退出码 0，文件行数均受控在 900 行以下。
+
+## 2026-10-27：轨迹插补、节拍估算、帧烘焙与时间轴回放（M11）
+
+1. **[DONE] 轨迹插补与时间轴回放（M11）。** 任务号 `M11-TRAJECTORY-001`，Round 3 **APPROVED** 关闭。`M11-001` 闭环解决：
+   - 关节运动同参数梯形规划，直线运动位置线性 + 姿态 SLERP 插值，短程增量折角消除 $\pm 180^\circ$ 圈数跳变；
+   - 帧烘焙约 30 FPS 输出，精确区分起弧到熄弧的纯焊接时间与空走时间；
+   - 新增 `TimelinePanel` 时间轴面板与 `OcctViewportPlayback` 轻量 TCP 预览，支持播放/暂停/停止/步进/拖拽定位/选中点起播，不污染文档与 Undo 栈；
+   - 遵循 Rules.md 将大文件拆分在 1000 行以下；新增 Test 18 测试集（58 项断言），测试集增至 425 项全通，`--verify` 退出码 0。
+
 ## 2026-10-26：切线连续边链扩展（Edge Chain）与复合曲率焊缝生成（M07）
 
 1. **[DONE] 切线连续边链扩展与复合焊缝生成。** 实现基于几何与拓扑双重校验的切线连续边链扩展算法 `findTangentContinuousEdgeChain`。1. 基于 `BRepAdaptor_Curve` 的端点 3D 几何邻接判定，彻底免疫 STEP 导入模型中由于 `TopAbs_REVERSED` 引起的顶点反序与端点错位；2. 贪心偏角匹配选择偏转角极小值（$\le \theta_{\text{max}}$），确保 $C^1$ 连续过渡；3. 支持环形曲线（如 `Workpiece_PipeFlange_DN15` 的 360° 圆环焊缝）与多段封闭多边形轮廓闭合环识别（`isClosed = true`）；4. 实现 `buildSeamFromEdgeChain` 复合曲线累计弧长均匀采样与两侧母材局部面法向角平分线矩阵计算；5. 升级 `OcctCadKernel::evaluateEdgeAtArcLength` 支持 OCCT `GCPnts_AbscissaPoint` 真实曲面弧长积分，消除曲率边离散坍塌；6. 扩展 `CreateSeamFromPickedEdgeCommand` 支持自动边链扩展与对称撤销重做。通过独立审计员 Argon 深度代码审查并获 PASS 批准，新增 Test 14 自动化测试，全部 126 项测试通过，`--verify` 退出码 0。

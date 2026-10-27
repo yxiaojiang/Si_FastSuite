@@ -207,3 +207,34 @@
 - **触发阶段**：时间轴或后续报告要显示分操作节拍时。
 - **验收条件**：界面能读到每个操作的焊接时间、空走时间和总时间，且各项之和等于周期时间。
 
+---
+
+## M12-004 [OPEN] 导出对话框不显示警告，且只覆盖第一段程序（P2）
+
+- **来源轮次**：`M12-POST-FANUC-001` Round 1 审核（2026-10-27）。
+- **位置**：`src/ui/LsExportDialog.cpp` 的 `refreshPreview`；`src/ui/MainWindow.cpp` 的 `findProgramInDoc`、`previewFanucLs`、`validateProgramForExport`。
+- **现状**：校验结果 `ok == true` 时，状态行显示绿色通过，警告明细不列出。构型跳变因此在导出界面上不可见。勾选「尾部追加 Return Home」只追加 `! HOME joints deg` 注释；只有同时勾选「Home 输出为 GP1 关节点」才写出关节运动。取消前一个勾选后，后一个勾选不生效。对话框和空的程序号都固定取第一段程序。`exportAllPrograms` 没有菜单或工具栏入口。`previewFanucLs` 与 `validateProgramForExport` 不接收 `LsPostConfig`，碰撞阻断等选项只在对话框直接调用后处理器时生效。
+- **后果**：两段以上程序时，操作者打开导出看到的可能是另一段程序。只含警告的程序会被显示成完全通过。
+- **触发阶段**：一个工程里出现两段以上程序，或导出界面要列出非阻断警告、并提供整工位批量导出时。
+- **验收条件**：预览和导出的是当前选中操作所在的那段程序。警告逐条显示，且不写成绿色通过。两个 Home 勾选的每种组合都与生成文本一致。批量导出有界面入口，或者界面明确只导出当前这一段。`previewFanucLs` 与 `validateProgramForExport` 使用同一份 `LsPostConfig`。
+
+---
+
+## M12-005 [RESOLVED in M12 Round 2] 不小于 1 mm/s 的直线速度向零截断（P2）
+
+- **来源轮次**：`M12-POST-FANUC-001` Round 1 审核（2026-10-27）。
+- **位置**：`src/io/FanucLsPostProcessor.cpp` 直线速度。
+- **现状**：Round 2 改为 `std::round`。8.6 mm/s 写成 `9mm/sec`，与编程值之差小于 0.5 mm/s。Test 19 核对过这一条。`M12-001` 已关闭小于 1 mm/s 被改成 200 的路径。
+- **闭环验证**：审核方复跑 Test 19 中 `Linear speed 8.6 mm/sec formats to nearest integer 9mm/sec` 为 PASS。
+
+---
+
+## M12-006 [OPEN] `.ls` 头部与控制器配置尚未按示教器样本收紧（P2）
+
+- **来源轮次**：`M12-POST-FANUC-001` Round 1 审核（2026-10-27）。
+- **位置**：`FanucLsPostProcessor::generateLsString` 的 `/ATTR` 与关节 `/POS`；`LsExportDialog` 的本地 `LsPostConfig`。
+- **现状**：创建和修改时间固定为 `26-10-27 12:00:00`。`FILE_NAME` 为空，`PROG_SIZE` 为 0，`MEMORY_SIZE` 由行数估算。关节行写成 `J1 =`，常见示教器样本是 `J1=`。`TCD` 的三项写在同一行。预览是等宽暗色文本，没有语法高亮。导出选项只活在对话框里，不记在 `ControllerUnit` 上。无 MakeTP 时不能证明这些字段会被拒绝。加载对拍仍由 `RISK-001` 覆盖。
+- **后果**：重新打开对话框后，组掩码和碰撞阻断回到默认值。头部字段与示教器导出的样本不一致。
+- **触发阶段**：具备 ROBOGUIDE / MakeTP 做加载对拍时，或工程文件开始保存控制器配置时。
+- **验收条件**：MakeTP 能编译本程序生成的 `.ls` 且无语法错误。关节位置行与该次对拍所用的示教器样本一致。每个控制器保留自己的组掩码、速度单位和碰撞阻断选项，重开导出对话框时仍是该控制器的那一份。
+
