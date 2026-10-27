@@ -13,6 +13,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QDockWidget>
+#include <QFileDialog>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -20,6 +21,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
@@ -300,6 +302,36 @@ void ShellWindow::buildChrome() {
     connect(exportMenuAction, &QAction::triggered, this, [this] {
         LsExportDialog dlg(controller_, this);
         dlg.exec();
+    });
+    auto* exportPdfAction = fileMenu->addAction(commandIcon(IconKind::Export, fileInk), QString::fromUtf8("导出 2D PDF 工艺报告..."));
+    exportPdfAction->setToolTip(QString::fromUtf8("导出当前工位 SOP 工艺指导书为 PDF 文件。"));
+    connect(exportPdfAction, &QAction::triggered, this, [this] {
+        const QString path = QFileDialog::getSaveFileName(
+            this, QString::fromUtf8("导出 2D PDF 工艺报告"),
+            QStringLiteral("Workcell_SOP_Report.pdf"),
+            QStringLiteral("PDF 文件 (*.pdf)"));
+        if (path.isEmpty()) return;
+        PdfReportOptions opts;
+        if (viewport_ != nullptr && viewport_->isVisible()) {
+            opts.snapshotImage = viewport_->grab().toImage();
+            opts.includeViewportSnapshot = !opts.snapshotImage.isNull();
+        }
+        opts.cycleTimeSec = controller_.lastCycleTimeSec();
+        opts.weldTimeSec = controller_.lastWeldTimeSec();
+        if (opts.cycleTimeSec > opts.weldTimeSec) {
+            opts.airTimeSec = opts.cycleTimeSec - opts.weldTimeSec;
+        }
+        for (const auto& seam : controller_.document().seams) {
+            if (seam.sampledFrames.size() >= 2) {
+                opts.totalWeldLengthMm += std::max(0.0, seam.sampledFrames.back().arcLengthMm - seam.sampledFrames.front().arcLengthMm);
+            }
+        }
+        std::string err;
+        if (controller_.exportWorkcellPdfReport(path.toStdString(), opts, &err)) {
+            statusBar()->showMessage(QString::fromUtf8("已成功导出 PDF 工艺报告: %1").arg(path), 5000);
+        } else {
+            QMessageBox::warning(this, QString::fromUtf8("导出失败"), QString::fromStdString(err));
+        }
     });
     fileMenu->addSeparator();
     fileMenu->addAction(QString::fromUtf8("退出"), this, &QWidget::close);

@@ -541,4 +541,11 @@ bool MainWindow::exportAllPrograms(
     return allSuccess;
 }
 
+bool MainWindow::exportWorkcellPdfReport(
+    const std::string& outputFilePath,
+    const PdfReportOptions& options,
+    std::string* errorOut) {
+    return WorkcellPdfReportExporter::exportToPdf(doc_, outputFilePath, options, errorOut);
+}
+
 } // namespace olp::ui

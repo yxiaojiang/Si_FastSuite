@@ -77,6 +77,19 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
     }
     const olp::core::Transform4d uframeInWorld = uframeNode->localTransform;
 
+    olp::core::SceneNode toolNode;
+    toolNode.id = "tool_torch_1";
+    toolNode.name = "Welding_Torch_150mm";
+    toolNode.type = olp::core::SceneNodeType::Tool;
+    toolNode.utoolNumber = 1;
+    toolNode.tcpOffset = olp::core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
+    toolNode.localTransform = toolNode.tcpOffset;
+    toolNode.parentId = repRes.activeRobotNodeId;
+    doc.sceneNodes.push_back(toolNode);
+    if (auto* rNode = doc.findSceneNode(repRes.activeRobotNodeId)) {
+        rNode->mountedToolNodeId = toolNode.id;
+    }
+
     int frontWallHandle = -1;
     std::string frontWallNodeId;
     std::vector<int> workpieceHandles;

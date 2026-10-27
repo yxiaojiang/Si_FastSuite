@@ -28,3 +28,4 @@ void testWeldingProcessEventsAndTorchSpinTuning();
 void testKinematicsReachabilitySingularityAndTwistScan();
 void testTrajectoryAndPlayback();
 void testFanucLsPostProcessorValidationAndExport();
+void testWorkcellPdfReportExport();

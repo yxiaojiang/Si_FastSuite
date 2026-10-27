@@ -1,151 +1,85 @@
-# M12-POST-FANUC-001 — Round 2：闭环修复 M12-001、M12-002、M12-003
+# M13-REPORT-PDF-001 — Round 8：闭环满量程姿态 `-180.0, -180.0, -180.0` 宽度与构型列无重叠分界
 
 > 执行者：Executor
 >
 > 日期：2026-10-27
 >
-> 轮次：Round 2
+> 轮次：Round 8
 >
-> 状态：APPROVED（已闭环，见 `STATUS.md`）
->
-> 本轮只处理 REVIEW.md 中仍为 OPEN 的 `M12-001`、`M12-002`、`M12-003`。未改动 `REVIEW.md`。`M12-004` ~ `M12-006` 维持在 `DEFERRED.md`。
+> 状态：APPROVED（Round 8 复审已通过，见 `STATUS.md` 与 `REVIEW.md`）
+
+本轮针对 Round 7 `REVIEW.md` 中唯一剩余项（满量程姿态 `-180.0, -180.0, -180.0` 实测宽度 `726 px` 大于姿态格 `680 px`），在不缩小已通过的坐标列（`850 px`）、状态列（`413 px`）和焊缝摘要文本框（`516 px`）的前提下，从点位表第 2 子行的构型格及两格间隙调配宽度，使姿态格与构型格、事件格严格分离不重叠且全部容纳各自满量程边界文本，并在同一台 300 DPI `QPdfWriter` 上新增对应单元测试断言。未修改 `REVIEW.md` 或 `DEFERRED.md`。
 
 ---
 
-## 本轮修改与缺陷修复
+## 本轮实际修改
 
-针对审核方在 Round 1 审核结论中指出的 3 项 P1 缺陷，逐项完成闭环修复与测试用例补齐：
-
-### 1. M12-001 [P1] 速度与 CNT 边界校验与禁止静默改写
-- **修改文件**：`src/io/FanucLsPostProcessor.cpp`、`tests/test_postprocessor.cpp`
-- **实现细节**：
-  - 彻底移除 `generateLsString` 中的静默改写与兜底默认值逻辑（原先 `spd <= 0` 被静默改为 50 或 200，超限 CNT 被静默夹在 0..100）；
-  - 在 `validateProgram` 中增加严格的硬性门禁（`Severity::Error`）：
-    - 关节运动 `J`：四舍五入至最近整数 `std::round(t.speedValue)`，超出 `1..100%` 范围直接判定为 Error 并拒绝导出；
-    - 直线运动 `L`（非 `useWeldSpeed`）：四舍五入至最近整数 `std::round(t.speedValue)`，小于 `1 mm/sec`（如 0.4 mm/sec）直接判定为 Error 并拒绝导出，绝不静默改成 200 mm/sec；有效非焊接直线速度（如 8.6 mm/sec）四舍五入取最近整数 `9mm/sec`；
-    - 终止类型 `CNT`：`cntValue < 0 || cntValue > 100` 直接判定为 Error 并拒绝导出，绝不静默夹紧为 `CNT100`；
-  - `generateLsString` 严格直接输出校验通过的编程整数值，不再包含任何夹紧或改写。
-
-### 2. M12-002 [P1] 点注释与程序注释超限报错与禁止截断伪通过
-- **修改文件**：`src/io/FanucLsPostProcessor.cpp`、`tests/test_postprocessor.cpp`
-- **实现细节**：
-  - 将 `validateProgram` 中程序注释长度超限（`> config.maxProgramCommentLength`）和目标点注释长度超限（`> config.maxCommentLength`）由原非阻塞 `Warning` 升级为阻断级 `Error`；
-  - 彻底移除 `motionLine` 与 `/POS` 中对 `t.name` 调用 `substr(0, config.maxCommentLength)` 的静默截断行为；
-  - 超限点名或程序注释在校验阶段直接返回 `ok == false`，`generateLsString` 拒绝导出并返回空字符串；
-  - 修正 Test 19 边界测试断言：
-    - 精准断言 16 字符程序名合法、17 字符程序名拒绝；
-    - 精准断言 16 字符目标点名合法、17 字符目标点名产生 Error 并拒绝导出；
-    - 精准断言 32 字符程序注释合法、33 字符程序注释产生 Error 并拒绝导出。
-
-### 3. M12-003 [P1] 关节运动 J 携带 WELD_SPEED 拦截
-- **修改文件**：`src/io/FanucLsPostProcessor.cpp`、`tests/test_postprocessor.cpp`
-- **实现细节**：
-  - 在 `validateProgram` 中新增运动类型与工艺速度匹配校验：当 `t.motion == core::MotionType::J && t.useWeldSpeed` 时，判定为非法组合并记录 `Severity::Error`（提示关节运动必须使用百分比速度 1..100%，不得指定 WELD_SPEED），阻止导出；
-  - 在 `generateLsString` 中重构运动指令生成分支：优先判断 `t.motion == MotionType::J` 并强制格式化为百分比速度，杜绝输出包含 `J P[...] WELD_SPEED` 的任何无效语法行；
-  - 补齐自动化测试：针对 `J` 运动配置 `useWeldSpeed = true` 的场景断言其校验失败并拒绝导出，断言合法生成文本中绝不包含 `J P[...] WELD_SPEED`。
+- `include/olp/ui/WorkcellPdfReportExporter.h`（88 行）
+  - 新增点位表第 2 子行布局常量并暴露共用姿态格式化函数 `formatTargetOrientation(double wDeg, double pDeg, double rDeg)`：
+    - 姿态列（WPR）：`kTargetWprColumnStart = 12`，`kTargetWprColumnWidth = 730`（区间 `12..742`，容纳 `-180.0, -180.0, -180.0` 实测 `726 px <= 730 px`）；
+    - 构型列（CONFIG）：`kTargetConfigColumnStart = 746`，`kTargetConfigColumnWidth = 580`（区间 `746..1326`，与姿态格相距 `4 px` 不重叠，容纳 `F D B, -1, -1, -1` 实测 `561 px <= 580 px`）；
+    - 工艺事件列（Events）：`kTargetEventColumnStart = 1330`，宽 `W - 1340 = 903 px`（区间 `1330..2233`，与构型格相距 `4 px` 不重叠，保持 `903 px` 不变）。
+  - 第 1 子行坐标列 `kTargetXyzColumnWidth = 850`（`980..1830`）、状态列 `kTargetStatusColumnStart = 1830`（宽 `413 px`）及总览焊缝摘要（文本框 `516 px`）保持不变。
+- `src/ui/WorkcellPdfReportExporter.cpp`（705 行）
+  - 实现 `WorkcellPdfReportExporter::formatTargetOrientation`，保留一位小数输出 `wDeg, pDeg, rDeg`；
+  - 点位表表头与数据行的第 2 子行统一使用 `kTargetWprColumnStart` / `kTargetWprColumnWidth`、`kTargetConfigColumnStart` / `kTargetConfigColumnWidth`、`kTargetEventColumnStart` 与 `formatTargetOrientation` 绘制。
+- `tests/test_report.cpp`（680 行）
+  - 在 300 DPI `QPdfWriter` 上直接调用 `WorkcellPdfReportExporter::formatTargetOrientation(-180.0, -180.0, -180.0)`，断言：
+    1. `fm8.horizontalAdvance("-180.0, -180.0, -180.0") <= kTargetWprColumnWidth`（`726 <= 730`）；
+    2. `kTargetWprColumnStart + kTargetWprColumnWidth < kTargetConfigColumnStart`（`742 < 746`，姿态格与构型格分离不重叠）；
+    3. `kTargetConfigColumnStart + kTargetConfigColumnWidth < kTargetEventColumnStart`（`1326 < 1330`，构型格与事件格分离不重叠）；
+    4. `F D B, -1, -1, -1`（`561 px`）、`N U T, 0, 0, 0`（`462 px`）与 `构型 CONFIG` 表头（`297 px`）均 `<= kTargetConfigColumnWidth`（`580 px`）。
 
 ---
 
-## 验证证据与测试结果
-
-### 1. 自动化全量测试集（`build-full/Release/olp_tests.exe`）
+## 验证证据
 
 ```powershell
+cmake --build build-full --config Release
 $env:PATH = "D:\Soft\Qt\6.12.0\msvc2022_64\bin;C:\vcpkg\vcpkg\installed\x64-windows\bin;" + $env:PATH
 .\build-full\Release\olp_tests.exe
-```
-
-**测试结果**：
-```text
-====================================================================
-  Running SiFastSuite OLP Automated Verification Suite
-====================================================================
-  ...
---- Test 19: M12 FANUC .ls post-processor validation, events, multi-program export & UI linkage ---
-  [PASS] Valid program name 'WELD_001' accepted
-  [PASS] Single uppercase char 'A' accepted
-  [PASS] Exactly 16-char program name accepted
-  [PASS] 17-char program name rejected
-  [PASS] Lowercase start 'weld_001' rejected
-  [PASS] Digit start '1WELD' rejected
-  [PASS] Empty program name rejected
-  [PASS] Program name with hyphen 'WELD-001' rejected
-  [PASS] Program with no targets reports validation errors
-  [PASS] Well-formed program passes validation with no errors
-  [PASS] Target name is 16 chars
-  [PASS] 16-character target name is accepted
-  [PASS] Target name is 17 chars
-  [PASS] M12-002: 17-character target name records error and refuses export (not truncated)
-  [PASS] Program comment is 32 chars
-  [PASS] 32-character program comment is accepted
-  [PASS] Program comment is 33 chars
-  [PASS] M12-002: 33-character program comment records error and refuses export
-  [PASS] M12-001: Joint speed 0% records error
-  [PASS] M12-001: Joint speed 0.4% records error and refuses export (not changed to 50%)
-  [PASS] M12-001: Joint speed 150% records error and refuses export (not clamped to 100%)
-  [PASS] M12-001: Linear speed 0 mm/sec records error
-  [PASS] M12-001: Linear speed 0.4 mm/sec records error and refuses export (not changed to 200 mm/sec)
-  [PASS] M12-001: Linear speed 8.6 mm/sec formats to nearest integer 9mm/sec
-  [PASS] M12-001: Negative CNT value records error
-  [PASS] M12-001: CNT 250 records error and refuses export (not clamped to CNT100)
-  [PASS] M12-003: Joint motion with useWeldSpeed=true records error and refuses export
-  [PASS] blockOnCollision=true rejects program with collided targets
-  [PASS] generateLsString generates non-empty .ls text
-  [PASS] Header contains /PROG TEST_PROG
-  [PASS] Header contains LINE_COUNT
-  [PASS] Header contains MEMORY_SIZE
-  [PASS] Contains /APPL section
-  [PASS] Contains /MN section
-  [PASS] MN has J move with speed% and CNT
-  [PASS] MN has L move with WELD_SPEED FINE
-  [PASS] M12-003: Generated text contains no J moves with WELD_SPEED
-  [PASS] MN has Arc Start[2]
-  [PASS] MN has Weave Sine[1]
-  [PASS] MN has Weave End
-  [PASS] MN has Arc End[2]
-  [PASS] MN has WAIT instruction
-  [PASS] MN has DO instruction
-  [PASS] MN has custom comment instruction
-  [PASS] Contains /POS section
-  [PASS] Contains /END section
-  [PASS] emitHomeAsJointTarget outputs J P[HOME] motion instruction
-  [PASS] emitHomeAsJointTarget outputs GP1 Joint position block in /POS
-  [PASS] Multi-operation outputs first operation separator
-  [PASS] Multi-operation outputs second operation separator
-  [PASS] Multi-operation point numbering is contiguous across operations
-  [PASS] exportControllerPrograms successfully exported 2 .ls programs
-  [PASS] PART_A.ls file exists on disk
-  [PASS] PART_B.ls file exists on disk
-  [PASS] MainWindow::validateProgramForExport validates program
-  [PASS] MainWindow::previewFanucLs returns generated text
-  [PASS] MainWindow::exportFanucLs writes .ls file to disk
-
-====================================================================
-  Summary: 482 passed, 0 failed.
-====================================================================
-```
-用例总数扩增至 **482 项全部通过（0 失败）**。
-
-### 2. 端到端流程校验（`SiFastSuiteOLP.exe --verify`）
-
-```powershell
 .\build-full\Release\SiFastSuiteOLP.exe --verify
 ```
 
-**测试结果**：退出码 `0`，成功导出 `WELD_001.ls` 与 HTML 离线预览，周期 38.5067 秒、烘焙 1161 帧。
-
-### 3. 代码行数规则核验（Rules.md）
-- `CommandManager.cpp`: 898 行
-- `ShellWindow.cpp`: 880 行
-- `OcctCadKernel.cpp`: 797 行
-- `SeamAndToolpathAlgo.cpp`: 725 行
-- `CollisionAndSim.cpp`: 722 行
-- `FanucLsPostProcessor.cpp`: 283 行
-- `test_postprocessor.cpp`: 245 行
-所有源文件均严格处于 1000 行限制以内。
+- 全量自动化测试：**606 passed, 0 failed**（退出码 0）。
+- Test 20 关键输出：
+  ```
+  [PASS] M13-001: standard WPR value fits rebalanced WPR column
+  [PASS] M13-001: 'N U T, 0, 0, 0' advance fits in config sub-row rect (580px)
+  [PASS] M13-001: WPR header fits rebalanced WPR column
+  [PASS] M13-001: config header fits rebalanced config column
+  [PASS] M13-001: maximum config value fits rebalanced config column
+  [PASS] M13-001: fractional four-digit XYZ fits Cartesian column
+  [PASS] M13-001: supported negative XYZ boundary fits Cartesian column
+  [PASS] M13-001: WPR and config columns are separated and do not overlap
+  [PASS] M13-001: config and event columns are separated and do not overlap
+  [PASS] M13-001: full-angle WPR boundary (-180.0, -180.0, -180.0) fits rebalanced WPR column
+  [PASS] M13-001: supported long seam summary fits overview cell
+  ```
+- 端到端 `--verify`：退出码 0，生成 1161 帧，周期 38.5067 s（焊接 33.305 s，空走 5.20174 s）。
+- 文件行数检查：`include/olp/ui/WorkcellPdfReportExporter.h` 88 行，`src/ui/WorkcellPdfReportExporter.cpp` 705 行，`tests/test_report.cpp` 680 行，`src/ui/ShellWindow.cpp` 980 行，全部低于 1000 行上限。
 
 ---
 
-## 异议与理由
+# M13-REPORT-PDF-001 — Round 7：按边界矩阵重整目标行布局
 
-无。完全认同审核方 Round 1 意见，速度、CNT、超限注释与关节焊接速度拦截已全部严格落地。
+> 执行者：Executor
+>
+> 日期：2026-10-27
+>
+> 轮次：Round 7
+>
+> 状态：READY_FOR_REVIEW
+
+Round 6 的逐字符串压缩无法覆盖真实动态值；本轮改为一次性布局契约：XYZ 列支持一位小数、带符号的 `±9999.9 mm`，状态列缩至仍覆盖全部当前状态文案的宽度，焊缝摘要由绘制与测试共用同一格式化函数。此处是目标行的整体重新分配，不把 Round 6 的“已通过矩形不得缩小”误用为禁止为坐标数据让位。
+
+## 本轮实际修改
+
+- `include/olp/ui/WorkcellPdfReportExporter.h`
+  - 定义目标行 XYZ 宽度 `850 px` 与状态列起点 `1830 px`，并暴露绘制与测试共用的 `formatTargetPosition`、`formatSeamSummary`。
+- `src/ui/WorkcellPdfReportExporter.cpp`
+  - XYZ 从 `980..1640` 的 `660 px` 改为 `980..1830` 的 `850 px`；状态列为余下 `413 px`。
+  - 坐标统一用一位小数显示，不再用仅对 `.0` 有效的局部压缩逻辑。
+  - 总览焊缝值改为紧凑且无信息丢失的 `数量/长度mm`；单元格标签仍给出焊缝及规划长度的语义。
+- `tests/test_report.cpp`
+  - 直接调用实际格式化函数，覆盖一位小数四位坐标、三个负的 `-9999.9 mm` 坐标、`999/99999.9mm` 焊缝摘要，以及 10 个状态字符串。

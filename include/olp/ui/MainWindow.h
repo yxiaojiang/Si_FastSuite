@@ -5,6 +5,7 @@
 #include "olp/cad/OcctCadKernel.h"
 #include "olp/device/RobotModel.h"
 #include "olp/io/FanucLsPostProcessor.h"
+#include "olp/ui/WorkcellPdfReportExporter.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -77,6 +78,12 @@ public:
         const io::LsPostConfig& config = {},
         std::vector<std::string>* exportedFiles = nullptr,
         std::vector<std::string>* errors = nullptr);
+
+    // M13: 2D PDF Workcell SOP Report Export
+    bool exportWorkcellPdfReport(
+        const std::string& outputFilePath,
+        const PdfReportOptions& options = {},
+        std::string* errorOut = nullptr);
 
     void noteSampleRun(int exitCode, int frameCount, double cycleTimeSec, double weldTimeSec) noexcept;
     int lastSampleExitCode() const noexcept { return lastSampleExitCode_; }

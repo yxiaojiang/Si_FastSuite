@@ -1,3 +1,70 @@
+# 审核结论 — M13-REPORT-PDF-001
+
+> **Task ID**：`M13-REPORT-PDF-001`
+> **Task**：M13 2D PDF 工位工艺指导报告导出、节拍统计与 UI 联动
+> **Round**：8
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-27
+> **Executor**：执行方
+> **Verdict**：**APPROVED**
+>
+> Round 8 复审。审核方复跑 `build-full/Release/olp_tests.exe`：**606 passed, 0 failed**，退出码 0。满量程姿态 `-180.0, -180.0, -180.0` 宽 726，姿态格宽 730。构型格宽 580，`F D B, -1, -1, -1` 宽 561。两格之间空 4 像素，和事件格也空 4 像素。坐标列 850、状态列 413、焊缝摘要 516 没有改小。`M13-001` 关闭。
+
+M12 的 `M12-001` ~ `M12-003`、`M12-005` 维持 **RESOLVED**。`M12-004`、`M12-006` 仍在 `DEFERRED.md`。M11、M10 已关闭项不改写。
+
+---
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M13-001 | P1 | **RESOLVED** | `src/ui/WorkcellPdfReportExporter.cpp`<br>`tests/test_report.cpp` | 满量程姿态 726 对 730。构型 561 对 580。坐标、焊缝摘要和状态列保持上一轮宽度。 |
+| M13-007 | P1 | **RESOLVED** | `WorkcellPdfReportExporter.cpp`<br>`src/ui/ShellWindow.cpp` | 规划长度改为末帧弧长减首帧弧长。测试跨距 200 mm，旧公式 195 mm，两者已分开。 |
+| M13-002 | P1 | **RESOLVED** | `WorkcellPdfReportExporter.cpp`<br>`src/ui/SampleSession.cpp` | 示例 UFRAME 为 (500, −300, 600)，UTOOL Z 为 150，底座 Z 为 500。空文档写「无程序 / 未标定」。 |
+| M13-003 | P1 | **RESOLVED** | `WorkcellPdfReportExporter.cpp` | 节拍 ≤ 0 时为「未仿真」，占空比 0。不再写入 38.51 / 33.31。 |
+| M13-004 | P1 | **RESOLVED** | `WorkcellPdfReportExporter.cpp` | 九种状态各有文字。未检查为灰色，不再把其它状态画成绿色「有效」。 |
+| M13-005 | P2 | **DEFERRED** | `tests/test_report.cpp` | 圆弧写成直线。多程序只留最后一个名字。见 `DEFERRED.md`。 |
+| M13-006 | P2 | **DEFERRED** | `WorkcellPdfReportExporter.cpp` | 焊缝清单、问题清单和每条焊缝的离屏多视角仍未做。见 `DEFERRED.md`。 |
+| M13-008 | P2 | **DEFERRED** | `src/ui/SampleSession.cpp` | 求解仍使用另一份 150 mm 字面量。坐标系编号固定写成 `[1]`。见 `DEFERRED.md`。 |
+
+---
+
+### M13-001 [P1] RESOLVED
+
+300 DPI、10 mm 页边距下，可绘区域是 2243×3272。审核方在绘制用的 `QPainter` 上重测。姿态格从 12 起、宽 730，满量程 `-180.0, -180.0, -180.0` 是 726。构型格从 746 起、宽 580，`F D B, -1, -1, -1` 是 561，表头「构型 CONFIG」是 297。事件格从 1330 起、宽 903，三个事件「起弧[1] 熄弧[1] 摆焊[1] 」是 594。姿态格结束于 742，构型格结束于 1326，中间和后面各空 4 像素。
+
+坐标列仍是 850，`-9999.9, -9999.9, -9999.9` 是 825。焊缝摘要文本框仍是 516，`999/99999.9mm` 是 494。状态列仍是 413，「有效 (998.0mm)」是 396。表头和数据行用的是同一组常量，姿态走 `formatTargetOrientation`。Test 20 对满量程姿态、两处分界和构型串均为 PASS。
+
+当前范围内的 P1 都已关闭。`M13-005`、`M13-006`、`M13-008` 仍在 `DEFERRED.md`，不挡本次通过。
+
+### M13-002 [P1] RESOLVED
+
+`extractMetadata` 从坐标系节点、工具节点和机器人节点读取位姿。示例用户坐标系原点是 (500, −300, 600) mm，工具 `tcpOffset` 的 Z 是 150 mm，底座 Z 是 500 mm。空文档的程序名为「无程序」，没有工具或坐标系时写「未标定」。导出正文使用这份元数据。Test 20 这几条均为 PASS。
+
+### M13-003 [P1] RESOLVED
+
+`cycleTimeSec <= 0` 时 `isSimulated` 为 false，三张时间卡写「未仿真」，占空比为 0。源码里已经没有 38.51 和 33.31。传入 40 s 与 30 s 时，空走为 10 s，占空比 75%。Test 20 这几条均为 PASS。
+
+### M13-004 [P1] RESOLVED
+
+九种状态都走到 `formatTargetStatusAndClearance` 和 `getTargetStatusColor`。未检查是灰色「未检查 (-)」，不打印默认 1000 mm。有效和近碰撞带实测毫米数。碰撞、不可达、超限为红色。近限位、奇异和构型突变为橙色。绘制点位行时使用这两个函数。Test 20 对九种文字和颜色均为 PASS。
+
+### M13-007 [P1] RESOLVED
+
+`ShellWindow` 和 `extractMetadata` 都改成末帧 `arcLengthMm` 减首帧 `arcLengthMm`。采样帧少于 2 个时长度为 0。Test 20 用起点 32 mm、末点 232 mm 的焊缝，跨距是 200.0 mm，旧的「末帧再减两端切边」是 195 mm。报告长度与跨距之差小于 0.1 mm，并且和旧公式相差超过 1 mm。这两条均为 PASS。
+
+---
+
+## 本轮已核对并保持
+
+- 文件菜单、保存对话框、状态栏和失败弹窗仍接通。快照仍是当前视口一张图。
+- 点位 XYZWR 来自 `poseInUFrame.toWPR()`。工艺条件来自 `weldSchedules`，速度用 `getWeldSpeedMmPerSec()`。构型字符串仍是 `N U T, 0, 0, 0` 这一格式。
+- 条件表、坐标表和点位表在越过页脚时会 `newPage()` 并重画表头。三张表的行高是 84，子行绘制矩形高 36。第 1 页坐标表结束在约 1826 像素，页脚线在页高减 55，两者没有叠上。
+- `ShellWindow.cpp` 980 行，`WorkcellPdfReportExporter.cpp` 705 行，`tests/test_report.cpp` 680 行，均低于 1000 行。
+- 求解函数里仍有一份独立的 `fromTranslation(0, 0, 150)`。坐标系表第一列固定写 `UTOOL[1]`、`UFRAME[1]`。这两条记在 `M13-008`，不挡上面三项关闭。
+
+---
+
 # 审核结论 — M12-POST-FANUC-001
 
 > **Task ID**：`M12-POST-FANUC-001`

@@ -54,6 +54,7 @@ int main(int argc, char* argv[]) {
     testKinematicsReachabilitySingularityAndTwistScan();
     testTrajectoryAndPlayback();
     testFanucLsPostProcessorValidationAndExport();
+    testWorkcellPdfReportExport();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

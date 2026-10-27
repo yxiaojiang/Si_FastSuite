@@ -143,10 +143,12 @@ if(Qt6_FOUND)
         src/ui/TargetPropertyPanel.cpp
         src/ui/TimelinePanel.cpp
         src/ui/LsExportDialog.cpp
+        src/ui/WorkcellPdfReportExporter.cpp
         include/olp/ui/ShellWindow.h
         include/olp/ui/TwistScanWidget.h
         include/olp/ui/OcctViewport.h
         include/olp/ui/LsExportDialog.h
+        include/olp/ui/WorkcellPdfReportExporter.h
     )
 endif()
 target_include_directories(olp_ui PUBLIC
@@ -186,6 +188,7 @@ if(OLP_BUILD_TESTS)
         tests/test_ui.cpp
         tests/test_simulation.cpp
         tests/test_postprocessor.cpp
+        tests/test_report.cpp
     )
     target_link_libraries(olp_tests PRIVATE olp_ui)
     if(Qt6_FOUND)
