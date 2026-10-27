@@ -4,6 +4,7 @@
 #include "olp/app/CommandManager.h"
 #include "olp/cad/OcctCadKernel.h"
 #include "olp/device/RobotModel.h"
+#include "olp/io/FanucLsPostProcessor.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -62,6 +63,20 @@ public:
     algo::SimulationResult validateCurrentOperation();
     std::vector<algo::TwistScanSample> scanSelectedTargetTwistAngles(double stepDeg = 5.0) const;
     const algo::SimulationResult& lastSimulationResult() const noexcept { return lastSimulationResult_; }
+
+    // M12: FANUC .ls validation, preview & export
+    io::LsValidationResult validateProgramForExport(const std::string& programId = "") const;
+    std::string previewFanucLs(const std::string& programId = "", std::string* errorOut = nullptr) const;
+    bool exportFanucLs(
+        const std::string& outputFilePath,
+        const std::string& programId = "",
+        const io::LsPostConfig& config = {},
+        std::string* errorOut = nullptr);
+    bool exportAllPrograms(
+        const std::string& outputDir,
+        const io::LsPostConfig& config = {},
+        std::vector<std::string>* exportedFiles = nullptr,
+        std::vector<std::string>* errors = nullptr);
 
     void noteSampleRun(int exitCode, int frameCount, double cycleTimeSec, double weldTimeSec) noexcept;
     int lastSampleExitCode() const noexcept { return lastSampleExitCode_; }

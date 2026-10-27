@@ -178,6 +178,8 @@ struct WeldScheduleDefinition {
 enum class ProcessEventType {
     ArcStart,
     ArcEnd,
+    WeaveStart,
+    WeaveEnd,
     DigitalOut,
     Wait,
     Comment

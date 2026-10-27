@@ -479,4 +479,66 @@ void MainWindow::notifySelectionChanged() {
     }
 }
 
+static const core::Program* findProgramInDoc(const app::ProjectDocument& doc, const std::string& programId) {
+    for (const auto& cu : doc.controllers) {
+        for (const auto& prog : cu.programs) {
+            if (programId.empty() || prog.id == programId || prog.name == programId) {
+                return &prog;
+            }
+        }
+    }
+    return nullptr;
+}
+
+io::LsValidationResult MainWindow::validateProgramForExport(const std::string& programId) const {
+    const auto* prog = findProgramInDoc(doc_, programId);
+    if (!prog) {
+        io::LsValidationResult res;
+        res.ok = false;
+        res.issues.push_back({io::LsValidationIssue::Severity::Error, "", "", "No program found to validate"});
+        return res;
+    }
+    return io::FanucLsPostProcessor::validateProgram(*prog);
+}
+
+std::string MainWindow::previewFanucLs(const std::string& programId, std::string* errorOut) const {
+    const auto* prog = findProgramInDoc(doc_, programId);
+    if (!prog) {
+        if (errorOut) *errorOut = "No program found for preview";
+        return {};
+    }
+    return io::FanucLsPostProcessor::generateLsString(*prog, {}, errorOut);
+}
+
+bool MainWindow::exportFanucLs(
+    const std::string& outputFilePath,
+    const std::string& programId,
+    const io::LsPostConfig& config,
+    std::string* errorOut) {
+    const auto* prog = findProgramInDoc(doc_, programId);
+    if (!prog) {
+        if (errorOut) *errorOut = "No program found for export";
+        return false;
+    }
+    return io::FanucLsPostProcessor::exportToFile(*prog, outputFilePath, config, errorOut);
+}
+
+bool MainWindow::exportAllPrograms(
+    const std::string& outputDir,
+    const io::LsPostConfig& config,
+    std::vector<std::string>* exportedFiles,
+    std::vector<std::string>* errors) {
+    if (doc_.controllers.empty()) {
+        if (errors) errors->push_back("Document has no controllers");
+        return false;
+    }
+    bool allSuccess = true;
+    for (const auto& cu : doc_.controllers) {
+        if (!io::FanucLsPostProcessor::exportControllerPrograms(cu, outputDir, config, exportedFiles, errors)) {
+            allSuccess = false;
+        }
+    }
+    return allSuccess;
+}
+
 } // namespace olp::ui

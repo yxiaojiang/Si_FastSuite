@@ -53,6 +53,7 @@ int main(int argc, char* argv[]) {
     testWeldingProcessEventsAndTorchSpinTuning();
     testKinematicsReachabilitySingularityAndTwistScan();
     testTrajectoryAndPlayback();
+    testFanucLsPostProcessorValidationAndExport();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

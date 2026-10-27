@@ -1,6 +1,7 @@
 #include "olp/io/FanucLsPostProcessor.h"
 
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -27,55 +28,201 @@ bool FanucLsPostProcessor::validateProgramName(const std::string& progName, std:
     return true;
 }
 
+LsValidationResult FanucLsPostProcessor::validateProgram(
+    const core::Program& program,
+    const LsPostConfig& config) {
+    LsValidationResult result;
+
+    std::string nameErr;
+    if (!validateProgramName(program.name, nameErr)) {
+        result.issues.push_back({
+            LsValidationIssue::Severity::Error,
+            "",
+            "",
+            "Invalid program name '" + program.name + "': " + nameErr
+        });
+    }
+
+    if (program.comment.size() > static_cast<size_t>(config.maxProgramCommentLength)) {
+        result.issues.push_back({
+            LsValidationIssue::Severity::Error,
+            "",
+            "",
+            "Program comment length (" + std::to_string(program.comment.size()) +
+                ") exceeds FANUC limit of " + std::to_string(config.maxProgramCommentLength) + " characters"
+        });
+    }
+
+    size_t totalTargets = 0;
+    for (const auto& op : program.operations) {
+        if (!op.enabled) continue;
+        for (const auto& t : op.targets) {
+            totalTargets++;
+            const std::string tLabel = t.name.empty() ? t.id : t.name;
+
+            if (t.name.size() > static_cast<size_t>(config.maxCommentLength)) {
+                result.issues.push_back({
+                    LsValidationIssue::Severity::Error,
+                    op.id,
+                    t.id,
+                    "Target '" + tLabel + "' comment length (" + std::to_string(t.name.size()) +
+                        ") exceeds FANUC limit of " + std::to_string(config.maxCommentLength) + " characters"
+                });
+            }
+
+            if (!t.cache.valid) {
+                result.issues.push_back({
+                    LsValidationIssue::Severity::Error,
+                    op.id,
+                    t.id,
+                    "Refusing to export " + tLabel + ": inverse-kinematics cache is not valid"
+                });
+            }
+
+            if (t.motion == core::MotionType::C) {
+                result.issues.push_back({
+                    LsValidationIssue::Severity::Error,
+                    op.id,
+                    t.id,
+                    "Circular motion is not implemented; refusing to write it as a linear move"
+                });
+            }
+
+            if (config.blockOnUnreachable && t.cache.status == core::TargetValidationState::Unreachable) {
+                result.issues.push_back({
+                    LsValidationIssue::Severity::Error,
+                    op.id,
+                    t.id,
+                    "Target '" + tLabel + "' is unreachable"
+                });
+            }
+
+            if (t.cache.status == core::TargetValidationState::JointLimitExceeded) {
+                result.issues.push_back({
+                    LsValidationIssue::Severity::Error,
+                    op.id,
+                    t.id,
+                    "Target '" + tLabel + "' exceeds robot joint limits"
+                });
+            }
+
+            if (config.blockOnCollision && t.cache.status == core::TargetValidationState::Collision) {
+                result.issues.push_back({
+                    LsValidationIssue::Severity::Error,
+                    op.id,
+                    t.id,
+                    "Target '" + tLabel + "' has hard collision"
+                });
+            }
+
+            if (t.cache.status == core::TargetValidationState::ConfigJump) {
+                result.issues.push_back({
+                    LsValidationIssue::Severity::Warning,
+                    op.id,
+                    t.id,
+                    "Target '" + tLabel + "' has arm configuration jump"
+                });
+            }
+
+            if (t.motion == core::MotionType::J) {
+                if (t.useWeldSpeed) {
+                    result.issues.push_back({
+                        LsValidationIssue::Severity::Error,
+                        op.id,
+                        t.id,
+                        "Target '" + tLabel + "' is a Joint motion (J) but specifies WELD_SPEED; joint moves must use percentage speed (1..100%)"
+                    });
+                } else {
+                    const int spd = static_cast<int>(std::round(t.speedValue));
+                    if (spd < 1 || spd > 100) {
+                        result.issues.push_back({
+                            LsValidationIssue::Severity::Error,
+                            op.id,
+                            t.id,
+                            "Target '" + tLabel + "' joint speed (" + std::to_string(spd) + "%) is outside valid FANUC range 1..100%"
+                        });
+                    }
+                }
+            }
+
+            if (t.motion == core::MotionType::L && !t.useWeldSpeed) {
+                const int spd = static_cast<int>(std::round(t.speedValue));
+                if (spd < 1) {
+                    result.issues.push_back({
+                        LsValidationIssue::Severity::Error,
+                        op.id,
+                        t.id,
+                        "Target '" + tLabel + "' linear speed (" + std::to_string(spd) + " mm/sec) must be at least 1 mm/sec"
+                    });
+                }
+            }
+
+            if (t.termination == core::TerminationType::CNT) {
+                if (t.cntValue < 0 || t.cntValue > 100) {
+                    result.issues.push_back({
+                        LsValidationIssue::Severity::Error,
+                        op.id,
+                        t.id,
+                        "Target '" + tLabel + "' CNT value (" + std::to_string(t.cntValue) + ") is outside valid FANUC range 0..100"
+                    });
+                }
+            }
+        }
+    }
+
+    if (totalTargets == 0) {
+        result.issues.push_back({
+            LsValidationIssue::Severity::Error,
+            "",
+            "",
+            "Program contains no enabled targets to export"
+        });
+    }
+
+    result.ok = !result.hasErrors();
+    return result;
+}
+
 std::string FanucLsPostProcessor::generateLsString(
     const core::Program& program,
     const LsPostConfig& config,
     std::string* errorOut) {
-    std::ostringstream oss;
-
-    oss << "/PROG  " << program.name << "\n";
-    oss << "/ATTR\n";
-    oss << "OWNER\t\t= " << config.owner << ";\n";
-    oss << "COMMENT\t\t= \"" << program.comment << "\";\n";
-    oss << "PROTECT\t\t= READ_WRITE;\n";
-    oss << "DEFAULT_GROUP\t= " << config.defaultGroup << ";\n";
-
-    if (config.includeArcWeldingAppl) {
-        oss << "/APPL\n";
-        oss << "  ARC Welding Equipment : " << config.defaultGroup << ";\n";
+    const LsValidationResult valResult = validateProgram(program, config);
+    if (!valResult.ok) {
+        if (errorOut) {
+            for (const auto& is : valResult.issues) {
+                if (is.severity == LsValidationIssue::Severity::Error) {
+                    *errorOut = is.message;
+                    break;
+                }
+            }
+        }
+        return {};
     }
 
-    oss << "/MN\n";
-    int lineNum = 1;
-    auto emitLine = [&](const std::string& body) {
-        oss << std::setw(4) << lineNum++ << ":" << body << " ;\n";
-    };
-
-    emitLine("  UFRAME_NUM=" + std::to_string(program.uframeNumber));
-    emitLine("  UTOOL_NUM=" + std::to_string(program.utoolNumber));
-
-    struct IndexedTarget {
+    struct IndexedPos {
         int pIndex{1};
         const core::Target* target{nullptr};
+        bool isHomeJoint{false};
     };
-    std::vector<IndexedTarget> posEntries;
+    std::vector<IndexedPos> posEntries;
+
+    std::vector<std::string> mnLines;
+    auto addMnLine = [&](const std::string& body) {
+        mnLines.push_back(body);
+    };
+
+    addMnLine("  UFRAME_NUM=" + std::to_string(program.uframeNumber));
+    addMnLine("  UTOOL_NUM=" + std::to_string(program.utoolNumber));
 
     int nextPIndex = 1;
     for (const auto& op : program.operations) {
         if (!op.enabled) continue;
 
-        emitLine("  ! --- Operation: " + op.name + " ---");
+        addMnLine("  ! --- Operation: " + op.name + " ---");
         for (const auto& t : op.targets) {
-            if (!t.cache.valid) {
-                if (errorOut) *errorOut = "Refusing to export " + t.name + ": inverse-kinematics cache is not valid";
-                return {};
-            }
-            if (t.motion == core::MotionType::C) {
-                if (errorOut) *errorOut = "Circular motion is not implemented; refusing to write it as a linear move";
-                return {};
-            }
             const int pIdx = nextPIndex++;
-            posEntries.push_back({pIdx, &t});
+            posEntries.push_back({pIdx, &t, false});
 
             std::ostringstream motionLine;
             motionLine << (t.motion == core::MotionType::J ? "J" : "L")
@@ -85,12 +232,14 @@ std::string FanucLsPostProcessor::generateLsString(
             }
             motionLine << "] ";
 
-            if (t.useWeldSpeed) {
+            if (t.motion == core::MotionType::J) {
+                const int spd = static_cast<int>(std::round(t.speedValue));
+                motionLine << spd << "% ";
+            } else if (t.useWeldSpeed) {
                 motionLine << "WELD_SPEED ";
-            } else if (t.motion == core::MotionType::J) {
-                motionLine << static_cast<int>(t.speedValue) << "% ";
             } else {
-                motionLine << static_cast<int>(t.speedValue) << "mm/sec ";
+                const int spd = static_cast<int>(std::round(t.speedValue));
+                motionLine << spd << "mm/sec ";
             }
 
             if (t.termination == core::TerminationType::FINE) {
@@ -98,16 +247,26 @@ std::string FanucLsPostProcessor::generateLsString(
             } else {
                 motionLine << "CNT" << t.cntValue << "   ";
             }
-            emitLine(motionLine.str());
+            addMnLine(motionLine.str());
 
-            // Emit post-motion process events (Arc Start[n], Arc End[n], etc.)
             for (const auto& ev : t.events) {
                 if (ev.type == core::ProcessEventType::ArcStart) {
-                    emitLine("  Arc Start[" + std::to_string(ev.scheduleNumber) + "]");
+                    addMnLine("  Arc Start[" + std::to_string(ev.scheduleNumber) + "]");
                 } else if (ev.type == core::ProcessEventType::ArcEnd) {
-                    emitLine("  Arc End[" + std::to_string(ev.scheduleNumber) + "]");
+                    addMnLine("  Arc End[" + std::to_string(ev.scheduleNumber) + "]");
+                } else if (ev.type == core::ProcessEventType::WeaveStart) {
+                    addMnLine("  Weave Sine[" + std::to_string(ev.scheduleNumber) + "]");
+                } else if (ev.type == core::ProcessEventType::WeaveEnd) {
+                    addMnLine("  Weave End");
+                } else if (ev.type == core::ProcessEventType::Wait) {
+                    std::ostringstream woss;
+                    woss << std::fixed << std::setprecision(2);
+                    woss << "  WAIT   " << ev.paramValue << "(sec)";
+                    addMnLine(woss.str());
+                } else if (ev.type == core::ProcessEventType::DigitalOut) {
+                    addMnLine("  DO[" + std::to_string(ev.scheduleNumber) + "]=" + (ev.paramValue > 0.5 ? "ON" : "OFF"));
                 } else if (ev.type == core::ProcessEventType::Comment && !ev.comment.empty()) {
-                    emitLine("  ! " + ev.comment);
+                    addMnLine("  ! " + ev.comment);
                 }
             }
         }
@@ -120,12 +279,60 @@ std::string FanucLsPostProcessor::generateLsString(
         for (double q : program.startState.homeJointsRad) {
             home << " " << core::rad2deg(q);
         }
-        emitLine(home.str());
+        addMnLine(home.str());
+
+        if (config.emitHomeAsJointTarget) {
+            const int homePIdx = nextPIndex++;
+            posEntries.push_back({homePIdx, nullptr, true});
+            addMnLine("J P[" + std::to_string(homePIdx) + ":HOME] 30% FINE");
+        }
+    }
+
+    std::ostringstream oss;
+    oss << "/PROG  " << program.name << "\n";
+    oss << "/ATTR\n";
+    oss << "OWNER\t\t= " << config.owner << ";\n";
+    oss << "COMMENT\t\t= \"" << program.comment << "\";\n";
+    oss << "PROG_SIZE\t= 0;\n";
+    oss << "CREATE\t\t= DATE 26-10-27  TIME 12:00:00;\n";
+    oss << "MODIFIED\t= DATE 26-10-27  TIME 12:00:00;\n";
+    oss << "FILE_NAME\t= ;\n";
+    oss << "VERSION\t\t= 0;\n";
+    oss << "LINE_COUNT\t= " << mnLines.size() << ";\n";
+    oss << "MEMORY_SIZE\t= " << (500 + mnLines.size() * 32 + posEntries.size() * 48) << ";\n";
+    oss << "PROTECT\t\t= READ_WRITE;\n";
+    oss << "TCD:  STACK_SIZE\t= 0, TASK_PRIORITY\t= 50, TIME_SLICE\t= 0,\n";
+    oss << "      BUSY_LAMP_OFF\t= 0, ABORT_REQUEST\t= 0, PAUSE_REQUEST\t= 0;\n";
+    oss << "DEFAULT_GROUP\t= " << config.defaultGroup << ";\n";
+    oss << "CONTROL_CODE\t= 00000000 00000000;\n";
+
+    if (config.includeArcWeldingAppl) {
+        oss << "/APPL\n";
+        oss << "  ARC Welding Equipment : " << config.defaultGroup << ";\n";
+    }
+
+    oss << "/MN\n";
+    for (size_t i = 0; i < mnLines.size(); ++i) {
+        oss << std::setw(4) << (i + 1) << ":" << mnLines[i] << " ;\n";
     }
 
     oss << "/POS\n";
     oss << std::fixed << std::setprecision(3);
     for (const auto& item : posEntries) {
+        if (item.isHomeJoint) {
+            oss << "P[" << item.pIndex << ":\"HOME\"]{\n";
+            oss << "   GP1:\n";
+            oss << "\tUF : 0, UT : " << program.utoolNumber << ",\n";
+            oss << "\tJ1 = " << std::setw(9) << core::rad2deg(program.startState.homeJointsRad[0]) << " deg,\t"
+                << "J2 = " << std::setw(9) << core::rad2deg(program.startState.homeJointsRad[1]) << " deg,\t"
+                << "J3 = " << std::setw(9) << core::rad2deg(program.startState.homeJointsRad[2]) << " deg,\n";
+            oss << "\tJ4 = " << std::setw(9) << core::rad2deg(program.startState.homeJointsRad[3]) << " deg,\t"
+                << "J5 = " << std::setw(9) << core::rad2deg(program.startState.homeJointsRad[4]) << " deg,\t"
+                << "J6 = " << std::setw(9) << core::rad2deg(program.startState.homeJointsRad[5]) << " deg\n";
+            oss << "};\n";
+            continue;
+        }
+
         const core::Target& t = *item.target;
         const core::WprPose wpr = t.poseInUFrame.toWPR();
         oss << "P[" << item.pIndex;
@@ -153,22 +360,61 @@ std::string FanucLsPostProcessor::generateLsString(
 bool FanucLsPostProcessor::exportToFile(
     const core::Program& program,
     const std::string& outputFilePath,
-    const LsPostConfig& config) {
-    std::string err;
-    if (!validateProgramName(program.name, err)) {
-        return false;
-    }
+    const LsPostConfig& config,
+    std::string* errorOut) {
     std::string genError;
     const std::string body = generateLsString(program, config, &genError);
     if (!genError.empty() || body.empty()) {
+        if (errorOut) *errorOut = genError.empty() ? "Generated .ls body is empty" : genError;
         return false;
     }
+
+    std::filesystem::path p(outputFilePath);
+    if (p.has_parent_path()) {
+        std::error_code ec;
+        std::filesystem::create_directories(p.parent_path(), ec);
+    }
+
     std::ofstream ofs(outputFilePath, std::ios::binary);
     if (!ofs.is_open()) {
+        if (errorOut) *errorOut = "Could not open file for writing: " + outputFilePath;
         return false;
     }
     ofs << body;
-    return ofs.good();
+    if (!ofs.good()) {
+        if (errorOut) *errorOut = "Error occurred while writing to file: " + outputFilePath;
+        return false;
+    }
+    return true;
+}
+
+bool FanucLsPostProcessor::exportControllerPrograms(
+    const core::ControllerUnit& controller,
+    const std::string& outputDir,
+    const LsPostConfig& config,
+    std::vector<std::string>* exportedFiles,
+    std::vector<std::string>* errors) {
+    if (controller.programs.empty()) {
+        if (errors) errors->push_back("Controller contains no programs to export");
+        return false;
+    }
+
+    std::filesystem::path dir(outputDir);
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+
+    bool allSuccess = true;
+    for (const auto& prog : controller.programs) {
+        const std::string filePath = (dir / (prog.name + ".ls")).string();
+        std::string err;
+        if (exportToFile(prog, filePath, config, &err)) {
+            if (exportedFiles) exportedFiles->push_back(filePath);
+        } else {
+            allSuccess = false;
+            if (errors) errors->push_back("Failed to export " + prog.name + ": " + err);
+        }
+    }
+    return allSuccess;
 }
 
 } // namespace olp::io

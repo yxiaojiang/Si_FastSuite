@@ -27,3 +27,4 @@ void testSeamToOperationAndSlerpStepping();
 void testWeldingProcessEventsAndTorchSpinTuning();
 void testKinematicsReachabilitySingularityAndTwistScan();
 void testTrajectoryAndPlayback();
+void testFanucLsPostProcessorValidationAndExport();

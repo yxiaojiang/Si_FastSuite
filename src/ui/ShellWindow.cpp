@@ -4,6 +4,7 @@
 #include "olp/ui/TargetWaypointTable.h"
 #include "olp/ui/TwistScanWidget.h"
 #include "olp/ui/TimelinePanel.h"
+#include "olp/ui/LsExportDialog.h"
 #include "ShellLabels.h"
 
 #include "olp/ui/OcctViewport.h"
@@ -294,6 +295,12 @@ void ShellWindow::buildChrome() {
     fileMenu->insertAction(loadAction, importAction);
     loadAction->setToolTip(QString::fromUtf8("导入示例焊接工位并生成焊缝。"));
     connect(loadAction, &QAction::triggered, this, &ShellWindow::loadSample);
+    auto* exportMenuAction = fileMenu->addAction(commandIcon(IconKind::Export, fileInk), QString::fromUtf8("导出 FANUC .ls 程序..."));
+    exportMenuAction->setToolTip(QString::fromUtf8("导出当前工位程序为 FANUC ASCII .ls 格式。"));
+    connect(exportMenuAction, &QAction::triggered, this, [this] {
+        LsExportDialog dlg(controller_, this);
+        dlg.exec();
+    });
     fileMenu->addSeparator();
     fileMenu->addAction(QString::fromUtf8("退出"), this, &QWidget::close);
 
@@ -391,7 +398,13 @@ void ShellWindow::buildChrome() {
     });
 
     auto* simAction = disabledAction(this, QString::fromUtf8("仿真"), QString::fromUtf8("播放机器人轨迹。") + later, IconKind::Sim, pathInk);
-    auto* exportAction = disabledAction(this, QString::fromUtf8("导出"), QString::fromUtf8("导出 FANUC 程序。") + later, IconKind::Export, pathInk);
+    auto* exportAction = new QAction(commandIcon(IconKind::Export, pathInk), QString::fromUtf8("导出"), this);
+    exportAction->setIconText(QString::fromUtf8("导出"));
+    exportAction->setToolTip(QString::fromUtf8("导出当前工位程序为 FANUC ASCII .ls 格式。"));
+    connect(exportAction, &QAction::triggered, this, [this] {
+        LsExportDialog dlg(controller_, this);
+        dlg.exec();
+    });
 
     auto* prevTargetAction = new QAction(QString::fromUtf8("上一目标点"), this);
     prevTargetAction->setShortcut(QKeySequence(Qt::Key_BracketLeft));
