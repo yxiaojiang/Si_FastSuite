@@ -4,19 +4,17 @@
 
 ## 1. 当前目标与最新进展
 
-- **`M14-PROJECT-JSON-001`（`DIR-001` 第 6 步）已通过（APPROVED）**：
-  - `M14-009` 关闭。原子替换安全防御，725 项测试全绿，`--verify` 退出码 0。`M14-012`、`M14-013` 仍延期。
+- **`BUGFIX-COMPILE-BAT-001` 构建与启动脚本缺陷修复已通过（APPROVED）**：
+  - 修复 `src/algo/FclCollisionQueries.cpp` 在未开启/未链接 FCL 时 `axisRotation` 找不到标识符的问题（移出 `#ifdef OLP_HAS_FCL`）；
+  - 重构并增强 `Tools/Compile.bat`：自动侦测并注入 `vcpkg.cmake` 与 `Qt6_DIR`，破损/缺失工具链的缓存自动重新配置，编译严格附带 `/p:VCToolsVersion=14.44.35207`，测试与运行前自动向 `PATH` 注入 Qt6 与 vcpkg 的 `bin` 路径，补齐 `SiFastSuiteOLP.exe --verify` 参数防 GUI 循环挂起，100% 纯英文规范；
+  - 修复 `Tools/start.bat`：修正产物优先级倒置问题（优先启动 `build\Release`，消除代码修改后误跑陈旧 `build-full` 的假象），以 `/D "%ROOT_DIR%"` 显式锚定启动工作目录，注入 `QT_PLUGIN_PATH` 与外部环境变量覆盖支持；
+  - 脚本统一收口归拢至 `Tools/`，根目录保持干净清爽；
+  - 完整端到端验证通过：`Tools\Compile.bat` 与 `Tools\start.bat --verify` 均退出码 0，752 项测试全部通过。
 
-- **`M15-TJOINT-REGRESSION-001`（`DIR-001` 第 7 步）Round 1 已通过（APPROVED）**：
-  - **结束 3D PDF 悬置（收口 `RISK-003`）**：经 DIR-001 拍板定案，正式结束 3D PDF 的五天熔断悬置状态：明确不再投入资源自研高脆弱度且受限于 Adobe Reader 专有沙箱环境的开源 U3D/PRC+JavaScript 动画嵌入链路；MVP 离线三维可交互仿真交付统一收口至基于 Web 标准的「单文件离线 HTML 3D 动画包（Three.js + GLB 关键帧烘焙）」，2D 报告由已投产的 QPdfWriter 承载。若后续特定客户有强需求，直接转入商业 SDK 技术选型评估，不在内部开展开源逆向或重度定制。至此，`RISK-003` 正式收口（CLOSED）。
-  - **SampleScenes Scene 1 T 型接头完整端到端自动化回归测试（Test 23）**：
-    1. 工位导入与装配校验：从 `SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_TJoint_With_Clamps.step` 导入 4 个实体（`Base_Plate`、`Vertical_Web_Plate`、`Fixture_Clamp_Left`、`Fixture_Clamp_Right`），配置 `FANUC M-10iA` 机器人、150mm 焊枪 UTOOL 1 及 UFRAME 1；
-    2. 跨零件边拾取与角焊缝识别：识别立板 400 mm 底边 Edge 3 与底板顶面贴合跨实体侧面，生成 400 mm 连续采样焊缝；
-    3. 焊枪双侧平分线标架：立板与底板法向严格正交（90°），双侧角平分线严格匹配 45° 空间角（误差 $< 0.01^\circ$），正交右手坐标系行列式 $\approx 1.0$；
-    4. 焊丝尖端豁免机制：焊接角色下激活焊丝尖端（Sphere 0）对母材豁免，焊缝根部无碰撞误报；非焊接角色下精准报出接触；枪体对左/右夹具保持严格碰撞检测（精准捕获 `Fixture_Clamp_Left/Right` 碰撞）；
-    5. 避障与轨迹生成：这条前边在 5 mm 切边下已经离开夹具，没有再加大切边；Home 到切入点插入 1 个清空点。12 个目标点状态为 Valid，最小间隙 126.179 mm。烘焙 1507 帧，并输出 `TJOINT_001.ls`。
-  - 严格带 `/p:VCToolsVersion=14.44.35207` 编译通过；单文件严格遵守 $< 1000$ 行限制；
-  - 测试套件全量通过：**752 passed, 0 failed**；`SiFastSuiteOLP.exe --verify` 退出码 0。
+- **`M15-TJOINT-REGRESSION-001`（`DIR-001` 第 7 步）已通过（APPROVED）**：
+  - 结束 3D PDF 悬置（收口 `RISK-003`，定调统一收口至单文件离线 HTML 3D 动画包）；
+  - SampleScenes Scene 1 T 型接头完整端到端自动化回归测试（Test 23）：覆盖工位导入、跨零件边拾取与角焊缝识别、焊枪双侧平分线标架、焊丝尖端豁免机制、避障与轨迹生成全流程；
+  - 752 passed, 0 failed，`--verify` 退出码 0。
 
 ## 2. 已经拍板的顺序（`DIR-001`）
 
@@ -26,7 +24,8 @@
 4. [DONE] 运动学金样改为从 URDF 读原点并比较完整姿态（`M06-KINEMATICS-URDF-001` Round 1 APPROVED）。`RISK-001` 继续开着。
 5. [DONE] 播放用 URDF 连杆链驱动外形（`M11-PLAYBACK-SHAPE-001` Round 2 APPROVED）。
 6. [DONE] 工程保存先做 JSON（`M14-PROJECT-JSON-001` Round 3 APPROVED）。
-7. **[DONE] 结束 3D PDF 悬置（`RISK-003` 熔断收口），并建立 Scene 1 T 型接头端到端自动回归（`M15-TJOINT-REGRESSION-001` Round 1 APPROVED）。**
+7. [DONE] 结束 3D PDF 悬置（`RISK-003` 熔断收口），并建立 Scene 1 T 型接头端到端自动回归（`M15-TJOINT-REGRESSION-001` Round 1 APPROVED）。
+8. [DONE] 自动化与启动脚本加固（`BUGFIX-COMPILE-BAT-001` APPROVED）。
 
 ## 3. 未关闭风险
 
@@ -40,7 +39,7 @@
 
 ## 4. 下一步任务提示词
 
-- 第 7 步已通过。`DIR-001` 的七步都已落地。HTML 三维动画仍是「未做」。下一步等用户指定。
+- `DIR-001` 前 7 步与脚本 Bugfix 均已闭环并全部通过审核。下一步等待用户指定主线开发新任务。
 
 ## 5. 索引
 

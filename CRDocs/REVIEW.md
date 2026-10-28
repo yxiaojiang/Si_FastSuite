@@ -1,3 +1,17 @@
+# 审核结论 — BUGFIX-COMPILE-BAT-001 Round 1
+
+> **Task ID**：`BUGFIX-COMPILE-BAT-001`
+> **Task**：修复 Compile.bat 编译失败、start.bat 启动陷阱与构建脚本健壮性
+> **Round**：1
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-28
+> **Executor**：执行方
+> **Verdict**：**APPROVED**
+>
+> 审核方已核对实际代码 diff：`src/algo/FclCollisionQueries.cpp` 中 `axisRotation` 已移出 `#ifdef OLP_HAS_FCL` 宏保护；`Tools/Compile.bat` 增加了 vcpkg 工具链及 Qt6_DIR 自动配置、`/p:VCToolsVersion=14.44.35207` MSBuild 参数、DLL 路径注入 `PATH` 以及 `--verify` 参数；`Tools/start.bat` 修正了产物优先级（优先使用 `build/Release`，解决改动后跑旧程序的暗坑），锚定了 `/D "%ROOT_DIR%"` 根工作目录，并注入了 `QT_PLUGIN_PATH`；根目录不增加多余脚本，保持清爽。两个 `.bat` 文件全量通过非 ASCII 字符扫描（0 命中，100% 英文合规）。`Tools/Compile.bat` 完整端到端编译并通过全量 752 项测试（退出码 0），`Tools/start.bat --verify` 运行通过（退出码 0）。本轮无 P0/P1 阻断项，审核通过。
+
+---
+
 # 审核结论 — M15-TJOINT-REGRESSION-001 Round 1
 
 > **Task ID**：`M15-TJOINT-REGRESSION-001`

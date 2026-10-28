@@ -19,6 +19,23 @@ namespace olp::algo {
 
 namespace {
 
+core::Mat3 axisRotation(const core::Vec3& axis, double angle) noexcept {
+    const double c = std::cos(angle);
+    const double s = std::sin(angle);
+    const double t = 1.0 - c;
+    core::Mat3 R;
+    R.m[0][0] = t * axis.x * axis.x + c;
+    R.m[0][1] = t * axis.x * axis.y - s * axis.z;
+    R.m[0][2] = t * axis.x * axis.z + s * axis.y;
+    R.m[1][0] = t * axis.x * axis.y + s * axis.z;
+    R.m[1][1] = t * axis.y * axis.y + c;
+    R.m[1][2] = t * axis.y * axis.z - s * axis.x;
+    R.m[2][0] = t * axis.x * axis.z - s * axis.y;
+    R.m[2][1] = t * axis.y * axis.z + s * axis.x;
+    R.m[2][2] = t * axis.z * axis.z + c;
+    return R;
+}
+
 
 
 #ifdef OLP_HAS_FCL
@@ -109,22 +126,6 @@ void computeWorldAabb(
     outMax = {worldCenter.x + ex, worldCenter.y + ey, worldCenter.z + ez};
 }
 
-core::Mat3 axisRotation(const core::Vec3& axis, double angle) noexcept {
-    const double c = std::cos(angle);
-    const double s = std::sin(angle);
-    const double t = 1.0 - c;
-    core::Mat3 R;
-    R.m[0][0] = t * axis.x * axis.x + c;
-    R.m[0][1] = t * axis.x * axis.y - s * axis.z;
-    R.m[0][2] = t * axis.x * axis.z + s * axis.y;
-    R.m[1][0] = t * axis.x * axis.y + s * axis.z;
-    R.m[1][1] = t * axis.y * axis.y + c;
-    R.m[1][2] = t * axis.y * axis.z - s * axis.x;
-    R.m[2][0] = t * axis.x * axis.z - s * axis.y;
-    R.m[2][1] = t * axis.y * axis.z + s * axis.x;
-    R.m[2][2] = t * axis.z * axis.z + c;
-    return R;
-}
 
 struct RobotMeshAsset {
     std::array<std::shared_ptr<fcl::BVHModel<fcl::OBBRSSd>>, 7> linkBvhs{};
