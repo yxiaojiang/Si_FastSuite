@@ -1,3 +1,182 @@
+# 审核结论 — M14-PROJECT-JSON-001 Round 3
+
+> **Task ID**：`M14-PROJECT-JSON-001`
+> **Task**：工程保存先做 JSON（DIR-001 第 6 步，M14）
+> **Round**：3
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-28
+> **Executor**：执行方
+> **Verdict**：**APPROVED**
+>
+> 审核方读了 `saveToFile` 的替换失败分支。`src` 里已经没有 `copy_file`。`build-full/Release/olp_tests.exe` 的写入时间是 19:35:20，晚于 `ProjectSerializer.cpp`（19:34:35）和 `tests/test_project_io.cpp`（19:34:47）。审核方复跑：**725 passed, 0 failed**，退出码 0。`SiFastSuiteOLP.exe --verify` 退出码 0，1047 帧，34.7508 秒。`M14-009` 关闭。
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M14-009 | P1 | **RESOLVED** | `src/io/ProjectSerializer.cpp`<br>`tests/test_project_io.cpp` | `MoveFileExW` 失败时返回 false，并删掉临时文件。目标文件只在替换成功时换成新内容。 |
+| M14-008 | P1 | **RESOLVED** | `src/io/ProjectSerializer.cpp` | Round 2 已关闭，本轮没有改这条路径。 |
+| M14-010 | P1 | **RESOLVED** | `src/io/ProjectSerializer.cpp` | Round 2 已关闭。中文路径那条仍为 PASS。 |
+| M14-011 | P2 | **RESOLVED** | `tests/test_project_io.cpp` | Round 2 已关闭。 |
+| M14-012 | P2 | **DEFERRED** | `ShellWindow::openProjectFile` | 打开前仍不询问。见 `DEFERRED.md`。 |
+| M14-013 | P2 | **DEFERRED** | `MainWindow::openProject` | 打开仍不重建 CAD 形体。见 `DEFERRED.md`。 |
+
+`RISK-001` 仍开着。第 7 步没有改。当前范围内的 P1 都已关闭。
+
+### M14-009 [P1] RESOLVED
+
+正文仍先写到 `目标路径.tmp`。`flush` 或 `close` 失败时删掉临时文件并返回 false，此时还没有调用 `MoveFileExW`。
+
+替换只有 `MoveFileExW`，标志是 `MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH`。失败时先记下 `GetLastError()`，再删临时文件，然后返回 false。没有把临时文件拷到目标路径上。`saveProject` 只在返回 true 时把 `isDirty` 写成 false。
+
+覆盖测试先写入 `old_corruptible_content_prior_to_save`，保存后再读回，场景节点数是 3。这条为 PASS。失败测试把目标设成 `temps` 目录：保存返回 false，`temps.tmp` 不存在。后面的中文路径仍写在这个目录下并通过，目录没有被换成工程文件。
+
+---
+
+## 本轮已核对并保持
+
+- `fileFormat` 和 `schemaVersion` 的拒绝逻辑还在。`{}` 不替换调用方文档。
+- 中文路径仍走 `utf8ToPath`。`M14-010` 三条为 PASS。
+- `ProjectSerializer.cpp` 898 行，`tests/test_project_io.cpp` 582 行，`MainWindow.cpp` 599 行，`ShellWindow.cpp` 863 行。都在 1000 行以内。
+- `OpwKinematics` 和 3D PDF 不在本轮修改里。`M14-012`、`M14-013` 仍延期。
+
+---
+
+# 审核结论 — M14-PROJECT-JSON-001 Round 2
+
+> **Task ID**：`M14-PROJECT-JSON-001`
+> **Task**：工程保存先做 JSON（DIR-001 第 6 步，M14）
+> **Round**：2
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-28
+> **Executor**：执行方
+> **Verdict**：**CHANGES_REQUESTED**
+>
+> 审核方读了 `fromJsonString`、`saveToFile`、`utf8ToPath` 和 `MainWindow::saveProject`。`build-full/Release/olp_tests.exe` 的写入时间是 17:14:36，晚于 `ProjectSerializer.cpp`（17:14:02）和 `tests/test_project_io.cpp`（17:13:47）。审核方复跑：**723 passed, 0 failed**，退出码 0。`SiFastSuiteOLP.exe --verify` 退出码 0，1047 帧，34.7508 秒。本机 ANSI 代码页仍是 936。`M14-008`、`M14-010`、`M14-011` 关闭。`M14-009` 仍开着。
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M14-008 | P1 | **RESOLVED** | `src/io/ProjectSerializer.cpp`<br>`tests/test_project_io.cpp` | 缺 `fileFormat`、格式名不对、版本过高、`fileFormat` 为数字、`schemaVersion` 为字符串，都返回 false。`{}` 不改调用方文档。异常留在 `fromJsonString` 里。 |
+| M14-009 | P1 | **OPEN** | `src/io/ProjectSerializer.cpp` | 正文先写入 `目标路径.tmp`，成功路径用 `MoveFileExW` 替换。替换失败后的拷贝回退会直接覆盖原文件，并且拷贝失败仍可能返回 true。 |
+| M14-010 | P1 | **RESOLVED** | `src/io/ProjectSerializer.cpp`<br>`tests/test_project_io.cpp` | 路径按 UTF-8 转成宽字符再打开。中文目录 `工位测试_工程保存_001/工位工程.json` 的保存、读回和 `userModified` 均为 PASS。 |
+| M14-011 | P2 | **RESOLVED** | `tests/test_project_io.cpp` | 采样帧比较了切向、两个面法向、角平分线和 `frame`。零件网格比较了顶点数、三角形数和包围盒。 |
+| M14-012 | P2 | **OPEN** | `src/ui/MainWindow.cpp` | 保存成功后 `isDirty` 已清掉。打开另一份工程仍然不询问。见 `DEFERRED.md`。 |
+| M14-013 | P2 | **DEFERRED** | `src/ui/MainWindow.cpp`<br>`src/ui/OcctViewport.cpp` | 打开仍不重建 CAD 形体。见 `DEFERRED.md`。 |
+
+`RISK-001` 仍开着。第 7 步没有改。
+
+### M14-008 [P1] RESOLVED
+
+`fileFormat` 必须是字符串，并且等于 `SiFastSuite_Project`。`schemaVersion` 必须是整数，大于 1 就拒绝。`json::parse` 和后面的 `get` 都在同一个 `try` 里。失败时函数返回 false，`outDoc = std::move(loaded)` 还没执行，调用方的文档保持原样。
+
+Test 22 对 `{}`、整数 `fileFormat`、字符串 `schemaVersion` 均为 PASS。`{}` 之后 `lengthUnit` 仍是 `canary_unit`。
+
+### M14-009 [P1] OPEN
+
+`toJsonString` 在打开任何文件之前完成。临时文件是 `目标路径.tmp`，用 `trunc` 打开的是这份临时文件。`flush` 和 `close` 失败时会删掉临时文件并返回 false，目标文件还没被打开。覆盖一份内容为 `old_corruptible_content_prior_to_save` 的文件之后，读回的是新工程。这一条为 PASS。
+
+`MoveFileExW` 失败时进入拷贝回退：
+
+```850:858:src/io/ProjectSerializer.cpp
+    if (!MoveFileExW(tempPath.c_str(), targetPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        std::error_code ec;
+        std::filesystem::copy_file(tempPath, targetPath, std::filesystem::copy_options::overwrite_existing, ec);
+        std::filesystem::remove(tempPath, ec);
+        if (ec) {
+            setError("替换目标工程文件失败: " + filePath + " (" + ec.message() + ")");
+            return false;
+        }
+    }
+```
+
+`copy_file` 带着 `overwrite_existing` 直接写目标文件。拷贝写到一半失败时，上一份工程已经被改掉。随后的 `remove` 把 `ec` 换成删除临时文件的结果。临时文件删掉了、拷贝却失败时，`ec` 是成功，函数返回 true。`MainWindow::saveProject` 看到 true 就把 `isDirty` 清掉。界面显示保存成功，新内容不在磁盘上。
+
+替换失败时删掉临时文件并返回 false。不要把临时文件拷到目标路径上。目标文件在 `MoveFileExW` 成功之前保持原字节。
+
+### M14-010 [P1] RESOLVED
+
+`utf8ToPath` 用 `MultiByteToWideChar(CP_UTF8)` 得到 `wstring`，再交给 `std::filesystem::path`。`ofstream` / `ifstream` 打开的是这个宽路径。测试文件名含「工位测试」和「工位工程」。保存、读回、`userModified == true` 均为 PASS。
+
+### M14-011 [P2] RESOLVED
+
+M14-004 对五帧的 `tangentX`、`normalFace1`、`normalFace2`、`bisector` 和 `frame` 做了 \(10^{-9}\) 比较，结果为 PASS。M14-006 的零件带 3 个顶点和 1 个三角形。读回的顶点数、三角形数和 `bboxMax` 均为 PASS。
+
+### M14-012 [P2] OPEN
+
+`saveProject` 在 `saveToFile` 返回 true 之后把 `doc_.isDirty` 写成 false。失败时不改这个标志。打开工程的路径没有询问。剩余部分仍在 `DEFERRED.md`。
+
+---
+
+## 本轮已核对并保持
+
+- 位姿仍写 `rot` 矩阵。读入时有矩阵就用矩阵。万向锁那条仍在 \(10^{-9}\) 以内。
+- `userModified`、示教偏移、构型圈数、起弧、摆焊和收弧仍在 Test 22 里通过。
+- `ProjectSerializer.cpp` 902 行，`tests/test_project_io.cpp` 574 行，`MainWindow.cpp` 599 行，`ShellWindow.cpp` 仍是 863 行。都在 1000 行以内。
+- `OpwKinematics` 和 3D PDF 不在本轮修改里。`RISK-001` 仍开着。`M14-013` 仍延期。
+
+---
+
+# 审核结论 — M14-PROJECT-JSON-001 Round 1
+
+> **Task ID**：`M14-PROJECT-JSON-001`
+> **Task**：工程保存先做 JSON（DIR-001 第 6 步，M14）
+> **Round**：1
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-28
+> **Executor**：执行方
+> **Verdict**：**CHANGES_REQUESTED**
+>
+> 审核方读了 `ProjectSerializer` 的读写、`MainWindow::saveProject` / `openProject` 和 `ShellWindow` 的文件对话框，并对照 `ProjectModel.h` 的字段。`build-full/Release/olp_tests.exe` 的写入时间是 16:39:30，晚于 `ProjectSerializer.cpp`（16:37:54）和 `tests/test_project_io.cpp`（16:39:06）。审核方复跑：**710 passed, 0 failed**，退出码 0。`SiFastSuiteOLP.exe --verify` 退出码 0，1047 帧，34.7508 秒。本机 ANSI 代码页是 936。用 UTF-8 字节调用 `CreateFileA` 打开带「工程」的路径，返回错误 3，文件没有创建；`CreateFileW` 能创建同一路径。
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M14-008 | P1 | **OPEN** | `src/io/ProjectSerializer.cpp` | 缺 `fileFormat` 的 JSON 会当成空工程打开。字段类型不对时异常直接冒出。 |
+| M14-009 | P1 | **OPEN** | `src/io/ProjectSerializer.cpp` | 保存先把目标文件截断，再生成正文。写入中断时上一份工程已经没了。 |
+| M14-010 | P1 | **OPEN** | `src/io/ProjectSerializer.cpp`<br>`src/ui/ShellWindow.cpp` | 对话框给出的 UTF-8 路径用窄字符打开。代码页 936 下，中文路径保存失败。 |
+| M14-011 | P2 | **DEFERRED** | `tests/test_project_io.cpp` | 采样帧的切向、面法向、局部坐标系和零件网格没有断言。见 `DEFERRED.md`。 |
+| M14-012 | P2 | **DEFERRED** | `src/ui/MainWindow.cpp` | 保存成功后 `isDirty` 仍为 true。打开不提示未保存修改。见 `DEFERRED.md`。 |
+| M14-013 | P2 | **DEFERRED** | `src/ui/MainWindow.cpp`<br>`src/ui/OcctViewport.cpp` | `cadHandleId` 是本次进程的编号。打开不按 `sourceCadFile` 重新导入。见 `DEFERRED.md`。 |
+
+`RISK-001` 仍开着。第 7 步没有改。
+
+### M14-008 [P1] OPEN
+
+`fromJsonString` 只在 `fileFormat` 这个键存在时才比较字符串。键不存在就继续装入。`{}` 返回 true，场景、焊缝、控制器都是空的，构造函数放进文档的那条工艺条件也被清掉。菜单打开这种文件时，状态栏写「工程已打开」，当前工位被换掉。
+
+`json::parse` 的抛异常被关掉了。后面的 `get` 和 `value` 没有包在 `try` 里。`fileFormat` 若是数字，`schemaVersion` 若是字符串，关节角、圈数或网格下标的类型对不上，nlohmann 抛 `type_error`。异常从打开槽函数冒出去，进程终止，还没保存的工位一起没了。Test 22 的 M14-007 只拒绝了语法坏掉的文本、错误的格式名和过高的版本号。
+
+`fileFormat` 必须存在，并且等于 `SiFastSuite_Project`，否则返回 false，调用方传入的文档保持原样。解析和类型错误都返回 false，并写入 `errorOut`，不要让异常离开 `fromJsonString` 和 `loadFromFile`。补两条断言：`{}` 被拒绝，且传入的文档不变；`fileFormat` 为数字时返回 false，不抛异常。
+
+### M14-009 [P1] OPEN
+
+`saveToFile` 用 `std::ios::trunc` 打开目标，然后才调用 `toJsonString`。文件一打开，原来的工程已经被截成空文件。正文生成或写入中途失败，上一份能打开的工程就没了。`ofs << content` 之后只看了 `good()`。数据还在缓冲区里，要到流关闭才落盘；关闭失败时函数已经返回 true。
+
+先在内存里生成全文，写到同目录的临时文件，`flush` 并关闭成功后，再替换目标文件。替换之前失败，原文件保持原字节。下一轮会看 `saveToFile`：调用 `toJsonString` 之前没有用 `trunc` 打开最终路径。覆盖保存之后读回的是新内容。
+
+### M14-010 [P1] OPEN
+
+`ShellWindow::saveProjectFile` 和 `openProjectFile` 把 `QFileDialog` 的路径用 `QString::toStdString()` 交下去。Qt 6 这里得到的是 UTF-8。`saveToFile` / `loadFromFile` 用 `std::ofstream` / `std::ifstream` 的窄字符重载打开。本机 ANSI 代码页是 936。审核方把 `temps\工程_probe\a.json` 的 UTF-8 字节交给 `CreateFileA`，返回错误 3，文件不存在；同一个路径交给 `CreateFileW` 能创建。中文目录下的保存会失败，或写到按 GBK 解释出来的另一个名字。M14-006 写的是纯 ASCII 的 `temps` 路径，所以是绿的。
+
+在 Windows 上把这个 `std::string` 按 UTF-8 解释，用宽路径打开。补一条路径里含非 ASCII 字符的保存再读回，`userModified` 与打开前一致。
+
+---
+
+## 本轮已核对并保持
+
+- 位姿写的是 `rot` 矩阵加平移。读入时有 `rot` 就用矩阵，`wpr` 只在没有矩阵时才用。万向锁 \(P = +90^\circ\) 的往返误差小于 \(10^{-9}\)。nlohmann 对 IEEE double 使用 Grisu2，可以按 `strtod` 还原。
+- `userModified`、`processModified`、`userDeltaOffset`、`lockConfig`、构型的 flip / up / turns、`ArcStart`、`WeaveStart`、`ArcEnd` 都写进了 JSON。Test 22 这几条为 PASS。
+- 焊缝的拓扑签名、起收弧长度、采样点位置和角平分线为 PASS。切向、两个面法向和局部坐标系也写进了文件，断言没有覆盖，记在 `M14-011`。
+- 单位设置和工艺条件的电流、电压、气体、`weldSpeedCmPerMin`、`weldSpeedMmPerSec` 都按字段写回。走 `setWeldSpeedCmPerMin(60)` 的那条，读回是 60 cm/min 和 10 mm/s。
+- 被接住的打开失败发生在替换文档之前，原文档还在。成功打开会换上新文档，清空命令栈和选中项，再校验第一段操作。这次校验写的是 `cache`，不改 `poseInUFrame`、`userModified` 和工艺事件。
+- `ProjectSerializer.cpp` 789 行，`tests/test_project_io.cpp` 501 行，`MainWindow.cpp` 595 行，`ShellWindow.cpp` 863 行，都在 1000 行以内。
+- `OpwKinematics` 和 3D PDF 不在本轮 diff 里。`RISK-001` 仍开着。
+
+---
+
 # 审核结论 — M11-PLAYBACK-SHAPE-001 Round 2
 
 > **Task ID**：`M11-PLAYBACK-SHAPE-001`

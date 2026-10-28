@@ -54,6 +54,8 @@ public slots:
     void showOlpWorkbench();
     void loadSample();
     void refreshFromDocument();
+    void openProjectFile();
+    void saveProjectFile();
 
 private:
     void buildChrome();

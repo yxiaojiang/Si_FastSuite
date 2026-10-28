@@ -127,8 +127,14 @@ void ShellWindow::buildChrome() {
 
     auto* fileMenu = menuBar()->addMenu(QString::fromUtf8("文件"));
     auto* newAction = disabledAction(this, QString::fromUtf8("新建"), later, IconKind::New, fileInk);
-    auto* openAction = disabledAction(this, QString::fromUtf8("打开"), later, IconKind::Open, fileInk);
-    auto* saveAction = disabledAction(this, QString::fromUtf8("保存"), later, IconKind::Save, fileInk);
+    auto* openAction = fileMenu->addAction(commandIcon(IconKind::Open, fileInk), QString::fromUtf8("打开..."));
+    openAction->setToolTip(QString::fromUtf8("打开 JSON 工程文件。"));
+    connect(openAction, &QAction::triggered, this, &ShellWindow::openProjectFile);
+
+    auto* saveAction = fileMenu->addAction(commandIcon(IconKind::Save, fileInk), QString::fromUtf8("保存..."));
+    saveAction->setToolTip(QString::fromUtf8("保存当前工程为 JSON 文件。"));
+    connect(saveAction, &QAction::triggered, this, &ShellWindow::saveProjectFile);
+
     auto* importAction = disabledAction(this, QString::fromUtf8("导入"), later, IconKind::Import, fileInk);
     auto* loadAction = fileMenu->addAction(commandIcon(IconKind::Sample, fileInk), QString::fromUtf8("加载示例工位"));
     fileMenu->insertAction(loadAction, newAction);
@@ -569,6 +575,51 @@ void ShellWindow::loadSample() {
         summary << " 有阻塞问题，文件仍已写出。";
     }
     statusBar()->showMessage(QString::fromStdString(summary.str()));
+}
+
+void ShellWindow::openProjectFile() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, QString::fromUtf8("打开工程文件"),
+        QString(),
+        QStringLiteral("JSON 工程文件 (*.json);;所有文件 (*.*)"));
+    if (path.isEmpty()) return;
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    std::string err;
+    const bool ok = controller_.openProject(path.toStdString(), &err);
+    QApplication::restoreOverrideCursor();
+
+    if (!ok) {
+        statusBar()->showMessage(QString::fromUtf8("打开工程失败: ") + QString::fromStdString(err));
+        return;
+    }
+    if (!controller_.document().controllers.empty()) {
+        showOlpWorkbench();
+    }
+    refreshFromDocument();
+    if (viewport_ != nullptr) {
+        viewport_->syncScene();
+    }
+    statusBar()->showMessage(QString::fromUtf8("工程已打开: ") + path);
+}
+
+void ShellWindow::saveProjectFile() {
+    const QString path = QFileDialog::getSaveFileName(
+        this, QString::fromUtf8("保存工程文件"),
+        QStringLiteral("project.json"),
+        QStringLiteral("JSON 工程文件 (*.json);;所有文件 (*.*)"));
+    if (path.isEmpty()) return;
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    std::string err;
+    const bool ok = controller_.saveProject(path.toStdString(), &err);
+    QApplication::restoreOverrideCursor();
+
+    if (!ok) {
+        statusBar()->showMessage(QString::fromUtf8("保存工程失败: ") + QString::fromStdString(err));
+        return;
+    }
+    statusBar()->showMessage(QString::fromUtf8("工程已保存: ") + path);
 }
 
 void ShellWindow::refreshFromDocument() {

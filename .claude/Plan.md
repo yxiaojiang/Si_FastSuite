@@ -14,7 +14,7 @@
 | TcpGizmo 示教，撤销和重做 | 完成 | 边拾取与手柄已落地 |
 | 视口里播放轨迹 | 完成 | TCP 轨迹、TCP 预览球与连杆 0～6 烘焙位姿驱动均已落地（`M11-005`） |
 | 导出 `.ls` 并在 ROBOGUIDE 跑出一致轨迹 | 部分完成 | 能生成程序，没有上机对拍（`RISK-001`） |
-| 工程文件保存和打开 | 未做 | 排在 `DIR-001` 第 6 步 |
+| 工程文件保存和打开 | 完成 | `M14-PROJECT-JSON-001` Round 3 APPROVED。`M14-012`、`M14-013` 仍延期 |
 
 ### M2 可演示闭环
 
@@ -29,10 +29,7 @@
 
 ## 正在做的事
 
-1. **[DONE 2026-10-28] FCL 单点实测（`DIR-001` 第 2 步）。** 经典模式装上 `fcl 0.7.0`，`build-full` 日志有 `Found FCL`。Test 21 完成测距与耗时验证。
-2. **[DONE 2026-10-28] FCL 精确间隙替换球对包围盒（`DIR-001` 第 3 步，`M10-COLLISION-FCL-001` 已 APPROVED）。** 连杆 1~6 STL 加 4 个焊枪球对工件/夹具/底座精确窄相位网格距离（接触/穿透为 0.0 mm，干涉严格 `<= 0.0`）；相邻连杆与法兰焊枪屏蔽；焊接角色工件焊丝尖端 10 mm 豁免；72 组自转扫描后台异步（支持取消）；Gizmo 拖拽防抖双检防丢帧全臂逆解预览；代码拆分 `< 1000` 行；610 项测试全绿。
-3. **[DONE 2026-10-28] 运动学金样改为从 URDF 读关节原点，并比较完整姿态（`DIR-001` 第 4 步，`M06-KINEMATICS-URDF-001` Round 1 APPROVED）。** Test 3 从文件读 origin、axis 和 tool0。零位 (890, 0, 1200) mm，工具 Z 朝 +X。审核方复跑 611 passed，`--verify` 退出码 0。`RISK-001` 仍开着。
-4. **[DONE 2026-10-28] 播放用 URDF 连杆链驱动外形（`DIR-001` 第 5 步，`M11-PLAYBACK-SHAPE-001` Round 2 APPROVED）。** `sampleTrajectory`、`syncScene`、`syncRobotPosture` 使用 `forwardRobotLinkWorldFrames`。停止不再发布起点帧。审核方复跑 657 passed，`--verify` 退出码 0。`M11-009` 不挡通过。下一步是第 6 步，尚未开始。
-5. **[OPEN] 无 ROBOGUIDE 继续开发。** 用户决定暂不安装。耦合保持 +1，圈数仍按 J1、J4、J6。关节程序不能当已对过示教器的成品。
+1. **[TODO] 结束 3D PDF 悬置并加 T 型接头自动回归（`DIR-001` 第 7 步）。** 用一段话结束 3D PDF 的悬置（`RISK-003`），并在测试套件中为 `SampleScenes/Scene1_TJoint_And_FANUC_M10iA` 的 T 型接头闭环添加自动化回归测试。
+2. **[OPEN] 无 ROBOGUIDE 继续开发（`RISK-001`）。** 用户决定暂不安装。耦合保持 +1，圈数仍按 J1、J4、J6。关节程序不能当已对过示教器的成品。
 
-回退间隙 `RISK-002`、3D PDF `RISK-003`，以及 `CRDocs/DEFERRED.md` 里的延期项仍有效。下一项是第 6 步。第 7 步仍不做。
+已完成项移入 `Plan-archive.md`。回退间隙 `RISK-002`、3D PDF `RISK-003`，以及 `CRDocs/DEFERRED.md` 里的延期项仍有效。第 6 步已通过，待用户指令开启第 7 步。

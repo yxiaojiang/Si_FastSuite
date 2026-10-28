@@ -30,3 +30,4 @@ void testTrajectoryAndPlayback();
 void testFanucLsPostProcessorValidationAndExport();
 void testWorkcellPdfReportExport();
 void testFclSinglePoseTiming();
+void testProjectJsonSerialization();

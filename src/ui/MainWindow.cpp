@@ -1,4 +1,5 @@
 #include "olp/ui/MainWindow.h"
+#include "olp/io/ProjectSerializer.h"
 
 #include <algorithm>
 
@@ -570,6 +571,29 @@ bool MainWindow::exportWorkcellPdfReport(
     const PdfReportOptions& options,
     std::string* errorOut) {
     return WorkcellPdfReportExporter::exportToPdf(doc_, outputFilePath, options, errorOut);
+}
+
+bool MainWindow::saveProject(const std::string& filePath, std::string* errorOut) const {
+    const bool ok = io::ProjectSerializer::saveToFile(doc_, filePath, {}, errorOut);
+    if (ok) {
+        const_cast<MainWindow*>(this)->doc_.isDirty = false;
+    }
+    return ok;
+}
+
+bool MainWindow::openProject(const std::string& filePath, std::string* errorOut) {
+    app::ProjectDocument loadedDoc;
+    if (!io::ProjectSerializer::loadFromFile(filePath, loadedDoc, errorOut)) {
+        return false;
+    }
+    doc_ = std::move(loadedDoc);
+    cmdMgr_.clear();
+    selectedSceneNodeId_.clear();
+    selectedOperationId_.clear();
+    selectedTargetId_.clear();
+    handleDocumentChanged();
+    cmdMgr_.notifyDocumentChanged();
+    return true;
 }
 
 } // namespace olp::ui

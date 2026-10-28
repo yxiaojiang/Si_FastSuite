@@ -3,7 +3,7 @@
 > **基线依据**：严格遵循 [`Docs/OLP_System_Design_Claude.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/OLP_System_Design_Claude.md)（v1.1 最终定版）与 [`Docs/FASTSUITE_OLP_System_Architecture.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/FASTSUITE_OLP_System_Architecture.md)。
 > **对标产品**：德国 CENIT **FASTSUITE Edition 2**（下文简称 FS E2）。
 > **目标闭环**：**3D 场景导入 → 工位/机器人配置 → 焊缝与路径编辑 → 可达性/碰撞校验 → 轨迹仿真预览 → 输出 FANUC `.ls` 与 3D PDF / 单文件离线 HTML 3D 动画包**。
-> **最近刷新**：2026-10-28。当前正在做的事只写在 `.claude/Plan.md`：`DIR-001` 第 5 步播放外形 Round 2 已 APPROVED。下一步是第 6 步：工程保存先做 JSON。
+> **最近刷新**：2026-10-28。当前正在做的事只写在 `.claude/Plan.md`：`DIR-001` 第 6 步工程保存 JSON（`M14-PROJECT-JSON-001`）Round 3 已 APPROVED。第 7 步仍未开始。
 
 ---
 
@@ -19,7 +19,7 @@
 4. **[DONE 2026-10-28] 运动学金样改为从 URDF 读关节原点并比较完整姿态（`DIR-001` 第 4 步，`M06-KINEMATICS-URDF-001` 已 APPROVED）**：
    - Test 3 从 URDF 读 origin 与 axis，比较完整旋转与位置。`RISK-001` 仍开着。细节见 `.claude/Plan.md`。
 5. **[DONE 2026-10-28] 播放用 URDF 连杆链驱动外形（`DIR-001` 第 5 步，Round 2 APPROVED）**。细节见 `.claude/Plan.md`。
-6. **[NEXT] 工程保存先做 JSON（`DIR-001` 第 6 步）**。第 7 步仍不做。
+6. **[DONE 2026-10-28] 工程保存先做 JSON（`DIR-001` 第 6 步，`M14-PROJECT-JSON-001` Round 3 APPROVED）**：`ProjectSerializer` 引擎无损持久化，两阶段原子写盘安全防护，宽字符路径兼容，725 项测试全绿，`--verify` 退出码 0。第 7 步仍未开始。
 
 ---
 

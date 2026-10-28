@@ -106,6 +106,10 @@ public:
         const PdfReportOptions& options = {},
         std::string* errorOut = nullptr);
 
+    // M14: Project Document JSON Save / Open
+    bool saveProject(const std::string& filePath, std::string* errorOut = nullptr) const;
+    bool openProject(const std::string& filePath, std::string* errorOut = nullptr);
+
     void noteSampleRun(int exitCode, int frameCount, double cycleTimeSec, double weldTimeSec) noexcept;
     int lastSampleExitCode() const noexcept { return lastSampleExitCode_; }
     int lastFrameCount() const noexcept { return lastFrameCount_; }

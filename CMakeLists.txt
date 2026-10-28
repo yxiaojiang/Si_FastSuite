@@ -36,6 +36,11 @@ if(Eigen3_FOUND)
     message(STATUS "[SiFastSuiteOLP] Found Eigen3")
 endif()
 
+find_package(nlohmann_json CONFIG QUIET)
+if(nlohmann_json_FOUND)
+    message(STATUS "[SiFastSuiteOLP] Found nlohmann_json")
+endif()
+
 if(OLP_ENABLE_FCL)
     find_package(fcl QUIET)
     if(fcl_FOUND)
@@ -60,6 +65,10 @@ target_include_directories(olp_core PUBLIC
 if(Eigen3_FOUND)
     target_link_libraries(olp_core PUBLIC Eigen3::Eigen)
     target_compile_definitions(olp_core PUBLIC OLP_HAS_EIGEN3=1)
+endif()
+if(nlohmann_json_FOUND)
+    target_link_libraries(olp_core PUBLIC nlohmann_json::nlohmann_json)
+    target_compile_definitions(olp_core PUBLIC OLP_HAS_NLOHMANN_JSON=1)
 endif()
 
 add_library(olp_cad STATIC
@@ -110,6 +119,7 @@ endif()
 add_library(olp_io STATIC
     src/io/FanucLsPostProcessor.cpp
     src/io/HtmlAnimationExporter.cpp
+    src/io/ProjectSerializer.cpp
 )
 target_include_directories(olp_io PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -199,6 +209,7 @@ if(OLP_BUILD_TESTS)
         tests/test_simulation.cpp
         tests/test_postprocessor.cpp
         tests/test_report.cpp
+        tests/test_project_io.cpp
     )
     target_link_libraries(olp_tests PRIVATE olp_ui)
     if(Qt6_FOUND)

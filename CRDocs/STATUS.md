@@ -1,24 +1,24 @@
 # 当前协作状态
 
-- **Task ID**：`M11-PLAYBACK-SHAPE-001`
-- **Task**：播放时用 URDF 连杆链驱动外形（DIR-001 第 5 步，M11-005）
-- **Round**：2
+- **Task ID**：`M14-PROJECT-JSON-001`
+- **Task**：工程保存先做 JSON（DIR-001 第 6 步，M14）
+- **Round**：3
 - **Status**：**APPROVED**
 - **Scope**：
-  1. 视口展示连杆 0～6；
-  2. 静止姿态与播放都使用 `forwardRobotLinkWorldFrames`；
-  3. 停止或 `invalidate()` 后外形回到场景关节，TCP 球和轨迹不再留下；
-  4. `M11-007`、`M11-008`、`M11-005` 已关闭；
-  5. `RISK-001` 继续 OPEN；
-  6. 修改文件低于 1000 行；
+  1. `ProjectDocument` 的 JSON 序列化与反序列化；
+  2. 保存后再打开时，焊缝采样点、`userModified`、工艺事件和 `Transform4d` 精确还原；
+  3. `M14-008`、`M14-009`、`M14-010`、`M14-011` 已关闭；
+  4. `RISK-001` 继续保持 OPEN；
+  5. 产品编译必须严格带 `/p:VCToolsVersion=14.44.35207`；
+  6. 所有修改或新增文件严格遵守 1000 行限制；
   7. 测试套件全量通过，`SiFastSuiteOLP.exe --verify` 退出码 0；
-  8. 不做第 6 步和第 7 步。
-- **Open**：`RISK-001`、`RISK-002`、`RISK-003`、`M10-FCL-005`、`M11-009`。
-- **Current owner**：执行方（本轮范围已关闭）
+  8. 严格不做第 7 步（3D PDF 悬置收口与 T 型接头回归）。
+- **Open**：`RISK-001`、`RISK-002`、`RISK-003`、`M10-FCL-005`、`M11-009`、`M14-012`、`M14-013`。
+- **Current owner**：无（本范围已通过）
 - **Last updated by**：审核方（Reviewer）
 - **Last updated at**：2026-10-28
 
 ## 下一步
 
-- 本轮范围通过。`M11-009` 已记入 `CRDocs/DEFERRED.md`，不挡本次通过。
-- 下一项是 `DIR-001` 第 6 步：工程保存先做 JSON。第 7 步仍不做。
+- 本范围通过。`M14-012` 和 `M14-013` 留在 `DEFERRED.md`；
+- 第 7 步仍未开始。没有新的执行指令之前，不写 3D PDF 收口，也不加 T 型接头回归。

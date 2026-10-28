@@ -56,6 +56,7 @@ int main(int argc, char* argv[]) {
     testFanucLsPostProcessorValidationAndExport();
     testWorkcellPdfReportExport();
     testFclSinglePoseTiming();
+    testProjectJsonSerialization();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";
