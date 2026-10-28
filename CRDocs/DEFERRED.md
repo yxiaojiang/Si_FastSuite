@@ -187,14 +187,23 @@
 
 ---
 
-## M11-005 [OPEN] 播放时连杆网格停在场景姿态上（P2）
+## M11-005 [RESOLVED in M11-PLAYBACK-SHAPE-001 Round 2] 播放时连杆网格要跟着手臂姿态走（P2）
 
 - **来源轮次**：`M11-TRAJECTORY-001` Round 1 审核（2026-10-27）。
-- **位置**：`OcctViewportPlayback.cpp`。帧里已经有七段连杆变换。
-- **现状**：本轮约定播放只画 TCP 球和轨迹。连杆不随帧摆动。停止和文档刷新会清掉 TCP 预览。
-- **后果**：时间轴上看不到手臂姿态，只能看焊枪点。
-- **触发阶段**：播放需要驱动机器人外形时。
-- **验收条件**：播放使用烘焙帧里的连杆变换更新机器人显示；停止或 `invalidate()` 后外形回到场景关节，TCP 预览被清掉。
+- **位置**：`OcctViewport.cpp`、`TrajectorySimulator.cpp`、`TimelinePanel::stopPlayback`。
+- **现状**：Round 2 已关闭。播放和静止姿态使用 `forwardRobotLinkWorldFrames`。停止不再发布起点帧。
+- **闭环验证**：审核方复跑 Test 20。Home 连杆 4 与连杆 6 的位置、姿态断言为 PASS。`stopPlayback` 源码不再调用 `publish`。
+
+---
+
+## M11-009 [OPEN] 停止测试在没有计划时也会通过（P2）
+
+- **来源轮次**：`M11-PLAYBACK-SHAPE-001` Round 2 审核（2026-10-28）。
+- **位置**：`tests/test_simulation.cpp` 里对 `TimelinePanel::stopPlayback` 的钩子断言。
+- **现状**：测试新建时间轴后直接 `stopPlayback()`，没有程序，`plan_` 为空。`publish` 在没有计划时立刻返回，不会调用 `showFrame`。把 `publish(false)` 加回停止函数，这条断言仍然通过。
+- **后果**：`M11-008` 的回归可以被一次空停止掩盖。
+- **触发阶段**：下次改 `stopPlayback` 或停止后的刷新时。
+- **验收条件**：先建成一份计划并显示过一帧，再停止。`clearPreview` 被调用，`showFrame` 不被调用。
 
 ---
 
@@ -279,6 +288,24 @@
 - **位置**：`src/algo/FclCollisionQueries.cpp` 的 `queryRobotAndTorchCollision`。
 - **现状**：Round 2 已去掉按 `Transit_Wall` 写 `std::cout` 的调试行。碰撞查询里不再按零件名字打印。
 - **闭环验证**：审核方在 `src/` 中检索 `Transit_Wall` 与该调试打印，碰撞查询内已无此输出。
+
+---
+
+## M06-001 [RESOLVED in M11-PLAYBACK-SHAPE-001] 内置模型仍带一套字面量关节链（P2）
+
+- **来源轮次**：M06-KINEMATICS-URDF-001 Round 1 审核（2026-10-28）。
+- **位置**：RobotModel::createFanucM10iA；forwardUrdfFlange / forwardUrdfTool0。
+- **现状**：已在 M11-PLAYBACK-SHAPE-001 中闭环。createFanucM10iA 不再填入字面量关节原点与转角；forwardUrdfFlange 与 forwardUrdfTool0 强制校验 if (!urdfLoaded) return ...;；loadFromUrdf 必须 6 个转动关节与 tool0 均解析成功才标记 urdfLoaded = true。
+- **闭环验证**：审核方读了 `createFanucM10iA`、`forwardUrdfFlange`、`forwardUrdfTool0` 和 `loadFromUrdf`。未加载时返回单位变换。`urdfLoaded` 同时要求六个转动关节和 tool0。
+
+---
+
+## M06-002 [RESOLVED in M11-PLAYBACK-SHAPE-001] 金样在 URDF 打开失败后仍解引用空模型（P2）
+
+- **来源轮次**：M06-KINEMATICS-URDF-001 Round 1 审核（2026-10-28）。
+- **位置**：tests/test_kinematics.cpp 的 testOpwKinematics100Samples。
+- **现状**：已在 M11-PLAYBACK-SHAPE-001 中闭环。在 testOpwKinematics100Samples 中，若 !urdfModelOpt.has_value() || !urdfModelOpt->urdfLoaded，记录一条失败后立即返回，不再解引用空 optional。
+- **闭环验证**：审核方读了 Test 3。`urdfOk` 为 false 时 `check` 之后立刻 `return`。
 
 ---
 

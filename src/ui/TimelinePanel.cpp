@@ -213,12 +213,11 @@ void TimelinePanel::stopPlayback() {
     if (clearPreview_) {
         clearPreview_();
     }
+    sliderGuard_ = true;
+    slider_->setValue(0);
+    sliderGuard_ = false;
     if (plan_) {
-        publish(false);
-    } else {
-        sliderGuard_ = true;
-        slider_->setValue(0);
-        sliderGuard_ = false;
+        updateReadout();
     }
 }
 

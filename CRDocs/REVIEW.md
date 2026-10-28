@@ -1,3 +1,116 @@
+# 审核结论 — M11-PLAYBACK-SHAPE-001 Round 2
+
+> **Task ID**：`M11-PLAYBACK-SHAPE-001`
+> **Task**：播放时用 URDF 连杆链驱动外形（DIR-001 第 5 步，M11-005）
+> **Round**：2
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-28
+> **Executor**：执行方
+> **Verdict**：**APPROVED**
+>
+> 审核方读了 `sampleTrajectory`、`syncScene`、`stopPlayback` 和 `forwardRobotLinkWorldFrames`。Home 下这条链的连杆 4 在基座上方 (150, 0, 1200)，连杆 6 与 `link_6` 对齐。`build-full/Release/olp_tests.exe` 晚于上述源文件。审核方复跑：**657 passed, 0 failed**，退出码 0。`SiFastSuiteOLP.exe --verify` 退出码 0。`M11-007`、`M11-008` 关闭。
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M11-007 | P1 | **RESOLVED** | `TrajectorySimulator.cpp`<br>`OcctViewport.cpp`<br>`OcctViewportPlayback.cpp` | 播放和静止姿态都用 `forwardRobotLinkWorldFrames`。Home 连杆 4、连杆 6 的断言为 PASS。 |
+| M11-008 | P1 | **RESOLVED** | `TimelinePanel.cpp` | `stopPlayback` 不再调用 `publish`。清理之后只改滑块和读数。 |
+| M11-009 | P2 | **DEFERRED** | `tests/test_simulation.cpp` | 停止测试没有计划，`publish` 会直接返回。见 `DEFERRED.md`。 |
+| M11-005 | P2 | **RESOLVED** | `OcctViewportPlayback.cpp` | 播放按 URDF 链摆七节网格。停止和 `invalidate()` 清掉 TCP 预览。 |
+
+`RISK-001` 仍开着。第 6 步和第 7 步没有改。`OcctViewport.cpp` 640 行，`OcctViewportPlayback.cpp` 187 行，`TimelinePanel.cpp` 285 行，`TrajectorySimulator.cpp` 575 行，`FclCollisionQueries.cpp` 421 行，`tests/test_simulation.cpp` 488 行。
+
+### M11-007 [P1] RESOLVED
+
+`sampleTrajectory` 把 `linkWorldTransforms` 写成 `forwardRobotLinkWorldFrames(joints, robotBaseInWorld)`。`syncScene` 和 `syncRobotPosture` 用同一函数，基座是机器人节点的 `localTransform`。时间轴采样走 `PlaybackCursor::sample`，再交给 `setPlaybackRobotTransforms`。无交互上下文时也会建 `AIS_Shape` 并写入局部变换，读回用的是 `Transformation()`。
+
+`forwardRobotLinkWorldFrames` 的六个原点仍是 (0, 0, 450)、(150, 0, 0)、(0, 0, 600)、(0, 0, 150)、(640, 0, 0)、(100, 0, 0) mm，J3 加上 J2，与碰撞查询同一条链。Home、基座 Z = 500 mm 时，连杆 4 在 (150, 0, 1700)，不是腕心 (790, 0, 1700)。Test 20 对七节的位置和姿态均为 PASS，连杆 4 的 1 mm 门槛和连杆 6 的 1° 门槛均为 PASS。
+
+`CollisionAndSim.cpp` 里另一份扫掠帧仍写 OPW `linkTransforms`。时间轴不读它。示例导出在写出前改用 `TrajectorySimulator` 的帧。HTML 只画 TCP。
+
+### M11-008 [P1] RESOLVED
+
+`stopPlayback` 停表、把游标放回 0、调用 `clearPreview_`，然后在 `sliderGuard_` 为真时把滑块归零，有计划时只 `updateReadout()`。`invalidate()` 仍只清理一次。暂停不清理。播到结尾停在末帧。TCP 位置仍来自 OPW 的 `tcpPoseInBase`，不从连杆 6 的网格姿态取。
+
+---
+
+# 审核结论 — M11-PLAYBACK-SHAPE-001
+
+> **Task ID**：`M11-PLAYBACK-SHAPE-001`
+> **Task**：播放时用烘焙连杆变换驱动外形（DIR-001 第 5 步，M11-005）
+> **Round**：1
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-28
+> **Executor**：执行方
+> **Verdict**：**CHANGES_REQUESTED**
+>
+> 审核方读了 `syncScene`、`setPlaybackRobotTransforms`、`stopPlayback` 和 `forwardRobotLinkWorldFrames`，并在 Home、全零、J2 = 20° 三处把 OPW `linkTransforms` 与 URDF 连杆链对过。`build-full/Release/olp_tests.exe` 晚于上述源文件。审核方复跑：**614 passed, 0 failed**，退出码 0。`SiFastSuiteOLP.exe --verify` 退出码 0。这三项新断言只比连杆 6 的位置，视口没有交互上下文，网格没有建出来。
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M11-007 | P1 | **OPEN** | `src/ui/OcctViewport.cpp`<br>`src/ui/OcctViewportPlayback.cpp`<br>`tests/test_simulation.cpp` | 七节 STL 被套上 OPW 抽象帧。Home 下连杆 4 偏 640 mm，连杆 6 姿态差 180°。 |
+| M11-008 | P1 | **OPEN** | `src/ui/TimelinePanel.cpp` | 停止先清预览，再 `publish(false)` 把起点帧和 TCP 球画回去。 |
+| M06-001 | P2 | **RESOLVED** | `src/device/RobotModel.cpp` | 内置模型不再写字面量关节原点。`urdfLoaded` 要求六个转动关节和 tool0 都读到。未加载时正解返回单位变换。 |
+| M06-002 | P2 | **RESOLVED** | `tests/test_kinematics.cpp` | URDF 没打开时记失败并返回，不再解引用空模型。 |
+
+`M11-005` 仍开着。`RISK-001` 仍开着。第 6 步和第 7 步没有改。
+
+### M11-007 [P1] OPEN
+
+`link_0`～`link_6` 的 STL 在 URDF 连杆坐标系里。碰撞查询用 `forwardRobotLinkWorldFrames`：原点依次是 (0, 0, 450)、(150, 0, 0)、(0, 0, 600)、(0, 0, 150)、(640, 0, 0)、(100, 0, 0) mm，轴向与 URDF 一致，J3 加上 J2。视口静止姿态和播放都用 `OpwKinematics::linkTransforms`。那一组是 OPW 抽象帧，连杆 6 对齐的是 tool0，不是 `link_6.stl`。
+
+Home（J5 = −90°）下，连杆 0～2 重合。连杆 3 位置重合、姿态差 90°。连杆 4 的 URDF 原点在 (150, 0, 1200)，OPW 把它放在腕心 (790, 0, 1200)，相差 640 mm，姿态差 90°。连杆 5 位置重合、姿态差 90°。连杆 6 位置都在 (790, 0, 1100)，姿态差 180°。全零和只动 J2 时，连杆 4 仍差 640 mm，连杆 6 仍差 180°。
+
+Test 20 只比较连杆 6 的位置，而且 `syncScene` 在没有交互上下文时直接返回，`robotLinkAis` 仍是空的。`playbackRobotTransforms()` 读回的是刚写进去的那组 OPW 帧。这三条断言在网格摆错时也会通过。
+
+播放和场景静止姿态都要按当前关节角走与碰撞相同的 URDF 连杆链，再乘机器人基座。不要把 `fk.linkTransforms[k]` 套到 `link_k.stl` 上。回归至少在 Home 比较七节的位置和姿态：连杆 4 与 URDF 链的位置差要小于 1 mm，连杆 6 的姿态差要小于 1°。
+
+### M11-008 [P1] OPEN
+
+`clearPlaybackPreview` 会把七节改回 `sceneRobotLinkTransforms`，并去掉 TCP 球和轨迹。`invalidate()` 只走这一次清理。`stopPlayback` 在清理之后调用 `publish(false)`。`publish` 再执行 `setPlaybackTcp` 和 `setPlaybackRobotTransforms(起点帧)`。停止后 TCP 球还在，外形停在程序起点，不是清理时写下的场景关节。
+
+暂停没有清理，末帧会留到停止，这两处保持。停止必须停在场景关节上，并且不再画出 TCP 球和轨迹。
+
+### M06-001、M06-002 [P2] RESOLVED
+
+`createFanucM10iA` 不再填写六个关节原点。`forwardUrdfFlange` 与 `forwardUrdfTool0` 在 `urdfLoaded` 为 false 时返回单位变换。`loadFromUrdf` 要 `revoluteParsedCount == 6` 且 `tool0Parsed` 才把 `urdfLoaded` 设为 true。Test 3 在加载失败时返回。
+
+---
+
+# 审核结论 — M06-KINEMATICS-URDF-001
+
+> **Task ID**：`M06-KINEMATICS-URDF-001`
+> **Task**：运动学金样改为从 URDF 读关节原点，并比较完整姿态（DIR-001 第 4 步）
+> **Round**：1
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-28
+> **Executor**：执行方
+> **Verdict**：**APPROVED**
+>
+> 审核方读了 `fanuc_m10ia_standalone.urdf`、`RobotModel::loadFromUrdf`、`forwardUrdfTool0` 和 Test 3，并按文件里的 origin、axis、`link_6-tool0` 重算了同一组 200 个示教器角。`build-full/Release/olp_tests.exe` 的写入时间晚于这三份源文件。审核方复跑：**611 passed, 0 failed**，退出码 0。`SiFastSuiteOLP.exe --verify` 退出码 0。
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M06-001 | P2 | **DEFERRED** | `src/device/RobotModel.cpp` | 内置模型仍写着一套关节原点和 tool0 转角。`forwardUrdf*` 不看 `urdfLoaded`。见 `DEFERRED.md`。 |
+| M06-002 | P2 | **DEFERRED** | `tests/test_kinematics.cpp` | URDF 打开失败后仍会解引用空模型。见 `DEFERRED.md`。 |
+
+本轮没有新的 P0 或 P1。`RISK-001` 仍开着。第 5 步到第 7 步没有改。
+
+零位链算到 (890, 0, 1200) mm，工具 Z 轴朝 +X。同一组 200 个示教器角上，位置差小于 \(10^{-12}\) mm，姿态差最大 \(0.000153^\circ\)。这个余量来自文件里的 `3.14159` 与 `-1.570796`，OPW 偏置用的是精确 \(\pm 180^\circ\) 和 \(-90^\circ\)。两条都低于 Test 3 的 0.01 mm 和 \(0.001^\circ\)。
+
+`joint_6-flange` 的原点是单位变换，`link_6-tool0` 的父连杆是 `flange`。金样把 tool0 乘在 link_6 上，和把单位法兰接进去的结果相同。六个转动关节的 xyz 按米转毫米后是 (0, 0, 450)、(150, 0, 0)、(0, 0, 600)、(0, 0, 150)、(640, 0, 0)、(100, 0, 0)，轴向与文件一致。Test 3 在 `urdfLoaded` 为真之后调用 `forwardUrdfTool0`，比较的是位置、测地角、旋转矩阵九个分量和三个基向量。
+
+198 组样本把 J5 固定在 \(-60^\circ\)，全零和只动 J2 的两组 J5 为 0。J4 与 J6 仍在变，完整旋转都参加了比较。示教器角到 URDF 角仍是 J3 加上 J2，系数 +1。`displayToUrdfJoints` 用的是同一个系数。没有示教器对拍，`RISK-001` 不关。
+
+`RobotModel.h` 75 行，`RobotModel.cpp` 300 行，`tests/test_kinematics.cpp` 178 行。本轮 diff 没有改播放外形、工程 JSON 和 PDF。
+
+---
+
 # 审核结论 — M10-COLLISION-FCL-001
 
 > **Task ID**：`M10-COLLISION-FCL-001`

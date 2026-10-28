@@ -484,6 +484,7 @@ void ShellWindow::buildChrome() {
                 return;
             }
             viewport_->setPlaybackTcp(frame.tcpWorldPos, frame.arcActive);
+            viewport_->setPlaybackRobotTransforms(frame.linkWorldTransforms);
             if (jogReadout_ == nullptr) {
                 return;
             }

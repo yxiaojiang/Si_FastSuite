@@ -3,6 +3,12 @@
 #include "olp/algo/OpwKinematics.h"
 #include "olp/algo/TrajectorySimulator.h"
 #include "olp/device/RobotModel.h"
+#include "olp/app/CommandManager.h"
+#include "olp/cad/OcctCadKernel.h"
+#include "olp/ui/OcctViewport.h"
+#include "olp/algo/FclCollisionQueries.h"
+#include "olp/ui/MainWindow.h"
+#include "olp/ui/TimelinePanel.h" 
 
 #include <cmath>
 #include <iostream>
@@ -399,4 +405,84 @@ void testTrajectoryAndPlayback() {
     cursor.playFromStartIfFinished();
     check(cursor.state() == olp::algo::PlaybackState::Playing, "Play from a finished cursor restarts");
     check(cursor.timeSec() == 0.0, "Restarting a finished playback returns to the start state");
+
+#ifdef OLP_HAS_OCCT
+    // M11-005 & M11-007: Viewport robot link presentation driven by URDF link chain and baked linkWorldTransforms
+    olp::app::ProjectDocument viewportDoc;
+    olp::cad::OcctCadKernel viewportCad;
+    olp::core::SceneNode robotSceneNode;
+    robotSceneNode.id = "robot_active_fanuc_m10ia";
+    robotSceneNode.type = olp::core::SceneNodeType::Robot;
+    robotSceneNode.collisionRole = olp::core::CollisionRole::RobotLink;
+    robotSceneNode.robotModelId = "fanuc_m10ia";
+    robotSceneNode.currentJointsRad = home;
+    robotSceneNode.localTransform = olp::core::Transform4d::fromTranslation(0.0, 0.0, 500.0);
+    viewportDoc.sceneNodes.push_back(robotSceneNode);
+
+    olp::app::CommandManager cmdMgr(50);
+    olp::ui::OcctViewport viewport(viewportDoc, cmdMgr, &viewportCad);
+    viewport.syncScene();
+
+    const auto initialTransforms = viewport.playbackRobotTransforms();
+    const auto expectedUrdfHome = olp::algo::forwardRobotLinkWorldFrames(home, robotSceneNode.localTransform);
+
+    // M11-007: Verify all 7 links in Home posture match URDF link chain (pos < 1 mm, rot < 1 deg)
+    for (size_t k = 0; k < 7; ++k) {
+        const double posErr = (initialTransforms[k].pos - expectedUrdfHome[k].pos).norm();
+        check(posErr < 1.0,
+              "M11-007: Initial link " + std::to_string(k) + " pos matches URDF chain (< 1 mm)");
+        const double rotErrDeg = olp::core::rad2deg(initialTransforms[k].rot.angularDistanceRad(expectedUrdfHome[k].rot));
+        check(rotErrDeg < 1.0,
+              "M11-007: Initial link " + std::to_string(k) + " rot matches URDF chain (< 1 deg)");
+    }
+    // Reviewer explicit gate: link 4 position (< 1 mm, not OPW 640 mm error) and link 6 posture (< 1 deg, not 180 deg flipped)
+    const double link4PosErr = (initialTransforms[4].pos - expectedUrdfHome[4].pos).norm();
+    check(link4PosErr < 1.0,
+          "M11-007: Home link 4 pos matches URDF within 1 mm (not OPW 640 mm wrist offset)");
+    const double link6RotErrDeg = olp::core::rad2deg(initialTransforms[6].rot.angularDistanceRad(expectedUrdfHome[6].rot));
+    check(link6RotErrDeg < 1.0,
+          "M11-007: Home link 6 posture matches URDF within 1 deg (not OPW 180 deg flipped)");
+
+    // M11-005: Sample mid-trajectory frame and drive viewport link transforms
+    cursor.seek(weldPlan.totalCycleTimeSec * 0.5);
+    const auto activeFrame = cursor.sample();
+    viewport.setPlaybackRobotTransforms(activeFrame.linkWorldTransforms);
+
+    const auto playingTransforms = viewport.playbackRobotTransforms();
+    for (size_t k = 0; k < 7; ++k) {
+        const double playPosErr = (playingTransforms[k].pos - activeFrame.linkWorldTransforms[k].pos).norm();
+        check(playPosErr < 1e-3,
+              "M11-005: Playing link " + std::to_string(k) + " pos follows baked frame linkWorldTransforms");
+        const double playRotErrDeg = olp::core::rad2deg(playingTransforms[k].rot.angularDistanceRad(activeFrame.linkWorldTransforms[k].rot));
+        check(playRotErrDeg < 1e-3,
+              "M11-005: Playing link " + std::to_string(k) + " rot follows baked frame linkWorldTransforms");
+    }
+
+    // M11-005: Clear preview and verify all links reset back to initial URDF scene posture
+    viewport.clearPlaybackPreview();
+    const auto resetTransforms = viewport.playbackRobotTransforms();
+    for (size_t k = 0; k < 7; ++k) {
+        const double resetPosErr = (resetTransforms[k].pos - expectedUrdfHome[k].pos).norm();
+        check(resetPosErr < 1e-3,
+              "M11-005: clearPlaybackPreview resets link " + std::to_string(k) + " pos to scene posture");
+        const double resetRotErrDeg = olp::core::rad2deg(resetTransforms[k].rot.angularDistanceRad(expectedUrdfHome[k].rot));
+        check(resetRotErrDeg < 1e-3,
+              "M11-005: clearPlaybackPreview resets link " + std::to_string(k) + " rot to scene posture");
+    }
+
+    // M11-008: TimelinePanel stopPlayback() stops without publishing start frame TCP sphere or link poses
+    olp::ui::MainWindow testWin;
+    olp::ui::TimelinePanel timeline(testWin);
+    bool hookFrameCalledOnStop = false;
+    bool hookClearCalledOnStop = false;
+    timeline.setViewportHooks(
+        [&](const olp::algo::BakedFrame&) { hookFrameCalledOnStop = true; },
+        [&](const std::vector<olp::core::Vec3>&) {},
+        [&]() { hookClearCalledOnStop = true; });
+    timeline.stopPlayback();
+    check(hookClearCalledOnStop,
+          "M11-008: stopPlayback() invokes clearPreview to clear TCP sphere and restore scene posture");
+    check(!hookFrameCalledOnStop,
+          "M11-008: stopPlayback() does not publish start frame, preventing TCP sphere reappearance");
+#endif
 }

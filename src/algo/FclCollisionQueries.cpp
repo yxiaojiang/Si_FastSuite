@@ -19,6 +19,8 @@ namespace olp::algo {
 
 namespace {
 
+
+
 #ifdef OLP_HAS_FCL
 
 fcl::Transform3d toFclTransform(const core::Transform4d& pose) {
@@ -238,11 +240,7 @@ std::array<core::Transform4d, 7> forwardRobotLinkWorldFrames(
     for (int j = 0; j < 6; ++j) {
         core::Transform4d step;
         step.pos = origins[j];
-#ifdef OLP_HAS_FCL
         step.rot = axisRotation(axes[j], urdfQ[static_cast<size_t>(j)]);
-#else
-        step.rot = core::Mat3::identity();
-#endif
         cursor = cursor * step;
         linkWorld[static_cast<size_t>(j + 1)] = cursor;
     }

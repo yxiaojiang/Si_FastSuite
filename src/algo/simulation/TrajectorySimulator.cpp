@@ -1,4 +1,5 @@
 #include "olp/algo/TrajectorySimulator.h"
+#include "olp/algo/FclCollisionQueries.h"
 
 #include <algorithm>
 #include <cmath>
@@ -440,9 +441,7 @@ BakedFrame sampleTrajectory(
     BakedFrame frame;
     frame.timeSec = t;
     frame.jointsRad = joints;
-    for (size_t link = 0; link < 7; ++link) {
-        frame.linkWorldTransforms[link] = plan.robotBaseInWorld * fk.linkTransforms[link];
-    }
+    frame.linkWorldTransforms = forwardRobotLinkWorldFrames(joints, plan.robotBaseInWorld);
     frame.tcpWorldPos = (plan.robotBaseInWorld * fk.tcpPoseInBase).pos;
     frame.arcActive = arc;
     return frame;

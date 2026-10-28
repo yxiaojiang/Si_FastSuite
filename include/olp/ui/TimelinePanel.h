@@ -27,12 +27,12 @@ public:
         std::function<void()> clearPreview);
 
     void invalidate();
+    void stopPlayback();
 
 private:
     void rebuildPlan();
     void play();
     void pausePlayback();
-    void stopPlayback();
     void stepPoints(int direction);
     void stepClock();
     void playFromSelected();

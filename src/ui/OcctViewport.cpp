@@ -8,6 +8,9 @@
 #include "OcctViewportPrivate.h"
 #include "olp/ui/MainWindow.h"
 #include "olp/cad/OcctCadKernel.h"
+#include "olp/algo/OpwKinematics.h"
+#include "olp/algo/FclCollisionQueries.h"
+#include "olp/device/RobotModel.h"
 
 #ifdef OLP_HAS_QT6
 #include <QFocusEvent>
@@ -241,6 +244,11 @@ void OcctViewport::fitAll() {
         if (!node.visible) {
             continue;
         }
+        if (node.type == core::SceneNodeType::Robot) {
+            bounds.Add(gp_Pnt(node.localTransform.pos.x - 700.0, node.localTransform.pos.y - 700.0, node.localTransform.pos.z));
+            bounds.Add(gp_Pnt(node.localTransform.pos.x + 700.0, node.localTransform.pos.y + 700.0, node.localTransform.pos.z + 1200.0));
+            continue;
+        }
         const core::Vec3& lo = node.renderMesh.bboxMin;
         const core::Vec3& hi = node.renderMesh.bboxMax;
         if ((hi - lo).norm() < 1.0) {
@@ -265,7 +273,87 @@ void OcctViewport::fitAll() {
 
 void OcctViewport::syncScene() {
 #ifdef OLP_HAS_OCCT
-    if (view_ == nullptr || view_->context.IsNull()) {
+    if (view_ == nullptr) {
+        return;
+    }
+
+    view_->activeRobotNodeId.clear();
+    for (auto& linkAis : view_->robotLinkAis) {
+        linkAis.Nullify();
+    }
+
+    auto* occtKernel = dynamic_cast<cad::OcctCadKernel*>(cadKernel_);
+    cad::OcctCadKernel localCad;
+    cad::OcctCadKernel* loader = (occtKernel != nullptr) ? occtKernel : &localCad;
+
+    for (const auto& node : doc_.sceneNodes) {
+        if (!node.visible || node.collisionRole == core::CollisionRole::Ignored) {
+            continue;
+        }
+
+        if (node.type == core::SceneNodeType::Robot) {
+            view_->activeRobotNodeId = node.id;
+            view_->sceneRobotLinkTransforms = algo::forwardRobotLinkWorldFrames(node.currentJointsRad, node.localTransform);
+            view_->currentRobotLinkTransforms = view_->sceneRobotLinkTransforms;
+
+            const auto robotModel = device::RobotModel::createFanucM10iA();
+
+            static std::array<TopoDS_Shape, 7> s_robotLinkFaces;
+            static bool s_robotLinksLoaded = false;
+            if (!s_robotLinksLoaded) {
+                bool allOk = true;
+                for (size_t k = 0; k < 7; ++k) {
+                    core::TriMesh mesh;
+                    if (loader->importRobotStlMillimeters(robotModel.visualMeshFiles[k], mesh) && !mesh.triangles.empty()) {
+                        const int nbNodes = static_cast<int>(mesh.vertices.size());
+                        const int nbTri = static_cast<int>(mesh.triangles.size());
+                        Handle(Poly_Triangulation) tri = new Poly_Triangulation(nbNodes, nbTri, false);
+                        for (int i = 0; i < nbNodes; ++i) {
+                            tri->SetNode(i + 1, gp_Pnt(mesh.vertices[i].x, mesh.vertices[i].y, mesh.vertices[i].z));
+                        }
+                        for (int i = 0; i < nbTri; ++i) {
+                            tri->SetTriangle(i + 1, Poly_Triangle(
+                                static_cast<int>(mesh.triangles[i][0] + 1),
+                                static_cast<int>(mesh.triangles[i][1] + 1),
+                                static_cast<int>(mesh.triangles[i][2] + 1)));
+                        }
+                        TopoDS_Face face;
+                        BRep_Builder bb;
+                        bb.MakeFace(face);
+                        bb.UpdateFace(face, tri);
+                        s_robotLinkFaces[k] = face;
+                    } else {
+                        allOk = false;
+                    }
+                }
+                s_robotLinksLoaded = allOk;
+            }
+
+            if (s_robotLinksLoaded) {
+                for (size_t k = 0; k < 7; ++k) {
+                    Handle(AIS_Shape) linkAis = new AIS_Shape(s_robotLinkFaces[k]);
+                    if (displayMode_ == ViewportDisplayMode::ShadedWithEdges) {
+                        linkAis->SetDisplayMode(AIS_Shaded);
+                        linkAis->Attributes()->SetFaceBoundaryDraw(true);
+                        linkAis->Attributes()->SetupOwnFaceBoundaryAspect();
+                        linkAis->Attributes()->FaceBoundaryAspect()->SetColor(Quantity_NOC_BLACK);
+                        linkAis->Attributes()->FaceBoundaryAspect()->SetWidth(1.0);
+                    } else if (displayMode_ == ViewportDisplayMode::Shaded) {
+                        linkAis->SetDisplayMode(AIS_Shaded);
+                        linkAis->Attributes()->SetFaceBoundaryDraw(false);
+                    } else {
+                        linkAis->SetDisplayMode(AIS_WireFrame);
+                    }
+                    linkAis->SetColor(Quantity_NOC_GOLDENROD);
+                    linkAis->SetLocalTransformation(toGpTrsf(view_->sceneRobotLinkTransforms[k]));
+                    view_->robotLinkAis[k] = linkAis;
+                }
+            }
+            break;
+        }
+    }
+
+    if (view_->context.IsNull()) {
         return;
     }
     view_->context->RemoveAll(false);
@@ -276,11 +364,22 @@ void OcctViewport::syncScene() {
     view_->manipulator.Nullify();
     view_->targetGizmoProxyAis.Nullify();
 
-    auto* occtKernel = dynamic_cast<cad::OcctCadKernel*>(cadKernel_);
     int shown = 0;
+    for (size_t k = 0; k < 7; ++k) {
+        if (!view_->robotLinkAis[k].IsNull()) {
+            view_->context->Display(view_->robotLinkAis[k], false);
+            view_->aisToNodeId[view_->robotLinkAis[k].get()] = view_->activeRobotNodeId;
+            view_->nodeIdToAis[view_->activeRobotNodeId + "_link_" + std::to_string(k)] = view_->robotLinkAis[k];
+            ++shown;
+        }
+    }
 
     for (const auto& node : doc_.sceneNodes) {
         if (!node.visible || node.collisionRole == core::CollisionRole::Ignored) {
+            continue;
+        }
+
+        if (node.type == core::SceneNodeType::Robot) {
             continue;
         }
 

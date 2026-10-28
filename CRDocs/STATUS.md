@@ -1,26 +1,24 @@
 # 当前协作状态
 
-- **Task ID**：`M10-COLLISION-FCL-001`
-- **Task**：M10 FCL 精确网格间隙替换球对包围盒、后台 72 组自转扫描与拖拽最新预览
+- **Task ID**：`M11-PLAYBACK-SHAPE-001`
+- **Task**：播放时用 URDF 连杆链驱动外形（DIR-001 第 5 步，M11-005）
 - **Round**：2
 - **Status**：**APPROVED**
 - **Scope**：
-  1. 用 FCL 精确网格间隙替换现在驱动扫描图、问题列表和 PDF 状态列的球对包围盒；
-  2. 验收沿用根目录 `Plan.md` 的 M10：连杆 1～6 加现有 4 个焊枪球，对工件、夹具、工装台和底座；
-  3. 相邻连杆、法兰与焊枪屏蔽；焊接段只对当前工件豁免 TCP 周围 10 mm（允许 8～15 mm）；
-  4. 报出的毫米数来自精确检测；包围盒只丢掉明显离得远的一对；不新做圆柱或锥体焊枪；
-  5. 点选检查留在界面线程；72 组自转扫描放到可取消的后台；拖拽预览只保留最新一次请求；
-  6. 列出并改写会因换模型而失效的断言，含 Test 10 和 PDF 里的「有效 (14.8mm)」；Test 21 的距离 0 不是现场间隙，不拿它改 RISK-002；
-  7. 产品编译带 `/p:VCToolsVersion=14.44.35207`；依赖只在 `C:\vcpkg\vcpkg` 用经典模式；不另写 Docs 基线，不改已经通过的 M13 列宽。
-- **Open**：无。
-- **Closed this round**：`M10-FCL-001`、`M10-FCL-002`、`M10-FCL-003`、`M10-FCL-004`。
-- **Deferred**：`M10-FCL-005`、`RISK-001`、`RISK-002`、`RISK-003`、`M13-005`、`M13-006`、`M13-008` 等，见 `DEFERRED.md`。
-- **Checked**：审核方读了查询、拖拽快照和扫描投递的源码，并清点拆分后的行数。审核方复跑 `build-full/Release/olp_tests.exe`：610 passed, 0 failed，退出码 0。
-- **Current owner**：无（本任务范围已通过）
+  1. 视口展示连杆 0～6；
+  2. 静止姿态与播放都使用 `forwardRobotLinkWorldFrames`；
+  3. 停止或 `invalidate()` 后外形回到场景关节，TCP 球和轨迹不再留下；
+  4. `M11-007`、`M11-008`、`M11-005` 已关闭；
+  5. `RISK-001` 继续 OPEN；
+  6. 修改文件低于 1000 行；
+  7. 测试套件全量通过，`SiFastSuiteOLP.exe --verify` 退出码 0；
+  8. 不做第 6 步和第 7 步。
+- **Open**：`RISK-001`、`RISK-002`、`RISK-003`、`M10-FCL-005`、`M11-009`。
+- **Current owner**：执行方（本轮范围已关闭）
 - **Last updated by**：审核方（Reviewer）
 - **Last updated at**：2026-10-28
 
 ## 下一步
 
-- 本任务范围已通过。`M10-FCL-005` 仍延期：起弧内缩只查焊枪球。
-- `DIR-001` 第 4 步到第 7 步不在本任务里。
+- 本轮范围通过。`M11-009` 已记入 `CRDocs/DEFERRED.md`，不挡本次通过。
+- 下一项是 `DIR-001` 第 6 步：工程保存先做 JSON。第 7 步仍不做。

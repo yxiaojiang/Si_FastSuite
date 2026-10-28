@@ -72,6 +72,9 @@ public:
     void syncScene();
     void setPlaybackTrail(const std::vector<core::Vec3>& tcpPoints);
     void setPlaybackTcp(const core::Vec3& tcpWorld, bool arcActive);
+    void setPlaybackRobotTransforms(const std::array<core::Transform4d, 7>& linkWorldTransforms);
+    std::array<core::Transform4d, 7> playbackRobotTransforms() const;
+    void syncRobotPosture(const std::array<double, 6>& jointsRad);
     void clearPlaybackPreview();
     TcpGizmo& tcpGizmo() noexcept { return tcpGizmo_; }
 

@@ -1,5 +1,8 @@
 #include "olp/ui/OcctViewport.h"
 #include "OcctViewportPrivate.h"
+#include "olp/algo/OpwKinematics.h"
+#include "olp/device/RobotModel.h"
+#include "olp/algo/FclCollisionQueries.h"
 
 #ifdef OLP_HAS_OCCT
 #include <AIS_Shape.hxx>
@@ -15,7 +18,19 @@ namespace olp::ui {
 
 void OcctViewport::clearPlaybackPreview() {
 #ifdef OLP_HAS_OCCT
-    if (view_ == nullptr || view_->context.IsNull()) {
+    if (view_ == nullptr) {
+        return;
+    }
+    view_->currentRobotLinkTransforms = view_->sceneRobotLinkTransforms;
+    for (size_t k = 0; k < 7; ++k) {
+        if (!view_->robotLinkAis[k].IsNull()) {
+            view_->robotLinkAis[k]->SetLocalTransformation(toGpTrsf(view_->sceneRobotLinkTransforms[k]));
+            if (!view_->context.IsNull()) {
+                view_->context->Redisplay(view_->robotLinkAis[k], false);
+            }
+        }
+    }
+    if (view_->context.IsNull()) {
         return;
     }
     if (!view_->playbackTrailAis.IsNull()) {
@@ -88,6 +103,84 @@ void OcctViewport::setPlaybackTcp(const core::Vec3& tcpWorld, bool arcActive) {
 #else
     (void)tcpWorld;
     (void)arcActive;
+#endif
+}
+
+void OcctViewport::setPlaybackRobotTransforms(const std::array<core::Transform4d, 7>& linkWorldTransforms) {
+#ifdef OLP_HAS_OCCT
+    if (view_ == nullptr) {
+        return;
+    }
+    view_->currentRobotLinkTransforms = linkWorldTransforms;
+    bool updated = false;
+    for (size_t k = 0; k < 7; ++k) {
+        if (!view_->robotLinkAis[k].IsNull()) {
+            view_->robotLinkAis[k]->SetLocalTransformation(toGpTrsf(linkWorldTransforms[k]));
+            if (!view_->context.IsNull()) {
+                view_->context->Redisplay(view_->robotLinkAis[k], false);
+            }
+            updated = true;
+        }
+    }
+    if (updated && !view_->view.IsNull()) {
+        view_->view->Redraw();
+    }
+#else
+    (void)linkWorldTransforms;
+#endif
+}
+
+std::array<core::Transform4d, 7> OcctViewport::playbackRobotTransforms() const {
+#ifdef OLP_HAS_OCCT
+    if (view_ == nullptr) return {};
+    bool hasAis = false;
+    for (size_t k = 0; k < 7; ++k) {
+        if (!view_->robotLinkAis[k].IsNull()) {
+            hasAis = true;
+            break;
+        }
+    }
+    if (hasAis) {
+        std::array<core::Transform4d, 7> out{};
+        for (size_t k = 0; k < 7; ++k) {
+            if (!view_->robotLinkAis[k].IsNull()) {
+                out[k] = fromGpTrsf(view_->robotLinkAis[k]->Transformation());
+            } else {
+                out[k] = view_->currentRobotLinkTransforms[k];
+            }
+        }
+        return out;
+    }
+    return view_->currentRobotLinkTransforms;
+#else
+    return {};
+#endif
+}
+
+void OcctViewport::syncRobotPosture(const std::array<double, 6>& jointsRad) {
+#ifdef OLP_HAS_OCCT
+    if (view_ == nullptr || view_->activeRobotNodeId.empty()) {
+        return;
+    }
+    const auto* node = doc_.findSceneNode(view_->activeRobotNodeId);
+    if (node == nullptr) {
+        return;
+    }
+    view_->sceneRobotLinkTransforms = algo::forwardRobotLinkWorldFrames(jointsRad, node->localTransform);
+    view_->currentRobotLinkTransforms = view_->sceneRobotLinkTransforms;
+    for (size_t k = 0; k < 7; ++k) {
+        if (!view_->robotLinkAis[k].IsNull()) {
+            view_->robotLinkAis[k]->SetLocalTransformation(toGpTrsf(view_->sceneRobotLinkTransforms[k]));
+            if (!view_->context.IsNull()) {
+                view_->context->Redisplay(view_->robotLinkAis[k], false);
+            }
+        }
+    }
+    if (!view_->view.IsNull()) {
+        view_->view->Redraw();
+    }
+#else
+    (void)jointsRad;
 #endif
 }
 

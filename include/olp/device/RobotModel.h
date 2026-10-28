@@ -30,6 +30,20 @@ struct JointLimit {
     double warningMarginRad{core::deg2rad(5.0)};
 };
 
+// URDF joint definition parsed directly from URDF XML (DIR-001 Step 4)
+struct UrdfJointDef {
+    std::string name;
+    std::string type{"revolute"};
+    core::Vec3 originXyzMm{0.0, 0.0, 0.0};
+    core::Vec3 originRpyRad{0.0, 0.0, 0.0};
+    core::Vec3 axis{0.0, 0.0, 1.0};
+    std::string parentLink;
+    std::string childLink;
+    double lowerLimitRad{-core::kPi};
+    double upperLimitRad{core::kPi};
+    double velocityLimitRadPerSec{3.0};
+};
+
 struct RobotModel {
     std::string modelId{"fanuc_m10ia"};
     std::string displayName{"FANUC M-10iA / ARC Mate 100iC"};
@@ -41,6 +55,15 @@ struct RobotModel {
     std::array<double, 6> homeJointsRad{0.0, 0.0, 0.0, 0.0, -core::kPi * 0.5, 0.0};
     std::array<std::string, 7> visualMeshFiles{};
     std::array<std::string, 7> collisionMeshFiles{};
+
+    // URDF parsed kinematic chain properties (DIR-001 Step 4)
+    std::array<UrdfJointDef, 6> urdfJoints{};
+    core::Transform4d urdfFlangeToTool0{core::Transform4d::identity()};
+    bool urdfLoaded{false};
+
+    // Forward kinematics computed directly along the parsed URDF joint chain (base_link -> flange / tool0)
+    core::Transform4d forwardUrdfFlange(const std::array<double, 6>& urdfJointsRad) const noexcept;
+    core::Transform4d forwardUrdfTool0(const std::array<double, 6>& urdfJointsRad) const noexcept;
 
     // Built-in standard FANUC M-10iA / ARC Mate 100iC model
     static RobotModel createFanucM10iA(const std::string& workspaceRoot = "");

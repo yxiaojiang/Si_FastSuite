@@ -109,46 +109,28 @@ void testOpwKinematics100Samples() {
           "successCount=" + std::to_string(successCount) +
           ", maxJointRecoveryErrDeg=" + std::to_string(maxJointRecoveryErrDeg));
 
-    auto rotAbout = [](olp::core::Vec3 axis, double angle) {
-        const double n = axis.norm();
-        axis = axis * (1.0 / n);
-        const double c = std::cos(angle);
-        const double s = std::sin(angle);
-        const double t = 1.0 - c;
-        olp::core::Mat3 R;
-        R.m[0][0] = t * axis.x * axis.x + c;
-        R.m[0][1] = t * axis.x * axis.y - s * axis.z;
-        R.m[0][2] = t * axis.x * axis.z + s * axis.y;
-        R.m[1][0] = t * axis.x * axis.y + s * axis.z;
-        R.m[1][1] = t * axis.y * axis.y + c;
-        R.m[1][2] = t * axis.y * axis.z - s * axis.x;
-        R.m[2][0] = t * axis.x * axis.z - s * axis.y;
-        R.m[2][1] = t * axis.y * axis.z + s * axis.x;
-        R.m[2][2] = t * axis.z * axis.z + c;
-        return R;
-    };
-    const olp::core::Mat3 tool0Rot =
-        olp::core::Mat3::rotZ(0.0) * olp::core::Mat3::rotY(-1.570796) * olp::core::Mat3::rotX(3.14159);
-    auto urdfFlange = [&](const std::array<double, 6>& urdfQ) {
-        const olp::core::Vec3 origins[6] = {
-            {0, 0, 450}, {150, 0, 0}, {0, 0, 600}, {0, 0, 150}, {640, 0, 0}, {100, 0, 0}
-        };
-        const olp::core::Vec3 axes[6] = {
-            {0, 0, 1}, {0, 1, 0}, {0, -1, 0}, {-1, 0, 0}, {0, -1, 0}, {-1, 0, 0}
-        };
-        olp::core::Transform4d T = olp::core::Transform4d::identity();
-        for (int j = 0; j < 6; ++j) {
-            olp::core::Transform4d joint;
-            joint.pos = origins[j];
-            joint.rot = rotAbout(axes[j], urdfQ[static_cast<size_t>(j)]);
-            T = T * joint;
-        }
-        T.rot = T.rot * tool0Rot;
-        return T;
-    };
+    // DIR-001 Step 4: Parse URDF joint origins and axes directly from fanuc_m10ia_standalone.urdf
+    // and verify full rotation posture (orientation matrix & angular distance) as well as position.
+    const std::string ws = []() -> std::string {
+        if (const char* env = std::getenv("OLP_TEST_WORKSPACE")) return std::string(env);
+        return std::string(OLP_SOURCE_DIR);
+    }();
+    const std::string urdfPath =
+        ws + "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Robot_FANUC_M10iA/urdf/fanuc_m10ia_standalone.urdf";
+    const auto urdfModelOpt = olp::device::RobotModel::loadFromUrdf(urdfPath);
+    const bool urdfOk = urdfModelOpt.has_value() && urdfModelOpt->urdfLoaded;
+    check(urdfOk,
+          "Load fanuc_m10ia_standalone.urdf and parse joint origins/axes for gold verification");
+    if (!urdfOk) {
+        return;
+    }
 
-    double maxGoldMm = 0.0;
-    double maxGoldAxis = 0.0;
+    double maxGoldPosMm = 0.0;
+    double maxGoldAngularErrDeg = 0.0;
+    double maxGoldMatrixErr = 0.0;
+    double maxGoldColXErr = 0.0;
+    double maxGoldColYErr = 0.0;
+    double maxGoldColZErr = 0.0;
     unsigned seed = 2026u;
     for (int i = 0; i < 200; ++i) {
         std::array<double, 6> display{};
@@ -165,15 +147,36 @@ void testOpwKinematics100Samples() {
             display[4] = olp::core::deg2rad(-60.0);
         }
         std::array<double, 6> urdf = display;
-        urdf[2] = display[2] + display[1];
-        const auto gold = urdfFlange(urdf);
+        urdf[2] = display[2] + display[1]; // J2/J3 coupling
+        const auto gold = urdfModelOpt->forwardUrdfTool0(urdf);
         const auto fk = kin.forwardKinematics(display);
-        maxGoldMm = std::max(maxGoldMm, (fk.flangePoseInBase.pos - gold.pos).norm());
-        maxGoldAxis = std::max(maxGoldAxis, (fk.flangePoseInBase.rot.colZ() - gold.rot.colZ()).norm());
+
+        const double posErr = (fk.flangePoseInBase.pos - gold.pos).norm();
+        const double rotAngularErrDeg = olp::core::rad2deg(
+            fk.flangePoseInBase.rot.angularDistanceRad(gold.rot));
+
+        double matErr = 0.0;
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) {
+                matErr = std::max(matErr, std::abs(fk.flangePoseInBase.rot.m[r][c] - gold.rot.m[r][c]));
+            }
+        }
+        const double colXErr = (fk.flangePoseInBase.rot.colX() - gold.rot.colX()).norm();
+        const double colYErr = (fk.flangePoseInBase.rot.colY() - gold.rot.colY()).norm();
+        const double colZErr = (fk.flangePoseInBase.rot.colZ() - gold.rot.colZ()).norm();
+
+        maxGoldPosMm = std::max(maxGoldPosMm, posErr);
+        maxGoldAngularErrDeg = std::max(maxGoldAngularErrDeg, rotAngularErrDeg);
+        maxGoldMatrixErr = std::max(maxGoldMatrixErr, matErr);
+        maxGoldColXErr = std::max(maxGoldColXErr, colXErr);
+        maxGoldColYErr = std::max(maxGoldColYErr, colYErr);
+        maxGoldColZErr = std::max(maxGoldColZErr, colZErr);
     }
-    check(maxGoldMm < 0.01 && maxGoldAxis < 1e-4,
-          "URDF-chain gold: flange position and tool0 Z stay within 0.01 mm",
-          "maxPos=" + std::to_string(maxGoldMm) + " maxAxis=" + std::to_string(maxGoldAxis));
+    check(maxGoldPosMm < 0.01 && maxGoldAngularErrDeg < 0.001 && maxGoldMatrixErr < 1e-4 &&
+              maxGoldColXErr < 1e-4 && maxGoldColYErr < 1e-4 && maxGoldColZErr < 1e-4,
+          "URDF-chain gold: flange position and full rotation posture match within 0.01 mm & 0.001 deg",
+          "maxPos=" + std::to_string(maxGoldPosMm) + "mm maxAngErr=" + std::to_string(maxGoldAngularErrDeg) +
+              "deg maxMatErr=" + std::to_string(maxGoldMatrixErr));
 }
 
 
