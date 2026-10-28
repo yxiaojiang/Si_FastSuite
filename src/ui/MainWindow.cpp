@@ -374,10 +374,10 @@ algo::SimulationResult MainWindow::validateCurrentOperation() {
     return validateOperation(selectedOperationId_);
 }
 
-std::vector<algo::TwistScanSample> MainWindow::scanSelectedTargetTwistAngles(double stepDeg) const {
-    if (selectedTargetId_.empty()) return {};
+std::optional<MainWindow::TwistScanTask> MainWindow::prepareTwistScanTask(double stepDeg) const {
+    if (selectedTargetId_.empty()) return std::nullopt;
     const core::Target* target = doc_.findTarget(selectedTargetId_);
-    if (!target) return {};
+    if (!target) return std::nullopt;
 
     const core::Operation* op = nullptr;
     const core::Program* prog = nullptr;
@@ -397,57 +397,81 @@ std::vector<algo::TwistScanSample> MainWindow::scanSelectedTargetTwistAngles(dou
         }
         if (op) break;
     }
-    if (!op || !prog) return {};
+    if (!op || !prog) return std::nullopt;
 
-    core::Transform4d robotBaseInWorld = core::Transform4d::fromTranslation(0.0, 0.0, 500.0);
-    for (const auto& node : doc_.sceneNodes) {
+    TwistScanTask task;
+    task.stepDeg = stepDeg;
+    task.robotModel = robotModel_;
+    task.settings = doc_.settings;
+    task.sceneNodes = doc_.sceneNodes;
+
+    task.robotBaseInWorld = core::Transform4d::fromTranslation(0.0, 0.0, 500.0);
+    for (const auto& node : task.sceneNodes) {
         if (node.type == core::SceneNodeType::Robot) {
-            robotBaseInWorld = node.localTransform;
+            task.robotBaseInWorld = node.localTransform;
             break;
         }
     }
 
     const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(prog->uframeNumber);
-    core::Transform4d utoolOffset = core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
-    for (const auto& node : doc_.sceneNodes) {
+    task.utoolOffset = core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
+    for (const auto& node : task.sceneNodes) {
         if (node.type == core::SceneNodeType::Tool) {
-            utoolOffset = node.localTransform;
+            task.utoolOffset = node.localTransform;
             break;
         }
     }
 
-    const core::Transform4d baseTargetWorldPose = uframeInWorld * target->poseInUFrame;
-    std::optional<core::FanucConfig> requiredConfig = std::nullopt;
-    std::array<double, 6> refJoints = prog->startState.homeJointsRad;
+    task.baseTargetWorldPose = uframeInWorld * target->poseInUFrame;
+    task.requiredConfig = std::nullopt;
+    task.refJointsRad = prog->startState.homeJointsRad;
 
     const bool hasPriorSolution =
         target->cache.valid ||
         target->cache.status != core::TargetValidationState::Unchecked;
 
     if (hasPriorSolution) {
-        requiredConfig = target->cache.solvedConfig;
-        refJoints = target->cache.jointsRad;
+        task.requiredConfig = target->cache.solvedConfig;
+        task.refJointsRad = target->cache.jointsRad;
     }
 
-    const bool isWeldRole =
+    task.isWeldRole =
         target->role == core::TargetRole::WELD_START ||
         target->role == core::TargetRole::WELD_VIA ||
         target->role == core::TargetRole::WELD_END;
 
-    algo::OpwKinematics kin(robotModel_);
-    algo::CollisionAndSimEngine simEngine(kin, doc_.settings);
+    task.targetWorkpieceId = op->targetWorkpieceId;
+    task.exemptionPartIds = op->exemptionPartIds;
+
+    return task;
+}
+
+std::vector<algo::TwistScanSample> MainWindow::executeTwistScanTask(
+    const TwistScanTask& task,
+    const std::shared_ptr<std::atomic<bool>>& cancelToken) {
+    algo::OpwKinematics kin(task.robotModel);
+    algo::CollisionAndSimEngine simEngine(kin, task.settings);
 
     return simEngine.scanTwistAngles(
-        baseTargetWorldPose,
-        robotBaseInWorld,
-        utoolOffset,
-        refJoints,
-        requiredConfig,
-        doc_.sceneNodes,
-        op->targetWorkpieceId,
-        stepDeg,
-        op->exemptionPartIds,
-        isWeldRole);
+        task.baseTargetWorldPose,
+        task.robotBaseInWorld,
+        task.utoolOffset,
+        task.refJointsRad,
+        task.requiredConfig,
+        task.sceneNodes,
+        task.targetWorkpieceId,
+        task.stepDeg,
+        task.exemptionPartIds,
+        task.isWeldRole,
+        cancelToken);
+}
+
+std::vector<algo::TwistScanSample> MainWindow::scanSelectedTargetTwistAngles(
+    double stepDeg,
+    const std::shared_ptr<std::atomic<bool>>& cancelToken) const {
+    const auto task = prepareTwistScanTask(stepDeg);
+    if (!task) return {};
+    return executeTwistScanTask(*task, cancelToken);
 }
 
 int MainWindow::addSelectionListener(std::function<void()> listener) {

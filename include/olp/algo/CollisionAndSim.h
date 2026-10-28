@@ -3,6 +3,8 @@
 #include "olp/algo/OpwKinematics.h"
 #include "olp/core/ProjectModel.h"
 #include <array>
+#include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -59,9 +61,23 @@ public:
         const OpwKinematics& kinematics,
         const core::UnitsSettings& settings);
 
-    // M10: Check single point collision between torch/robot and scene obstacles
-    // Critical Pitfall Fix: Wire tip sphere around TCP is exempted from colliding with targetWorkpieceId
-    // while Torch Body upper cylinder is always checked against fixtures/clamps and workpieces.
+    // M10: Check collision & precise clearance of robot links 1..6 + 4 torch spheres against scene obstacles
+    // Uses FCL exact distance calculation. Broadphase AABB discards distant pairs.
+    // Adjacent links, flange & torch are shielded.
+    // Wire tip sphere around TCP is exempted against activeWorkpieceId only during welding segment within 10mm.
+    bool checkRobotAndTorchCollision(
+        const core::Transform4d& tcpWorldPose,
+        const std::optional<std::array<double, 6>>& jointsRad,
+        const core::Transform4d& robotBaseInWorld,
+        const core::Transform4d& utoolOffset,
+        const std::vector<core::SceneNode>& sceneNodes,
+        const std::string& activeWorkpieceId,
+        bool isWeldingRole,
+        double& outMinClearanceMm,
+        std::string& outCollidingPartName,
+        const std::vector<std::string>& exemptionPartIds = {}) const noexcept;
+
+    // Backward-compatible torch-only collision check (delegates to checkRobotAndTorchCollision without joints)
     bool checkTorchPoseCollision(
         const core::Transform4d& tcpWorldPose,
         const std::vector<core::SceneNode>& sceneNodes,
@@ -71,7 +87,7 @@ public:
         std::string& outCollidingPartName,
         const std::vector<std::string>& exemptionPartIds = {}) const noexcept;
 
-    // Section 6.5: Scan twist angle in [-180, 180] deg around wire Z axis
+    // Section 6.5: Scan twist angle in [-180, 180] deg around wire Z axis (supports cancellation)
     std::vector<TwistScanSample> scanTwistAngles(
         const core::Transform4d& baseTargetWorldPose,
         const core::Transform4d& robotBaseInWorld,
@@ -82,7 +98,8 @@ public:
         const std::string& activeWorkpieceId = "",
         double stepDeg = 5.0,
         const std::vector<std::string>& exemptionPartIds = {},
-        bool isWeldingRole = true) const;
+        bool isWeldingRole = true,
+        const std::shared_ptr<std::atomic<bool>>& cancelToken = nullptr) const;
 
     // Minimum torch-sphere clearance of every target. Welding roles use the wire-tip exemption.
     OperationTorchClearance measureOperationTorchClearance(

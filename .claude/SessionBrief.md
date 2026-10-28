@@ -2,34 +2,44 @@
 
 > 最近刷新：2026-10-28。主线仍是对标 FASTSUITE Edition 2 的机器人焊接离线编程。工作区：`C:\Users\mimovr\Desktop\TEmp\Si_FastSuite`。Qt 6.12.0 在 `D:\Soft\Qt\6.12.0\msvc2022_64`，OpenCASCADE 8.0.0 在 `C:\vcpkg\vcpkg\installed\x64-windows`。方向决定是 `PlanDocs/DECISIONS.md` 的 `DIR-001`。
 
-## 1. 当前目标
+## 1. 当前目标与最新进展
 
-M13 的 2D PDF 列宽不再改。FCL 单点实测已经做完：`fcl 0.7.0` 已装上，CMake 打印了 `Found FCL`。Test 21 用 7 段连杆 STL 和 4 个焊枪球，对 `Robot_Pedestal_Base` 的 12 个三角面测距。构建 BVH 30.6 ms，安装位姿查询 6.7 ms，法兰移到网格中心再查 3.6 ms，两次距离都是 0。全量测试 610 项通过。这是接触耗时，不是现场间隙。两次距离都是 0，是因为零位连杆和底座叠在一起，后一次又把法兰放进网格中心，不能拿这个 0 去改 `RISK-002`。连杆 STL 走米转毫米。扫描图和 PDF 仍用球对包围盒。Test 21 在 `tests/test_fcl_spike.cpp`；没有 FCL 或 OpenCASCADE 时跳过。第 3 步的碰撞对仍是连杆对工件、夹具、工装台和底座，相邻连杆以及法兰和焊枪屏蔽，焊接段只豁免当前工件上 TCP 周围 10 mm。
+- **`M10-COLLISION-FCL-001`（`DIR-001` 第 3 步）已通过审核并闭环（Round 2 APPROVED）**：
+  - 用 FCL 精确网格窄相位间隙算法替换了原球对包围盒；
+  - 连杆 1～6（STL 网格，米转毫米，URDF 链带 J2/J3 耦合）加 4 个焊枪球，对工件、夹具、工装台和底座进行精确检测；
+  - 屏蔽相邻连杆与法兰-焊枪；焊接角色下激活工件对焊丝尖端（Sphere 0）豁免 10 mm；
+  - 报出的毫米数严格来自 FCL 精确检测（接触/穿透为 0.0 mm），不回落包围盒中心深度；宽相位 AABB 仅剔除远距对；
+  - 单点检测在 UI 线程；72 组自转扫描通过 `TwistScanTask` 纯数据快照在后台线程池异步执行（支持取消）；
+  - Gizmo 拖拽微调通过 `GizmoPreviewSnapshot` 纯数据快照在后台执行，求解逆解后检测全臂连杆 1~6 + 焊枪，具备双检 CAS 并发序列防丢帧逻辑；
+  - 严格遵守 1000 行限制，拆分出 `FclCollisionQueries`、`ShellChromeHelpers`、`GizmoDragPreviewHandler`，所有文件均 `< 1000` 行；
+  - 610 项自动化测试全量通过，`SiFastSuiteOLP.exe --verify` 退出码 0。
 
-## 2. 已经拍板的顺序
+## 2. 已经拍板的顺序（`DIR-001`）
 
-1. 里程碑表和根目录计划文首已按 `DIR-001` 刷新。
-2. FCL 单点实测已完成。链接必须用 MSVC 14.44，因为 v143 默认仍是 14.38。
-3. 下一步按根目录 `Plan.md` 的 M10 换成精确间隙。单次约 6.7 ms，点选留在界面线程。72 组大约 0.5 秒，自转扫描放进可取消的后台。拖拽预览只保留最新请求。列出要重定基准的测试，含 Test 10 和 PDF 里的 `有效 (14.8mm)`。示例夹具网格很稀，换密集零件后要重测。
-4. 运动学金样改为从 URDF 读原点并比较完整姿态。`RISK-001` 继续开着。
-5. 播放用烘焙连杆变换驱动外形。
-6. 工程保存先做 JSON。
-7. 写明 3D PDF 仍未开始，并加 T 型接头自动回归。
-
-M1 里，整场景替换、示教和撤销已经完成；播放和 `.ls` 只完成到本机，工程保存未做。M2 里，箱体示例有一条焊缝；T 型接头闭环、手臂播放、三维 HTML 和 3D PDF 熔断都未完成。2D PDF 当前范围已通过，列宽保持 Round 8 的量法。
-
-计划讨论以后走 `PlanDocs/`。用户只需要说「写成提案」「独立审核」或「讨论已收敛」。审核方必须自己打开源码，不能沿用聊天里的结论。代码 diff 仍走 `CRDocs/`。
+1. [DONE] 里程碑表和根目录计划文首已按 `DIR-001` 刷新。
+2. [DONE] FCL 单点实测已完成（Test 21，使用 MSVC 14.44）。
+3. [DONE] 按根目录 `Plan.md` 的 M10 换成 FCL 精确间隙，自转扫描后台异步，拖拽防抖全臂预览（`M10-COLLISION-FCL-001` 已 APPROVED）。
+4. **[NEXT] 运动学金样改为从 URDF 读原点并比较完整姿态。`RISK-001` 继续开着。**
+5. [TODO] 播放用烘焙连杆变换驱动外形（`M11-005`）。
+6. [TODO] 工程保存先做 JSON。
+7. [TODO] 写明 3D PDF 仍未开始（`RISK-003`），并加 T 型接头自动回归。
 
 ## 3. 未关闭风险
 
 1. J2/J3 耦合符号、圈数记在哪三轴、法兰相对示教器的位姿，仍无真机或 ROBOGUIDE 对拍（`RISK-001`）。现有 200 组 URDF 金样只和同一条链比过位置和工具 Z 轴。
 2. 回退段对前侧板低于 5 mm 来自球对包围盒，可能是误报（`RISK-002`）。网格结果出来之前不当成实测间隙。
 3. 客户实景和 3D PDF 五天熔断未开始（`RISK-003`）。HTML 仍是二维 TCP 折线。焊缝清单和离屏多视角仍在 `M13-006`。
+4. `M10-FCL-005`：起弧内缩仍只查焊枪球，不查连杆。
 
-## 4. 下一步
+## 4. 下一步任务提示词（新会话）
 
-按第 3 步替换正式间隙，并另开 `CRDocs/` 任务。报出的毫米数必须来自精确检测，包围盒只用来丢掉明显离得远的一对。不要另写 `Docs/` 基线。方向讨论走 `PlanDocs/`，代码审核走 `CRDocs/`。产品编译带 `/p:VCToolsVersion=14.44.35207`，否则链接缺少 `__std_max_element_f`。安装 FCL 仍在 `C:\vcpkg\vcpkg` 用经典模式，不要在仓库目录里跑。焊枪四个球沿 TCP 的负 Z：尖端半径 2 mm，再往后 45、95、150 mm，半径分别是 16、22、25 mm。尖端豁免半径当前是 10 mm。
+按 `PlanDocs/DECISIONS.md` 的 `DIR-001` 第 4 步执行：
+- 将运动学验证金样从当前简化/硬编码原点改为直接从 `fanuc_m10ia_standalone.urdf` 完整解析关节 origin 与 axis；
+- 比较前向运动学输出的完整姿态（完整旋转矩阵/四元数，而不仅是位置与工具 Z 轴）；
+- 保持 `RISK-001` 开着；
+- 先另开 `CRDocs` 任务再改代码，做完写 `IMPLEMENTATION.md` 并交接；
+- 编译需带 `/p:VCToolsVersion=14.44.35207`，测试套件确保全量通过。
 
 ## 5. 索引
 
-设计基线：`Docs/OLP_System_Design_Claude.md`。排期：根目录 `Plan.md`。活跃事项：`.claude/Plan.md`。计划讨论：`PlanDocs/README.md`。代码交接：`CRDocs/`。已做步骤：`.claude/contexts/steps/00-index.md`。
+设计基线：`Docs/OLP_System_Design_Claude.md`。排期：根目录 `Plan.md`。活跃事项：`.claude/Plan.md`。计划决定：`PlanDocs/DECISIONS.md`。代码交接：`CRDocs/`。已做步骤：`.claude/contexts/steps/00-index.md`。

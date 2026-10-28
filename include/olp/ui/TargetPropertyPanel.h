@@ -4,7 +4,9 @@
 
 #include <QWidget>
 
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,6 +23,7 @@ public:
                         std::function<std::vector<std::string>()> selectedTargetIds,
                         std::function<void()> refresh,
                         QWidget* parent = nullptr);
+    ~TargetPropertyPanel() override;
 
     void showSceneNode(const QString& nodeId);
     void showTarget(const QString& targetId);
@@ -35,6 +38,9 @@ private:
     QPlainTextEdit* propertyText_{nullptr};
     QGroupBox* spinTuningWidget_{nullptr};
     TwistScanWidget* twistScanWidget_{nullptr};
+
+    std::shared_ptr<std::atomic<bool>> currentScanCancelled_{nullptr};
+    uint64_t currentScanId_{0};
 };
 
 } // namespace olp::ui

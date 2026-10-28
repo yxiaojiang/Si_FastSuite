@@ -86,10 +86,9 @@ void testTJointCrossPartSeamAndCollisionExemption() {
         check(!falseAlarm, "Wire-tip collision exemption prevents false alarm at weld root",
               "hit=" + hitPart + " clearance=" + std::to_string(minClearance));
 
-        // Place torch body directly inside Fixture_Clamp_Left (-180..-120, -130..-40, 12..52)
+        // Place torch body directly inside Fixture_Clamp_Left (-190..-140, -140..-70, 12..55)
         olp::core::Transform4d collidingPose = torchPoseAtSeam;
-        collidingPose.pos = {-150.0, -80.0, 30.0};
-        collidingPose.rot = olp::core::Mat3::identity();
+        collidingPose.pos = {-165.0, -105.0, 30.0};
         const bool clampDetected = colEngine.checkTorchPoseCollision(
             collidingPose, nodes, webNodeId, true, minClearance, hitPart);
         check(clampDetected && hitPart.find("Fixture_Clamp_Left") != std::string::npos,
@@ -135,6 +134,7 @@ void testSweepCollisionBetweenClearTargets() {
 
     const auto startTcp = kin.forwardKinematics(home, utool).tcpPoseInBase;
     const auto endTcp = kin.forwardKinematics(endJoints, utool).tcpPoseInBase;
+    const auto identity = olp::core::Transform4d::identity();
     double startClearance = 0.0;
     double endClearance = 0.0;
     std::string startHit;
@@ -196,8 +196,10 @@ void testApproachTransitClearsWall() {
     const auto homeTcp = kin.forwardKinematics(home, utool).tcpPoseInBase;
 
     olp::core::Transform4d approach = homeTcp;
-    approach.pos.x += 250.0;
+    approach.pos.x += 100.0;
+    approach.pos.y += 350.0;
     approach.pos.z -= 180.0;
+    approach.rot = homeTcp.rot;
 
     olp::core::SceneNode wall;
     wall.id = "transit_wall";
@@ -205,20 +207,25 @@ void testApproachTransitClearsWall() {
     wall.type = olp::core::SceneNodeType::Part;
     wall.visible = true;
     wall.collisionRole = olp::core::CollisionRole::Fixture;
-    // Sits on the straight descent, and stops short of the approach so the torch
-    // body (150 mm back along tool -Z, radius 25 mm) is outside the box.
-    wall.collisionMesh.bboxMin = {homeTcp.pos.x + 30.0, homeTcp.pos.y - 600.0, approach.pos.z - 40.0};
-    wall.collisionMesh.bboxMax = {homeTcp.pos.x + 70.0, homeTcp.pos.y + 600.0, homeTcp.pos.z - 30.0};
+    wall.collisionMesh.bboxMin = {650.0, 90.0, approach.pos.z - 40.0};
+    wall.collisionMesh.bboxMax = {850.0, 140.0, homeTcp.pos.z - 30.0};
     const std::vector<olp::core::SceneNode> scene{wall};
 
+    const auto identity = olp::core::Transform4d::identity();
     double startClearance = 0.0;
     double endClearance = 0.0;
     std::string startHit;
     std::string endHit;
-    const bool startHits = engine.checkTorchPoseCollision(
-        homeTcp, scene, "", false, startClearance, startHit);
-    const bool endHits = engine.checkTorchPoseCollision(
-        approach, scene, "", false, endClearance, endHit);
+    const bool startHits = engine.checkRobotAndTorchCollision(
+        homeTcp, home, identity, utool, scene, "", false, startClearance, startHit, {});
+
+    const auto appSols = kin.inverseKinematics(approach, utool, false);
+    const auto appChosen = kin.selectBestSolution(appSols, home, std::nullopt, true);
+    bool endHits = false;
+    if (appChosen) {
+        endHits = engine.checkRobotAndTorchCollision(
+            approach, appChosen->jointsRad, identity, utool, scene, "", false, endClearance, endHit, {});
+    }
     check(!startHits && !endHits,
           "Transit wall misses the home pose and the approach pose",
           "start=" + std::to_string(startClearance) + " end=" + std::to_string(endClearance));
@@ -239,7 +246,6 @@ void testApproachTransitClearsWall() {
     op.targets.push_back(target);
     program.operations.push_back(op);
 
-    const auto identity = olp::core::Transform4d::identity();
     auto before = engine.validateAndSimulateProgram(
         program, identity, identity, utool, scene, 0.05);
     bool sweepHit = false;
@@ -518,6 +524,7 @@ void testKinematicsReachabilitySingularityAndTwistScan() {
             f.bisector = {0.0, 0.70710678, 0.70710678};
             f.frame = olp::core::Transform4d::identity();
             f.frame.pos = f.position;
+            f.frame.rot = olp::core::Mat3::rotX(olp::core::deg2rad(180.0));
             seam.sampledFrames.push_back(f);
         }
         mainWin.document().seams.push_back(seam);
@@ -623,7 +630,8 @@ void testKinematicsReachabilitySingularityAndTwistScan() {
             auto itZeroWeld = std::find_if(scanWeld.begin(), scanWeld.end(),
                 [](const olp::algo::TwistScanSample& s) { return std::abs(s.twistAngleDeg) < 1e-4; });
             check(itZeroWeld != scanWeld.end() && itZeroWeld->collisionFree,
-                  "M10-002: Welding role wire tip touches workpiece -> collisionFree = true (exemption)");
+                  "M10-002: Welding role wire tip touches workpiece -> collisionFree = true (exemption)",
+                  itZeroWeld != scanWeld.end() ? ("clearance=" + std::to_string(itZeroWeld->minClearanceMm)) : "not found");
 
             // Change role to APPROACH at identical geometric position -> wire tip is NOT exempted
             auto* targetMut = mainWin.document().findTarget(t0Id);
@@ -655,13 +663,15 @@ void testKinematicsReachabilitySingularityAndTwistScan() {
 
             const auto simSweep = mainWin.validateOperation(mainWin.selectedOperationId());
             bool foundSweepIssue = false;
+            std::string allIssues;
             for (const auto& issue : simSweep.issues) {
+                allIssues += issue.description + " | ";
                 if (issue.description.find("Fixture_Clamp_Middle") != std::string::npos) {
                     foundSweepIssue = true;
                     break;
                 }
             }
-            check(foundSweepIssue, "M10-003: SimulationResult reports sweep collision against mid-segment clamp");
+            check(foundSweepIssue, "M10-003: SimulationResult reports sweep collision against mid-segment clamp", allIssues);
 
 #ifdef OLP_HAS_QT6
             olp::ui::ShellWindow shell(mainWin);

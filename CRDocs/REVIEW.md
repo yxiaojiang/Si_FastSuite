@@ -1,3 +1,98 @@
+# 审核结论 — M10-COLLISION-FCL-001
+
+> **Task ID**：`M10-COLLISION-FCL-001`
+> **Task**：M10 FCL 精确网格间隙替换球对包围盒、后台 72 组自转扫描与拖拽最新预览
+> **Round**：2
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-28
+> **Executor**：执行方
+> **Verdict**：**APPROVED**
+>
+> 审核方读了 `queryRobotAndTorchCollision`、`GizmoDragPreviewHandler`、`prepareTwistScanTask` 和 `TargetPropertyPanel::showTarget`，并清点了拆分后的行数。`build-full/Release/olp_tests.exe` 由审核方复跑：**610 passed, 0 failed**，退出码 0。该二进制的写入时间晚于上述源文件。
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M10-FCL-001 | P1 | **RESOLVED** | `src/algo/FclCollisionQueries.cpp` | FCL 距离原样保留。包围盒只跳过相距超过 `max(当前最小间隙, 100 mm)` 的一对。 |
+| M10-FCL-002 | P1 | **RESOLVED** | `GizmoDragPreviewHandler.cpp`<br>`TargetPropertyPanel.cpp`<br>`MainWindow.cpp` | 扫描和拖拽都在界面线程拷贝快照。拖拽逆解成功后查连杆 1～6 与四个焊枪球。忙标志放开后若序列号已前进，会再抢一次并算最新一帧。 |
+| M10-FCL-003 | P1 | **RESOLVED** | `CollisionAndSim.cpp`<br>`ShellWindow.cpp` | 查询与拖拽已拆出。清点行数：764、423、811、172、189，都在 1000 行以内。 |
+| M10-FCL-004 | P2 | **RESOLVED** | `FclCollisionQueries.cpp` | `Transit_Wall` 的调试打印已去掉。 |
+| M10-FCL-005 | P2 | **DEFERRED** | `measureOperationTorchClearance` | 起弧内缩仍只查焊枪球。见 `DEFERRED.md`。 |
+
+### M10-FCL-001 [P1] RESOLVED
+
+`queryRobotAndTorchCollision` 的 FCL 分支把 `fcl::distance` 的返回值直接写入最小间隙。`pointToAabbSignedDistance` 只留在没有 FCL 的分支里。碰撞仍是 `outMinClearanceMm <= 0`。穿透时网格距离可以是 0，代码没有再换成包围盒中心的深度。
+
+### M10-FCL-002 [P1] RESOLVED
+
+`showTarget` 先在界面线程调用 `prepareTwistScanTask`，工人只跑 `executeTwistScanTask`，参数是已经拷好的 `TwistScanTask`。
+
+拖拽回调在界面线程写入 `GizmoPreviewSnapshot`（位姿、场景节点、豁免名单、机器人模型）。工人读这份快照，用 `inverseKinematics` 与 `selectBestSolution` 求关节，再调用 `checkRobotAndTorchCollision`。逆解有解时，连杆 1～6 和四个焊枪球都参加。
+
+工人在 `previewBusy` 写成 false 之后再看序列号。序列号已经变大时，用 `compare_exchange` 重新占用忙标志并继续循环。若界面线程已经抢走忙标志，本次循环退出，后启动的那次工人处理最新快照。
+
+### M10-FCL-003 [P1] RESOLVED
+
+`CollisionAndSim.cpp` 764 行，`FclCollisionQueries.cpp` 423 行，`ShellWindow.cpp` 811 行，`ShellChromeHelpers.cpp` 172 行，`GizmoDragPreviewHandler.cpp` 189 行。`CMakeLists.txt` 已把三个新的 cpp 放进对应目标。
+
+## 本轮已核对并保持
+
+- 四个焊枪球仍是半径 2、16、22、25 mm，沿 TCP 负 Z 的 0、45、95、150 mm。
+- 焊接段对当前工件和豁免名单上的焊丝尖端，距离不小于 `-wireTipExemptionRadiusMm`（默认 10 mm）时不记入最小间隙。枪体球不豁免。
+- 连杆位姿仍是 URDF 原点加 J2/J3 的 `+1`。`RISK-001` 仍开着。
+- 逆解失败时拖拽状态栏仍显示焊枪球间隙，因为此时没有连杆位姿。可解的拖拽已经带上连杆。
+- `有效 (14.8mm)` 与 M13 列宽不在本轮行为修改里。Test 21 的距离 0 没有写入 `RISK-002`。
+- `M10-FCL-005` 仍延期：`measureOperationTorchClearance` 继续走 `checkTorchPoseCollision`。
+
+---
+
+# 审核结论 — M10-COLLISION-FCL-001 Round 1 记录
+
+> **Task ID**：`M10-COLLISION-FCL-001`
+> **Round**：1
+> **Reviewed at**：2026-10-28
+> **Verdict**：**CHANGES_REQUESTED**（当时结论。当前状态以上面的 Round 2 为准。）
+>
+> 审核方对照 `checkRobotAndTorchCollision`、`ShellWindow` 的拖拽回调和 `TargetPropertyPanel` 的扫描投递读了源码，没有把 `IMPLEMENTATION.md` 的通过说明当成证据。点位求解和扫掠已经把关节角送进 FCL。连杆位姿走的是 URDF 关节链，不是 OPW 抽象连杆。`Robot_Pedestal_Base` 因名字含 Pedestal 仍是夹具，没有被静态机器人那条跳过。M13 列宽和 `有效 (14.8mm)` 这条格式断言没有改，这条断言不读碰撞结果，保持原样是对的。
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M10-FCL-001 | P1 | **RESOLVED** | `src/algo/CollisionAndSim.cpp` | Round 1 发现：FCL 距离小于等于 0 时被改写成包围盒中心穿透深度。Round 2 已关闭。 |
+| M10-FCL-002 | P1 | **RESOLVED** | `src/ui/ShellWindow.cpp`<br>`src/ui/TargetPropertyPanel.cpp`<br>`src/ui/MainWindow.cpp` | Round 1 发现：最后一次预览可能丢掉，拖拽不查连杆，后台直接读文档。Round 2 已关闭。 |
+| M10-FCL-003 | P1 | **RESOLVED** | `src/algo/CollisionAndSim.cpp`<br>`src/ui/ShellWindow.cpp` | Round 1 发现：两个文件超过 1000 行。Round 2 已拆开并关闭。 |
+| M10-FCL-004 | P2 | **RESOLVED** | `src/algo/CollisionAndSim.cpp` | Round 1 发现调试行。Round 2 已去掉。 |
+| M10-FCL-005 | P2 | **DEFERRED** | `measureOperationTorchClearance` | 起弧内缩仍只查焊枪球，不查连杆。见 `DEFERRED.md`。 |
+
+### M10-FCL-001 [P1] RESOLVED in Round 2
+
+`checkRobotAndTorchCollision` 在 FCL 返回 `dist <= 0` 时，用连杆包围盒中心或球心到障碍包围盒的有符号距离覆盖这个结果。网格刚接触时，报出的深度可以是包围盒中心陷进去多深。点位缓存、问题列表和 PDF 状态列都读这个数。宽相位用包围盒丢掉远处一对是对的；接触之后的毫米数必须留下 FCL 的距离。非凸网格的距离在穿透时可以是 0，碰撞判断继续用 `<= 0`，不要再造一个负的包围盒深度。
+
+### M10-FCL-002 [P1] RESOLVED in Round 2
+
+拖拽回调先把 `previewBusy` 设为真，工人算完才清掉。清掉之前若又来了一次预览，新的序列号写进槽里，但 `compare_exchange` 失败，没有人再跑这一次。松手前的最后一帧可以停在上一次间隙上。
+
+同一次预览调用的是 `checkTorchPoseCollision`，关节角是空的，连杆 1～6 不参与。状态栏上的间隙不是本轮要报的那组距离。
+
+自转扫描和这次预览都在线程池里读 `document()`、场景节点和当前点。界面线程可以同时改这份文档。扫描和预览要在投递前把位姿、关节、场景网格和豁免名单拷出来，工人不要再碰文档。
+
+### M10-FCL-003 [P1] RESOLVED in Round 2
+
+`CollisionAndSim.cpp` 1143 行，`ShellWindow.cpp` 1040 行。两处都已经超过 1000 行，这次又把 FCL 查询和拖拽槽加了进去。按 `Rules.md`，继续改行为之前要先拆。碰撞查询拆到自己的编译单元；拖拽预览不要继续堆在 `ShellWindow.cpp` 里。拆分不改变对外结果。
+
+---
+
+## 本轮已核对并保持
+
+- 四个焊枪球仍是半径 2、16、22、25 mm，沿 TCP 负 Z 的 0、45、95、150 mm。没有新的圆柱或锥体枪体。
+- 焊接段只跳过当前工件和豁免名单上的焊丝尖端，阈值是 `wireTipExemptionRadiusMm`（默认 10 mm）。枪体球不豁免。
+- 连杆网格用 `importRobotStlMillimeters`。关节链是 URDF 原点加 J2/J3 的 `+1`，和现有金样同一约定。`RISK-001` 仍开着。
+- 点位求解、直线和关节扫掠、自转扫描在有关节角时会查连杆。72 组扫描在线程池里，并用 `cancelToken` 在换点和析构时取消。
+- `tests/test_report.cpp` 的 `有效 (14.8mm)` 只检查状态文字格式。碰撞结果不经过它。M13 列宽不在本轮 diff 里。
+- Test 21 的距离 0 没有写进 `RISK-002`。
+
 # 审核结论 — M13-REPORT-PDF-001
 
 > **Task ID**：`M13-REPORT-PDF-001`

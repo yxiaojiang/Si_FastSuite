@@ -3,7 +3,7 @@
 > **基线依据**：严格遵循 [`Docs/OLP_System_Design_Claude.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/OLP_System_Design_Claude.md)（v1.1 最终定版）与 [`Docs/FASTSUITE_OLP_System_Architecture.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/FASTSUITE_OLP_System_Architecture.md)。
 > **对标产品**：德国 CENIT **FASTSUITE Edition 2**（下文简称 FS E2）。
 > **目标闭环**：**3D 场景导入 → 工位/机器人配置 → 焊缝与路径编辑 → 可达性/碰撞校验 → 轨迹仿真预览 → 输出 FANUC `.ls` 与 3D PDF / 单文件离线 HTML 3D 动画包**。
-> **最近刷新**：2026-10-28。当前正在做的事只写在 `.claude/Plan.md`：下一步是安装并确认 FCL，再用现有连杆网格和 4 个焊枪球对一个夹具网格做单点耗时实测。边拾取和焊枪拖拽已经完成。
+> **最近刷新**：2026-10-28。当前正在做的事只写在 `.claude/Plan.md`：`DIR-001` 第 3 步 FCL 精确间隙检测已完成并 APPROVED。下一步是第 4 步：运动学金样改为从 URDF 读关节原点并比较完整姿态。
 
 ---
 
@@ -13,10 +13,11 @@
    - 已核验 `SampleScenes/Scene1_TJoint_And_FANUC_M10iA/` 与 `SampleScenes/Scene2_Full_Workcell_STEP/`。
    - **正式拍板 3.4 节采用【方案 A：整场景 STEP 导入 + 内置库同型号可动机器人替换】（P0 默认，工期 1 周）**，并将 `FANUC M-10iA / ARC Mate 100iC`（含 URDF 精确关节参数、OPW 7 参数与视觉/碰撞 STL 网格）作为 M05 内置机器人库首款标准型号。
 2. **[DONE 2026-10-27] 阶段 1 骨架和 M02～M13 的当前范围**：五层 CMake 工程、命令栈、STEP 导入、边拾取、TcpGizmo、OPW、焊缝路径、碰撞简化模型、仿真、`.ls` 和 2D PDF 已落地。阶段 0 的 ROBOGUIDE 对拍、FCL 耗时、3D PDF 熔断和三维 HTML 没有按原验收做完。达成度见 `.claude/Plan.md`。
-3. **[NEXT] FCL 单点实测**（细节见 `.claude/Plan.md`）：
-   - 边拾取和焊枪拖拽已经完成。物体已用 B-Rep 显示。
-   - 下一步是确认 FCL 安装，并测一次连杆网格加现有焊枪球对夹具网格的耗时。
-   - 3D PDF 限时 5 个工作日熔断和客户实景仍未开始。
+3. **[DONE 2026-10-28] FCL 精确间隙替换（`DIR-001` 第 3 步，`M10-COLLISION-FCL-001` 已 APPROVED）**：
+   - 连杆 1~6 STL 加 4 个焊枪球对工件/夹具/底座精确 FCL 窄相位网格距离（接触/穿透为 0.0 mm，碰撞 `<= 0.0`）；
+   - 72 组自转扫描后台异步（支持取消），拖拽微调防抖双检防丢帧全臂逆解预览；代码拆分 `< 1000` 行；610 项测试全绿。
+4. **[NEXT] 运动学金样改为从 URDF 读关节原点并比较完整姿态（`DIR-001` 第 4 步）**：
+   - 解析 URDF origin 与 axis，比较完整旋转矩阵与位置，保持 `RISK-001` 开着。细节见 `.claude/Plan.md`。
 
 ---
 

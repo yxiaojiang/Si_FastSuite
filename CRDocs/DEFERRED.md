@@ -271,3 +271,23 @@
 - **触发阶段**：工具偏移改由节点单独驱动，或程序的工具号、用户号不再是 1 时。
 - **验收条件**：示例求解使用工具节点上的 `tcpOffset`，函数内不再保留第二份 150 mm。报告编号与该程序的 `utoolNumber`、`uframeNumber` 一致。
 
+---
+
+## M10-FCL-004 [RESOLVED in Round 2] 焊枪球碰到测试墙时向标准输出打调试行（P2）
+
+- **来源轮次**：`M10-COLLISION-FCL-001` Round 1 审核（2026-10-28）。
+- **位置**：`src/algo/FclCollisionQueries.cpp` 的 `queryRobotAndTorchCollision`。
+- **现状**：Round 2 已去掉按 `Transit_Wall` 写 `std::cout` 的调试行。碰撞查询里不再按零件名字打印。
+- **闭环验证**：审核方在 `src/` 中检索 `Transit_Wall` 与该调试打印，碰撞查询内已无此输出。
+
+---
+
+## M10-FCL-005 [OPEN] 起弧内缩仍只看焊枪球（P2）
+
+- **来源轮次**：`M10-COLLISION-FCL-001` Round 1 审核（2026-10-28）。
+- **位置**：`CollisionAndSimEngine::measureOperationTorchClearance`；`SeamAndToolpathAlgo` 用它决定起点内缩。
+- **现状**：这里调用 `checkTorchPoseCollision`，不传关节角，连杆 1～6 不参与。点位求解和扫掠已经查连杆。
+- **后果**：内缩可以让焊枪球离开夹具，小臂仍可能碰到夹具。点位状态会在求解后另报碰撞。
+- **触发阶段**：内缩或安全过渡要按整条手臂离夹具，而不只按焊枪球时。
+- **验收条件**：同一条内缩用的间隙和点位求解用的间隙，都包含连杆 1～6 与四个焊枪球。
+

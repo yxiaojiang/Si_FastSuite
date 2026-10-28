@@ -60,9 +60,30 @@ public:
         const app::TargetProcessParams& params);
 
     // M10: Operation validation, kinematics/singularity/collision checks & twist scan
+    struct TwistScanTask {
+        core::Transform4d baseTargetWorldPose;
+        core::Transform4d robotBaseInWorld;
+        core::Transform4d utoolOffset;
+        std::array<double, 6> refJointsRad{};
+        std::optional<core::FanucConfig> requiredConfig;
+        std::vector<core::SceneNode> sceneNodes;
+        std::string targetWorkpieceId;
+        std::vector<std::string> exemptionPartIds;
+        bool isWeldRole{false};
+        device::RobotModel robotModel;
+        core::UnitsSettings settings;
+        double stepDeg{5.0};
+    };
+
     algo::SimulationResult validateOperation(const std::string& operationId);
     algo::SimulationResult validateCurrentOperation();
-    std::vector<algo::TwistScanSample> scanSelectedTargetTwistAngles(double stepDeg = 5.0) const;
+    std::optional<TwistScanTask> prepareTwistScanTask(double stepDeg = 5.0) const;
+    static std::vector<algo::TwistScanSample> executeTwistScanTask(
+        const TwistScanTask& task,
+        const std::shared_ptr<std::atomic<bool>>& cancelToken = nullptr);
+    std::vector<algo::TwistScanSample> scanSelectedTargetTwistAngles(
+        double stepDeg = 5.0,
+        const std::shared_ptr<std::atomic<bool>>& cancelToken = nullptr) const;
     const algo::SimulationResult& lastSimulationResult() const noexcept { return lastSimulationResult_; }
 
     // M12: FANUC .ls validation, preview & export

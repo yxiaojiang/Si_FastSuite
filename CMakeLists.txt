@@ -91,6 +91,7 @@ target_link_libraries(olp_device PUBLIC olp_core)
 add_library(olp_algo STATIC
     src/algo/OpwKinematics.cpp
     src/algo/SeamAndToolpathAlgo.cpp
+    src/algo/FclCollisionQueries.cpp
     src/algo/CollisionAndSim.cpp
     src/algo/simulation/TrajectorySimulator.cpp
 )
@@ -141,6 +142,8 @@ add_library(olp_ui STATIC
 )
 if(Qt6_FOUND)
     target_sources(olp_ui PRIVATE
+        src/ui/ShellChromeHelpers.cpp
+        src/ui/GizmoDragPreviewHandler.cpp
         src/ui/ShellWindow.cpp
         src/ui/TwistScanWidget.cpp
         src/ui/IssueListPanel.cpp
@@ -149,6 +152,7 @@ if(Qt6_FOUND)
         src/ui/TimelinePanel.cpp
         src/ui/LsExportDialog.cpp
         src/ui/WorkcellPdfReportExporter.cpp
+        include/olp/ui/GizmoDragPreviewHandler.h
         include/olp/ui/ShellWindow.h
         include/olp/ui/TwistScanWidget.h
         include/olp/ui/OcctViewport.h

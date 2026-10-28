@@ -8,8 +8,10 @@
 #include <QHBoxLayout>
 #include <QMainWindow>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QStatusBar>
+#include <QThreadPool>
 #include <QVBoxLayout>
 
 #include <cmath>
@@ -189,7 +191,12 @@ TargetPropertyPanel::TargetPropertyPanel(MainWindow& controller,
 
     propLayout->addWidget(spinTuningWidget_);
     spinTuningWidget_->setVisible(false);
+}
 
+TargetPropertyPanel::~TargetPropertyPanel() {
+    if (currentScanCancelled_) {
+        currentScanCancelled_->store(true);
+    }
 }
 
 void TargetPropertyPanel::showSceneNode(const QString& nodeId) {
@@ -261,9 +268,33 @@ void TargetPropertyPanel::showTarget(const QString& targetId) {
     propertyText_->setPlainText(QString::fromStdString(text.str()));
 
     if (twistScanWidget_ != nullptr) {
+        if (currentScanCancelled_) {
+            currentScanCancelled_->store(true);
+        }
+        auto cancelToken = std::make_shared<std::atomic<bool>>(false);
+        currentScanCancelled_ = cancelToken;
+        const uint64_t scanId = ++currentScanId_;
+
         const double curZDeg = core::rad2deg(std::atan2(target->userDeltaOffset.rot.m[1][0], target->userDeltaOffset.rot.m[0][0]));
-        const auto samples = controller_.scanSelectedTargetTwistAngles(5.0);
-        twistScanWidget_->setSamples(samples, curZDeg);
+
+        // Capture immutable snapshot on UI thread before dispatching to worker (M10-FCL-002)
+        const auto taskOpt = controller_.prepareTwistScanTask(5.0);
+        if (taskOpt.has_value()) {
+            const MainWindow::TwistScanTask task = *taskOpt;
+            QPointer<TargetPropertyPanel> self(this);
+            QThreadPool::globalInstance()->start([self, scanId, cancelToken, curZDeg, task]() {
+                if (!self || cancelToken->load()) return;
+                const auto samples = MainWindow::executeTwistScanTask(task, cancelToken);
+                if (cancelToken->load()) return;
+
+                QMetaObject::invokeMethod(self, [self, scanId, samples, curZDeg]() {
+                    if (!self) return;
+                    if (self->currentScanId_ == scanId && self->twistScanWidget_ != nullptr) {
+                        self->twistScanWidget_->setSamples(samples, curZDeg);
+                    }
+                }, Qt::QueuedConnection);
+            });
+        }
     }
 }
 

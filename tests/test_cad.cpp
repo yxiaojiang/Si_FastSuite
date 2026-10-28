@@ -223,7 +223,7 @@ void testSchemeAFullWorkcellImport() {
     olp::algo::CollisionAndSimEngine trimEngine(trimKin, trimSettings);
     const auto beforeTrim = trimEngine.measureOperationTorchClearance(
         trimOp, olp::core::Transform4d::identity(), doc.sceneNodes);
-    check(seamTrim.has_value() && beforeTrim.minClearanceMm < 0.0 &&
+    check(seamTrim.has_value() && beforeTrim.minClearanceMm <= 0.0 &&
               beforeTrim.partName == "Table_Clamp_Block_1",
           "Default 5 mm trim puts the torch into Table_Clamp_Block_1",
           "clearance=" + std::to_string(beforeTrim.minClearanceMm) + " part=" + beforeTrim.partName);

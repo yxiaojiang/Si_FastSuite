@@ -1,9 +1,13 @@
 #include "olp/algo/CollisionAndSim.h"
+#include "olp/algo/FclCollisionQueries.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace olp::algo {
 
@@ -16,7 +20,6 @@ double CollisionAndSimEngine::pointToAabbSignedDistance(
     const core::Vec3& pt,
     const core::Vec3& boxMin,
     const core::Vec3& boxMax) noexcept {
-    // Outside distance (> 0) or inside penetration depth (<= 0)
     const double dxOut = std::max({boxMin.x - pt.x, 0.0, pt.x - boxMax.x});
     const double dyOut = std::max({boxMin.y - pt.y, 0.0, pt.y - boxMax.y});
     const double dzOut = std::max({boxMin.z - pt.z, 0.0, pt.z - boxMax.z});
@@ -30,6 +33,22 @@ double CollisionAndSimEngine::pointToAabbSignedDistance(
     return -std::min({dxIn, dyIn, dzIn});
 }
 
+bool CollisionAndSimEngine::checkRobotAndTorchCollision(
+    const core::Transform4d& tcpWorldPose,
+    const std::optional<std::array<double, 6>>& jointsRad,
+    const core::Transform4d& robotBaseInWorld,
+    const core::Transform4d& utoolOffset,
+    const std::vector<core::SceneNode>& sceneNodes,
+    const std::string& activeWorkpieceId,
+    bool isWeldingRole,
+    double& outMinClearanceMm,
+    std::string& outCollidingPartName,
+    const std::vector<std::string>& exemptionPartIds) const noexcept {
+    return queryRobotAndTorchCollision(
+        kinematics_, settings_, tcpWorldPose, jointsRad, robotBaseInWorld, utoolOffset,
+        sceneNodes, activeWorkpieceId, isWeldingRole, outMinClearanceMm, outCollidingPartName, exemptionPartIds);
+}
+
 bool CollisionAndSimEngine::checkTorchPoseCollision(
     const core::Transform4d& tcpWorldPose,
     const std::vector<core::SceneNode>& sceneNodes,
@@ -38,65 +57,9 @@ bool CollisionAndSimEngine::checkTorchPoseCollision(
     double& outMinClearanceMm,
     std::string& outCollidingPartName,
     const std::vector<std::string>& exemptionPartIds) const noexcept {
-    outMinClearanceMm = 10000.0;
-    outCollidingPartName.clear();
-
-    // Model welding torch as a capsule chain along -Z_tcp (from wire tip s=0 up to torch body s=180 mm)
-    // Sample points along torch axis:
-    // s = 0 mm (TCP wire tip, radius = 2mm) -> EXEMPTED against activeWorkpieceId during welding!
-    // s = 40..160 mm (Nozzle & torch neck body, radius = 22mm) -> Always checked against all parts & clamps!
-    struct TorchSphere {
-        double offsetAlongNegZMm;
-        double radiusMm;
-        bool isWireTip;
-    };
-    constexpr std::array<TorchSphere, 4> torchSpheres{{
-        {0.0,   2.0,  true},
-        {45.0,  16.0, false},
-        {95.0,  22.0, false},
-        {150.0, 25.0, false}
-    }};
-
-    const core::Vec3 retreatDir = -tcpWorldPose.rot.colZ();
-
-    for (const auto& node : sceneNodes) {
-        if (!node.visible || node.type != core::SceneNodeType::Part) {
-            continue;
-        }
-        if (node.collisionRole == core::CollisionRole::Ignored ||
-            node.collisionRole == core::CollisionRole::Environment) {
-            continue;
-        }
-
-        const bool isExemptBaseMetal = [&]() {
-            if (node.id == activeWorkpieceId) return true;
-            for (const auto& id : exemptionPartIds) {
-                if (node.id == id) return true;
-            }
-            return false;
-        }();
-
-        for (const auto& sph : torchSpheres) {
-            const core::Vec3 center = tcpWorldPose.pos + retreatDir * sph.offsetAlongNegZMm;
-            const double rawDist = pointToAabbSignedDistance(
-                center, node.collisionMesh.bboxMin, node.collisionMesh.bboxMax);
-            // Wire tip may touch the weld's own base metals inside a small radius.
-            // Other workpieces, clamps, and a tip buried deeper than that radius still collide.
-            if (sph.isWireTip && isWeldingRole && isExemptBaseMetal &&
-                rawDist >= -settings_.wireTipExemptionRadiusMm) {
-                continue;
-            }
-
-            const double dist = rawDist - sph.radiusMm;
-
-            if (dist < outMinClearanceMm) {
-                outMinClearanceMm = dist;
-                outCollidingPartName = node.name;
-            }
-        }
-    }
-
-    return (outMinClearanceMm <= 0.0);
+    return checkRobotAndTorchCollision(
+        tcpWorldPose, std::nullopt, core::Transform4d::identity(), core::Transform4d::identity(),
+        sceneNodes, activeWorkpieceId, isWeldingRole, outMinClearanceMm, outCollidingPartName, exemptionPartIds);
 }
 
 std::vector<TwistScanSample> CollisionAndSimEngine::scanTwistAngles(
@@ -109,11 +72,16 @@ std::vector<TwistScanSample> CollisionAndSimEngine::scanTwistAngles(
     const std::string& activeWorkpieceId,
     double stepDeg,
     const std::vector<std::string>& exemptionPartIds,
-    bool isWeldingRole) const {
+    bool isWeldingRole,
+    const std::shared_ptr<std::atomic<bool>>& cancelToken) const {
     std::vector<TwistScanSample> samples;
     const core::Transform4d worldToBase = robotBaseInWorld.inverse();
 
     for (double deg = -180.0; deg < 180.0 - 1e-9; deg += stepDeg) {
+        if (cancelToken && cancelToken->load()) {
+            return {};
+        }
+
         TwistScanSample s;
         s.twistAngleDeg = deg;
 
@@ -136,8 +104,9 @@ std::vector<TwistScanSample> CollisionAndSimEngine::scanTwistAngles(
 
         double minClearance = 0.0;
         std::string hitPart;
-        const bool collided = checkTorchPoseCollision(
-            twistedWorld, sceneNodes, activeWorkpieceId, isWeldingRole, minClearance, hitPart, exemptionPartIds);
+        const bool collided = checkRobotAndTorchCollision(
+            twistedWorld, bestSol->jointsRad, robotBaseInWorld, utoolOffset,
+            sceneNodes, activeWorkpieceId, isWeldingRole, minClearance, hitPart, exemptionPartIds);
         s.collisionFree = !collided;
         s.minClearanceMm = minClearance;
         samples.push_back(s);
@@ -214,8 +183,9 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
 
             double minClearance = 1000.0;
             std::string hitName;
-            const bool collided = checkTorchPoseCollision(
-                targetWorld, sceneNodes, op.targetWorkpieceId, isWeldRole,
+            const bool collided = checkRobotAndTorchCollision(
+                targetWorld, chosen->jointsRad, robotBaseInWorld, utoolOffset,
+                sceneNodes, op.targetWorkpieceId, isWeldRole,
                 minClearance, hitName, op.exemptionPartIds);
 
             target.cache.valid = true;
@@ -326,8 +296,9 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
                 if (sampleIsCommanded && step < numSteps && !postedSweepIssue) {
                     double sweepClearance = 0.0;
                     std::string sweepHit;
-                    const bool sweepCollided = checkTorchPoseCollision(
-                        sampleWorld, sceneNodes, op.targetWorkpieceId, isWeldRole,
+                    const bool sweepCollided = checkRobotAndTorchCollision(
+                        sampleWorld, interpJoints, robotBaseInWorld, utoolOffset,
+                        sceneNodes, op.targetWorkpieceId, isWeldRole,
                         sweepClearance, sweepHit, op.exemptionPartIds);
                     if (sweepCollided || sweepClearance < settings_.collisionSafeClearanceMm) {
                         postedSweepIssue = true;
@@ -472,8 +443,9 @@ CollisionAndSimEngine::TransitProbeKind CollisionAndSimEngine::probeTorchTransit
 
     double endClearance = 0.0;
     std::string endHit;
-    const bool endHits = checkTorchPoseCollision(
-        endWorld, sceneNodes, activeWorkpieceId, false, endClearance, endHit, exemptionPartIds);
+    const bool endHits = checkRobotAndTorchCollision(
+        endWorld, chosen->jointsRad, robotBaseInWorld, utoolOffset,
+        sceneNodes, activeWorkpieceId, false, endClearance, endHit, exemptionPartIds);
     if (endHits) {
         return TransitProbeKind::Blocked;
     }
@@ -529,8 +501,9 @@ CollisionAndSimEngine::TransitProbeKind CollisionAndSimEngine::probeTorchTransit
 
         double sweepClearance = 0.0;
         std::string sweepHit;
-        const bool sweepHits = checkTorchPoseCollision(
-            sampleWorld, sceneNodes, activeWorkpieceId, false,
+        const bool sweepHits = checkRobotAndTorchCollision(
+            sampleWorld, interpJoints, robotBaseInWorld, utoolOffset,
+            sceneNodes, activeWorkpieceId, false,
             sweepClearance, sweepHit, exemptionPartIds);
         if (sweepHits) {
             return TransitProbeKind::Blocked;

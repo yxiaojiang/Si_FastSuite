@@ -65,6 +65,8 @@ public:
         const std::array<double, 6>& j1,
         const std::array<double, 6>& j2) noexcept;
 
+    const device::RobotModel& robotModel() const noexcept { return model_; }
+
 private:
     device::RobotModel model_;
 };

@@ -19,6 +19,7 @@ class QTreeWidget;
 
 namespace olp::ui {
 
+class GizmoDragPreviewHandler;
 class IssueListPanel;
 class OcctViewport;
 class TargetPropertyPanel;
@@ -82,6 +83,7 @@ private:
     QLabel* jogReadout_{nullptr};
     QSlider* jogSliders_[6]{};
     TimelinePanel* timeline_{nullptr};
+    std::unique_ptr<GizmoDragPreviewHandler> gizmoPreviewHandler_{nullptr};
 
     QDockWidget* sceneDock_{nullptr};
     QDockWidget* programDock_{nullptr};
