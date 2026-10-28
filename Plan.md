@@ -3,7 +3,7 @@
 > **基线依据**：严格遵循 [`Docs/OLP_System_Design_Claude.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/OLP_System_Design_Claude.md)（v1.1 最终定版）与 [`Docs/FASTSUITE_OLP_System_Architecture.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/FASTSUITE_OLP_System_Architecture.md)。
 > **对标产品**：德国 CENIT **FASTSUITE Edition 2**（下文简称 FS E2）。
 > **目标闭环**：**3D 场景导入 → 工位/机器人配置 → 焊缝与路径编辑 → 可达性/碰撞校验 → 轨迹仿真预览 → 输出 FANUC `.ls` 与 3D PDF / 单文件离线 HTML 3D 动画包**。
-> **最近刷新**：2026-10-28。当前正在做的事只写在 `.claude/Plan.md`：`DIR-001` 第 6 步工程保存 JSON（`M14-PROJECT-JSON-001`）Round 3 已 APPROVED。第 7 步仍未开始。
+> **最近刷新**：2026-10-28。当前正在做的事只写在 `.claude/Plan.md`：`DIR-001` 第 7 步结束 3D PDF 悬置（收口 `RISK-003`）与 T 型接头回归（`M15-TJOINT-REGRESSION-001`）Round 1 已通过（APPROVED）。752 项测试全绿，`--verify` 退出码 0。`M15-001` 延期。
 
 ---
 
@@ -19,7 +19,8 @@
 4. **[DONE 2026-10-28] 运动学金样改为从 URDF 读关节原点并比较完整姿态（`DIR-001` 第 4 步，`M06-KINEMATICS-URDF-001` 已 APPROVED）**：
    - Test 3 从 URDF 读 origin 与 axis，比较完整旋转与位置。`RISK-001` 仍开着。细节见 `.claude/Plan.md`。
 5. **[DONE 2026-10-28] 播放用 URDF 连杆链驱动外形（`DIR-001` 第 5 步，Round 2 APPROVED）**。细节见 `.claude/Plan.md`。
-6. **[DONE 2026-10-28] 工程保存先做 JSON（`DIR-001` 第 6 步，`M14-PROJECT-JSON-001` Round 3 APPROVED）**：`ProjectSerializer` 引擎无损持久化，两阶段原子写盘安全防护，宽字符路径兼容，725 项测试全绿，`--verify` 退出码 0。第 7 步仍未开始。
+6. **[DONE 2026-10-28] 工程保存先做 JSON（`DIR-001` 第 6 步，`M14-PROJECT-JSON-001` Round 3 APPROVED）**：`ProjectSerializer` 引擎无损持久化，两阶段原子写盘安全防护，宽字符路径兼容，725 项测试全绿，`--verify` 退出码 0。
+7. **[DONE 2026-10-28] 结束 3D PDF 悬置（收口 RISK-003）与 T 型接头端到端闭环自动化回归（`DIR-001` 第 7 步，`M15-TJOINT-REGRESSION-001` Round 1 APPROVED）**：执行熔断收口（`RISK-003` CLOSED），明确离线三维交互交付统一收口至基于 Web 标准的单文件离线 HTML 3D 动画包，2D 报告由 QPdfWriter 承载；并在测试套件中为 `SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_TJoint_With_Clamps.step` 建立完整端到端自动化回归测试。审核方复跑 752 项测试全绿，`--verify` 退出码 0。`M15-001` 延期。
 
 ---
 

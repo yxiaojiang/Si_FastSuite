@@ -210,6 +210,7 @@ if(OLP_BUILD_TESTS)
         tests/test_postprocessor.cpp
         tests/test_report.cpp
         tests/test_project_io.cpp
+        tests/test_tjoint_regression.cpp
     )
     target_link_libraries(olp_tests PRIVATE olp_ui)
     if(Qt6_FOUND)

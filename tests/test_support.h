@@ -31,3 +31,4 @@ void testFanucLsPostProcessorValidationAndExport();
 void testWorkcellPdfReportExport();
 void testFclSinglePoseTiming();
 void testProjectJsonSerialization();
+void testTJointSampleSceneEndToEndRegression();

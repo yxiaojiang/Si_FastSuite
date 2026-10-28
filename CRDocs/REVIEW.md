@@ -1,3 +1,44 @@
+# 审核结论 — M15-TJOINT-REGRESSION-001 Round 1
+
+> **Task ID**：`M15-TJOINT-REGRESSION-001`
+> **Task**：结束 3D PDF 悬置（收口 RISK-003）并建立 SampleScenes T 型接头闭环自动化回归测试（DIR-001 第 7 步，M13/M15）
+> **Round**：1
+> **Reviewer**：审核方
+> **Reviewed at**：2026-10-28
+> **Executor**：执行方
+> **Verdict**：**APPROVED**
+>
+> 审核方读了 `tests/test_tjoint_regression.cpp`、`buildSeamFromPickedEdge`、`computeSeamFrame`、`extendStartTrimUntilTorchClears`、`insertSafeTransitBeforeApproach`，以及 `validateAndSimulateProgram` 里点状态的赋值。复跑时读到的中间量：立板法向 `(0, -1, 0)`，底板法向 `(0, 0, 1)`，平分线与 `(0, -1, 1)` 的有符号点积是 1。采样 9 帧，弧长从 5 mm 到 395 mm，严格递增。起弧切边停在 5 mm。12 个目标点状态都是 `Valid`，最小间隙 126.179 mm，问题 0 条。Home 到切入点插入了 1 个 `CLEARANCE_1`，间隙 281.436 mm。左右夹具的碰撞角色是 `Fixture`。`build-full/Release/olp_tests.exe` 由审核方用 `/p:VCToolsVersion=14.44.35207` 重编后复跑：**752 passed, 0 failed**，退出码 0。`SiFastSuiteOLP.exe --verify` 退出码 0，1047 帧，34.7508 秒。当前范围没有新的 P0 或 P1。`M15-001` 记入延期。
+
+## 结论
+
+| ID | 级别 | 状态 | 涉及文件 | 结论 |
+|---|---|---|---|---|
+| M15-001 | P2 | **DEFERRED** | `tests/test_tjoint_regression.cpp` | 平分线用了绝对值。碰撞、近碰撞、奇异和近限位不会让这条回归失败。夹具角色和弧长单调没有断言。见 `DEFERRED.md`。 |
+
+`RISK-003` 按这段定调用 **CLOSED** 收口。`RISK-001`、`RISK-002` 仍开着。第 7 步没有改耦合比，也没有改播放、工程 JSON 和 2D PDF 的产品代码。
+
+### M15-001 [P2] DEFERRED
+
+平分线偏差用的是 `abs(dot)`。反向平分线的偏差也是 0°。两个外法向没有单独比较。点位循环只把不可达、超限位和构型跳变算作失败；`cache.valid` 在碰撞时仍是 true。夹具只对了名字。弧长只比较了首尾差。
+
+这一轮读到的数是对的：有符号点积为 1，12 个点都是 `Valid`，弧长严格递增，两个夹具都是 `Fixture`。这些缺口不挡本次通过。
+
+---
+
+## 本轮已核对并保持
+
+- `RISK-003` 的收口段写在 `CRDocs/DEFERRED.md`、`.claude/SessionBrief.md`、`.claude/Plan.md` 和根目录 `Plan.md`。内容与设计基线的熔断出口一致：停止自研 U3D/PRC 链路，三维交互交付收口到单文件离线 HTML，2D 报告继续用 QPdfWriter，客户另有要求时再评估商业 SDK。HTML 动画在里程碑表里仍是「未做」。设计基线正文没有改，与 `DIR-001`「不另写 Docs/ 基线」一致。
+- 导入得到 4 个实体。底板和立板是 `Workpiece`，左右夹具是 `Fixture`。立板 Edge 3 长 400 mm。跨零件侧面是 `part_2` 与 `part_1`。焊缝跨度 390 mm，对应两端各 5 mm 切边。
+- 焊丝尖端在焊接角色下不报碰撞，关掉豁免后报接触。枪放到左夹具盒内时报 `Fixture_Clamp_Left`。
+- 这条前边在初始 5 mm 切边下已经离开夹具，`extendStartTrimUntilTorchClears` 没有再加大切边。交接里写的「检测到夹具后自适应内缩」在这条边上没有发生。Home 到切入点的关节扫掠被挡住后，插入了 1 个 `CLEARANCE_1`。随后整段程序没有碰撞问题。
+- 烘焙 1507 帧。节拍 49.8037 秒，其中焊接 39.0414 秒，空走 10.7623 秒。`.ls` 含 `/PROG TJOINT_001`、`Arc Start[1]`、`Arc End[1]` 和 `/POS`，并写到 `build/TJOINT_001.ls`。
+- 新测试只核对了 `a1`、`c1`、`c2`、`c3`。模型里的 `a2 = -150`、`c4 = 100` 仍由既有运动学金样覆盖。`RISK-001` 不关。
+- `tests/test_tjoint_regression.cpp` 299 行，`tests/test_main.cpp` 67 行，`tests/test_support.h` 34 行，`CMakeLists.txt` 221 行。都在 1000 行以内。
+- `--verify` 仍打印接近段和回退段对 `Workpiece_BoxWall_Front` 的间隙告警。`RISK-002` 保持打开。
+
+---
+
 # 审核结论 — M14-PROJECT-JSON-001 Round 3
 
 > **Task ID**：`M14-PROJECT-JSON-001`

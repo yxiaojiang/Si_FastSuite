@@ -57,6 +57,7 @@ int main(int argc, char* argv[]) {
     testWorkcellPdfReportExport();
     testFclSinglePoseTiming();
     testProjectJsonSerialization();
+    testTJointSampleSceneEndToEndRegression();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";
