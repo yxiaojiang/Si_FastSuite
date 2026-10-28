@@ -29,3 +29,4 @@ void testKinematicsReachabilitySingularityAndTwistScan();
 void testTrajectoryAndPlayback();
 void testFanucLsPostProcessorValidationAndExport();
 void testWorkcellPdfReportExport();
+void testFclSinglePoseTiming();

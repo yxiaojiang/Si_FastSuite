@@ -38,6 +38,11 @@ endif()
 
 if(OLP_ENABLE_FCL)
     find_package(fcl QUIET)
+    if(fcl_FOUND)
+        message(STATUS "[SiFastSuiteOLP] Found FCL")
+    else()
+        message(STATUS "[SiFastSuiteOLP] FCL was not found; mesh distance is not linked")
+    endif()
 endif()
 
 # Pass workspace root path for SampleScenes discovery in tests & spikes
@@ -185,6 +190,7 @@ if(OLP_BUILD_TESTS)
         tests/test_toolpath.cpp
         tests/test_process.cpp
         tests/test_collision.cpp
+        tests/test_fcl_spike.cpp
         tests/test_ui.cpp
         tests/test_simulation.cpp
         tests/test_postprocessor.cpp

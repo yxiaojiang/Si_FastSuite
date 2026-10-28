@@ -3,7 +3,7 @@
 > **基线依据**：严格遵循 [`Docs/OLP_System_Design_Claude.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/OLP_System_Design_Claude.md)（v1.1 最终定版）与 [`Docs/FASTSUITE_OLP_System_Architecture.md`](file:///c:/Users/mimovr/Desktop/TEmp/Si_FastSuite/Docs/FASTSUITE_OLP_System_Architecture.md)。
 > **对标产品**：德国 CENIT **FASTSUITE Edition 2**（下文简称 FS E2）。
 > **目标闭环**：**3D 场景导入 → 工位/机器人配置 → 焊缝与路径编辑 → 可达性/碰撞校验 → 轨迹仿真预览 → 输出 FANUC `.ls` 与 3D PDF / 单文件离线 HTML 3D 动画包**。
-> **最近刷新**：2026-10-26（三维视口通过专用 Win32 子窗口与 WS_CLIPCHILDREN 彻底隔离 GDI 覆盖黑屏，工具栏已按功能分组。当前活跃事项以 `.claude/Plan.md` 为准：下一步是边拾取和把焊枪拖拽画到画面上）。
+> **最近刷新**：2026-10-28。当前正在做的事只写在 `.claude/Plan.md`：下一步是安装并确认 FCL，再用现有连杆网格和 4 个焊枪球对一个夹具网格做单点耗时实测。边拾取和焊枪拖拽已经完成。
 
 ---
 
@@ -12,12 +12,10 @@
 1. **[DONE 2026-10-25] 真实测试场景资产（`SampleScenes/`）结构核验与 3.4 节场景导入方案拍板**：
    - 已核验 `SampleScenes/Scene1_TJoint_And_FANUC_M10iA/` 与 `SampleScenes/Scene2_Full_Workcell_STEP/`。
    - **正式拍板 3.4 节采用【方案 A：整场景 STEP 导入 + 内置库同型号可动机器人替换】（P0 默认，工期 1 周）**，并将 `FANUC M-10iA / ARC Mate 100iC`（含 URDF 精确关节参数、OPW 7 参数与视觉/碰撞 STL 网格）作为 M05 内置机器人库首款标准型号。
-2. **[IN PROGRESS] 阶段 0 预研与阶段 1 基础 C++ 工程骨架搭建（CMake + Qt6 + OpenCASCADE）**：
-   - 建立五层解耦架构的 CMake 工程（`olp_core`、`olp_cad`、`olp_device`、`olp_algo`、`olp_io`、`olp_app`、`olp_ui` 及单元测试 `olp_tests`）。
-   - 落地 M01（文档模型 + 命令系统 Undo/Redo 栈 + 选择集 + 事件总线）、M02（`ICadKernel` 接口 + OpenCASCADE 实现）、M03（三维视图 + 不挂接对象的 `TcpGizmo` 操纵器层）、M05/M06（`FANUC M-10iA` 模型 + OPW 正逆运动学 + J2/J3 耦合 + WPR 换算）、M12（FANUC `.ls` 生成器）。
-3. **[NEXT] 视口边拾取与焊枪拖拽**（细节见 `.claude/Plan.md`）：
-   - 分区和相机已接上：两个工作台都有场景、属性和点动；编程台另有程序树和「路径点 | 问题」。中间视口可旋转、平移、缩放和全景，已物理隔离 GDI 覆盖黑屏。工具栏按文件、编辑、工作台、编程、视图分组。物体仍是包围盒。
-   - 下一步是边拾取，以及把 `TcpGizmo` 画到视口上。
+2. **[DONE 2026-10-27] 阶段 1 骨架和 M02～M13 的当前范围**：五层 CMake 工程、命令栈、STEP 导入、边拾取、TcpGizmo、OPW、焊缝路径、碰撞简化模型、仿真、`.ls` 和 2D PDF 已落地。阶段 0 的 ROBOGUIDE 对拍、FCL 耗时、3D PDF 熔断和三维 HTML 没有按原验收做完。达成度见 `.claude/Plan.md`。
+3. **[NEXT] FCL 单点实测**（细节见 `.claude/Plan.md`）：
+   - 边拾取和焊枪拖拽已经完成。物体已用 B-Rep 显示。
+   - 下一步是确认 FCL 安装，并测一次连杆网格加现有焊枪球对夹具网格的耗时。
    - 3D PDF 限时 5 个工作日熔断和客户实景仍未开始。
 
 ---

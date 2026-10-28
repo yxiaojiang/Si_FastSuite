@@ -6,13 +6,14 @@
 | :--- | :--- | :--- |
 | `SessionBrief.md` | 当前目标、风险、下一步、模块索引；保持 800~1500 中文字 | **是** |
 | `Plan.md` | 仅当前 1~3 个活跃事项（含当前待交接给 Opus 或 Gemini 的任务） | **是** |
+| `PlanDocs/` | 方向、顺序和验收口径的多模型讨论交接 | 否；`STATUS.md` 不是 `IDLE` 时读 |
 | `ProjectMemory.md` | 稳定架构、全局契约、历史演进脉络、硬约束；保持精简 | 否，涉及全局设计或跨阶段对比时读 |
 | `contexts/*.md` | 模块当前态与入口；按任务读取 | 否，按需 |
 | `*-archive.md` | 历史快照和已完成项（如视觉沿边涂抹方案归档） | 仅追溯历史 |
 
 ## 会话开始与按需加载
 
-1. 每个项目任务先读取 `.claude/SessionBrief.md` 与 `.claude/Plan.md`。
+1. 每个项目任务先读取 `.claude/SessionBrief.md` 与 `.claude/Plan.md`。若 `PlanDocs/STATUS.md` 不是 `IDLE`，接着读 `PlanDocs/README.md`、`STATUS.md` 和 `PROPOSAL.md`。
 2. 再按任务选择上下文：
    - **当前主线（对标 FASTSUITE 的机器人焊接离线编程 OLP 系统）**：读 `.claude/contexts/OLP-archive.md`、`Docs/OLP_System_Design_Claude.md` 与 `Docs/FASTSUITE_OLP_System_Architecture.md`。要恢复已经做过的实现步骤时，再读 `.claude/contexts/steps/00-index.md`，按模块打开，不要整目录塞进上下文。
    - **历史归档（基于 3D 视觉的免示教沿边涂抹方案）**：读 `.claude/contexts/VisionEdgeSystem.md` 及 `Docs/Vision_Edge_System_Baseline.md`。
@@ -62,10 +63,24 @@
   - **用户最简交互**：
     - 对执行者指令：`读取 CRDocs，按 REVIEW.md 修改，完成后交接。`
     - 对审核者指令：`读取 CRDocs，审核本轮实际改动并更新审核状态。`
+- **PlanDocs 计划讨论交接（强制规程）**：
+  - 工程根目录 `PlanDocs/` 是几个模型讨论方向、顺序和验收口径的唯一交接区。规则见 `PlanDocs/README.md`。代码 diff 仍只走 `CRDocs/`。
+  - **文件分工与所有权**：
+    - `PlanDocs/README.md`：固定规则。
+    - `PlanDocs/STATUS.md`：由当前交棒方更新，记录话题、轮次和状态（`IDLE` / `PROPOSING` / `READY_FOR_REVIEW` / `CHANGES_REQUESTED` / `CONVERGED` / `ADOPTED` / `BLOCKED`）。
+    - `PlanDocs/PROPOSAL.md`：只由提案方写。
+    - `PlanDocs/REVIEW.md`：只由审核方写。审核必须核对源码、测试和计划，同意也要写核对过的文件。
+    - `PlanDocs/DECISIONS.md`：只在用户确认收口后追加短决定。
+  - 讨论不另写 `Docs/` 基线。采纳后的顺序写入 `.claude/Plan.md` 和 `SessionBrief.md`。对应代码任务再另开 `CRDocs/`。
+  - **用户最简交互**：
+    - 对提案方：`读取 PlanDocs，把这件事写成提案并交接。`
+    - 对审核方：`读取 PlanDocs，独立审核这一轮提案。`
+    - 有审核意见之后：`读取 PlanDocs，按 REVIEW.md 修正提案并交接。`
+    - 确认收口：`读取 PlanDocs，讨论已收敛，写入决定并更新计划。`
 - **提问阶段只出分析与方案**：用户在提问/方案评估阶段只要分析和文档输出；收到明确代码实施指令后才修改工程代码文件。
 - **双模型（Gemini + Opus）互审取长补短机制**：
   - 每次重大需求建立时，先由一方输出全景架构与模块拆解文档（存放在 `Docs/`），另一方在此基础上结合真实源码/硬件边界/工业暗坑进行独立审阅，重点补充：**范围切割（P0/P1/P2）、高风险预研前置（Phase 0）、行业暗坑、具体技术选型与量化验收标准**。
-  - 之后双方交叉复审，识别过度设计或潜在隐患，最终收敛为一份可执行的基线文档。
+  - 之后双方交叉复审，识别过度设计或潜在隐患，最终收敛为一份可执行的基线文档。基线定版之后，方向和顺序改走 `PlanDocs/`，决定写回 `.claude/Plan.md`，不另建第二份基线。
 - **回答前必须保持独立判断**：以指出真实工程问题、物理/数学边界和风险为第一优先级，禁止盲目迎合或默认前置假设无误。
 - **信源核定**：生成方案、参数或引用开源库/硬件特性时，必须核定真实信源，无法确定的须做出明确标注。
 - **报价单规范**：所有报价 Excel 必须 100% 严格复刻 `C:\Users\mimovr\Desktop\autoCAD二开报价.xlsx` 的版式、主题配色（保留 `xl/theme/theme1.xml`）、左上角裁剪 Logo（保留 `xl/drawings/drawing1.xml` 的 `srcRect`）、列宽、字体（微软雅黑）、合并规则、单价（`2200` `人/天`）与动态公式。

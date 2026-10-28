@@ -1,6 +1,6 @@
 # 已做步骤索引
 
-> 2026-10-25。只记做到哪、大概怎么做的。设计条文仍以 `Docs/OLP_System_Design_Claude.md`（v1.1）和 `.claude/contexts/OLP-archive.md` 为准。
+> 2026-10-28。只记做到哪、大概怎么做的。设计条文仍以 `Docs/OLP_System_Design_Claude.md`（v1.1）为准。正在做的顺序见 `.claude/Plan.md`，方向讨论的规则见 `PlanDocs/README.md`。
 
 | 文件 | 内容 |
 | :--- | :--- |
