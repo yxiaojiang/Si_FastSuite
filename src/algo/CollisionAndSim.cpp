@@ -11,10 +11,58 @@
 
 namespace olp::algo {
 
+namespace {
+
+// FIX-EXPORT-GATE-002 / GATE-005: mid-segment writeback into target.cache.status.
+// Policy lives in CollisionAndSimEngine::shouldUpgradeCacheStatus (Hard > Near > Soft;
+// within Hard, Collision replaces ConfigJump/Unreachable/JointLimitExceeded).
+void upgradeTargetCacheFromSegmentIssue(
+    core::Target& target,
+    core::TargetValidationState newStatus,
+    const std::string& message) {
+    if (CollisionAndSimEngine::shouldUpgradeCacheStatus(target.cache.status, newStatus)) {
+        target.cache.status = newStatus;
+        target.cache.issueMessage = message;
+        // Intentionally leave cache.valid unchanged: it means IK solution exists.
+    }
+}
+
+} // namespace
+
 CollisionAndSimEngine::CollisionAndSimEngine(
     const OpwKinematics& kinematics,
     const core::UnitsSettings& settings)
     : kinematics_(kinematics), settings_(settings) {}
+
+bool CollisionAndSimEngine::shouldUpgradeCacheStatus(
+    core::TargetValidationState current,
+    core::TargetValidationState incoming) noexcept {
+    using S = core::TargetValidationState;
+    const auto tierOf = [](S s) noexcept -> int {
+        switch (s) {
+        case S::Unreachable:
+        case S::Collision:
+        case S::ConfigJump:
+        case S::JointLimitExceeded:
+            return 2; // Hard
+        case S::NearCollision:
+            return 1; // Near
+        default:
+            return 0; // Soft
+        }
+    };
+    const int inTier = tierOf(incoming);
+    const int curTier = tierOf(current);
+    if (inTier > curTier) {
+        return true;
+    }
+    // Same Hard tier: prefer Collision so export gate sees hard hits over ConfigJump/etc.
+    if (inTier == curTier && inTier == 2 &&
+        incoming == S::Collision && current != S::Collision) {
+        return true;
+    }
+    return false;
+}
 
 double CollisionAndSimEngine::pointToAabbSignedDistance(
     const core::Vec3& pt,
@@ -231,7 +279,9 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
             const int numSteps = std::max(2, static_cast<int>( std::ceil(segDuration / sampleStepSec) ));
             std::array<double, 6> prevStepJoints = currentJoints;
             bool postedSegmentIssue = false;
-            bool postedSweepIssue = false;
+            // FIX-EXPORT-GATE-002: NearCollision must not short-circuit later hard-collision checks.
+            bool postedHardSweepCollision = false;
+            bool postedNearSweepIssue = false;
 
             for (int step = 1; step <= numSteps; ++step) {
                 const double alpha = static_cast<double>(step) / static_cast<double>(numSteps);
@@ -257,11 +307,15 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
                         interpJoints = chosen->jointsRad;
                         if (!postedSegmentIssue) {
                             postedSegmentIssue = true;
+                            const std::string msg =
+                                "Linear segment has no inverse solution; motion was not interpolated";
                             sim.issues.push_back({
                                 inOutProgram.id, op.id, target.id, target.name,
                                 core::TargetValidationState::Unreachable,
-                                "Linear segment has no inverse solution; motion was not interpolated"
+                                msg
                             });
+                            upgradeTargetCacheFromSegmentIssue(
+                                target, core::TargetValidationState::Unreachable, msg);
                         }
                     } else {
                         double maxStep = 0.0;
@@ -274,11 +328,15 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
                             sim.hasConfigJumpInLinear = true;
                             if (!postedSegmentIssue) {
                                 postedSegmentIssue = true;
+                                const std::string msg =
+                                    "Linear segment joint step exceeds 15 degrees";
                                 sim.issues.push_back({
                                     inOutProgram.id, op.id, target.id, target.name,
                                     core::TargetValidationState::ConfigJump,
-                                    "Linear segment joint step exceeds 15 degrees"
+                                    msg
                                 });
+                                upgradeTargetCacheFromSegmentIssue(
+                                    target, core::TargetValidationState::ConfigJump, msg);
                             }
                         }
                         interpJoints = stepChosen->jointsRad;
@@ -295,23 +353,37 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
                 // The last sample is the target pose, already checked above.
                 const int sweepCheckInterval = std::max(1, numSteps / 25);
                 const bool doSweepCheck = (step % sweepCheckInterval == 0) || (step == numSteps / 2);
-                if (sampleIsCommanded && step < numSteps && !postedSweepIssue && doSweepCheck) {
+                // Keep scanning after NearCollision; only hard Collision short-circuits further sweep posts.
+                if (sampleIsCommanded && step < numSteps && !postedHardSweepCollision && doSweepCheck) {
                     double sweepClearance = 0.0;
                     std::string sweepHit;
                     const bool sweepCollided = checkRobotAndTorchCollision(
                         sampleWorld, interpJoints, robotBaseInWorld, utoolOffset,
                         sceneNodes, op.targetWorkpieceId, isWeldRole,
                         sweepClearance, sweepHit, op.exemptionPartIds);
-                    if (sweepCollided || sweepClearance < settings_.collisionSafeClearanceMm) {
-                        postedSweepIssue = true;
-                        const bool hardHit = sweepCollided;
+                    if (sweepCollided) {
+                        postedHardSweepCollision = true;
+                        const std::string msg = "Sweep collides with " + sweepHit;
                         sim.issues.push_back({
                             inOutProgram.id, op.id, target.id, target.name,
-                            hardHit ? core::TargetValidationState::Collision
-                                    : core::TargetValidationState::NearCollision,
-                            hardHit ? ("Sweep collides with " + sweepHit)
-                                    : ("Sweep clearance below safe distance (" + sweepHit + ")")
+                            core::TargetValidationState::Collision,
+                            msg
                         });
+                        upgradeTargetCacheFromSegmentIssue(
+                            target, core::TargetValidationState::Collision, msg);
+                    } else if (sweepClearance < settings_.collisionSafeClearanceMm) {
+                        if (!postedNearSweepIssue) {
+                            postedNearSweepIssue = true;
+                            const std::string msg =
+                                "Sweep clearance below safe distance (" + sweepHit + ")";
+                            sim.issues.push_back({
+                                inOutProgram.id, op.id, target.id, target.name,
+                                core::TargetValidationState::NearCollision,
+                                msg
+                            });
+                            upgradeTargetCacheFromSegmentIssue(
+                                target, core::TargetValidationState::NearCollision, msg);
+                        }
                     }
                 }
 

@@ -1,11 +1,19 @@
 #include "test_support.h"
 #include "olp/io/FanucLsPostProcessor.h"
+#include "olp/io/Utf8Path.h"
 #include "olp/ui/MainWindow.h"
 #include "olp/algo/SeamAndToolpathAlgo.h"
+#include "olp/algo/CollisionAndSim.h"
+#include "olp/algo/OpwKinematics.h"
+#include "olp/device/RobotModel.h"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 
 using namespace olp;
 
@@ -203,6 +211,194 @@ void testFanucLsPostProcessorValidationAndExport() {
     auto valColl = io::FanucLsPostProcessor::validateProgram(issueProg, blockCollConfig);
     check(!valColl.ok, "blockOnCollision=true rejects program with collided targets");
 
+    // FIX-EXPORT-GATE-005 / OPEN-P1-3: gate off → Collision is Warning (exportable) but NOT silent.
+    io::LsPostConfig allowCollConfig;
+    allowCollConfig.blockOnCollision = false;
+    auto valCollWarn = io::FanucLsPostProcessor::validateProgram(issueProg, allowCollConfig);
+    check(valCollWarn.ok && !valCollWarn.hasErrors() && !valCollWarn.issues.empty(),
+          "FIX-EXPORT-GATE-005: blockOnCollision=false keeps Collision as Warning (not silent)");
+    bool sawCollWarn = false;
+    for (const auto& is : valCollWarn.issues) {
+        if (is.severity == io::LsValidationIssue::Severity::Warning &&
+            is.message.find("hard collision") != std::string::npos) {
+            sawCollWarn = true;
+        }
+    }
+    check(sawCollWarn,
+          "FIX-EXPORT-GATE-005: gate-off Collision warning message is present for yellow UI path");
+    std::string errAllowColl;
+    std::string lsAllowColl = io::FanucLsPostProcessor::generateLsString(issueProg, allowCollConfig, &errAllowColl);
+    check(!lsAllowColl.empty() && errAllowColl.empty(),
+          "FIX-EXPORT-GATE-005: gate-off Collision remains exportable (Warning, ok==true)");
+
+    // FIX-EXPORT-GATE-001: default LsPostConfig{} must reject Collision and ConfigJump
+    check(io::LsPostConfig{}.blockOnCollision && io::LsPostConfig{}.blockOnConfigJump,
+          "FIX-EXPORT-GATE-001: default LsPostConfig enables blockOnCollision and blockOnConfigJump");
+    auto valCollDefault = io::FanucLsPostProcessor::validateProgram(issueProg);
+    std::string errCollDefault;
+    std::string lsCollDefault = io::FanucLsPostProcessor::generateLsString(issueProg, {}, &errCollDefault);
+    check(!valCollDefault.ok && valCollDefault.hasErrors() && lsCollDefault.empty() && !errCollDefault.empty(),
+          "FIX-EXPORT-GATE-001: default LsPostConfig rejects Collision targets and refuses generateLsString");
+
+    core::Program jumpProg = testProg;
+    jumpProg.operations[0].targets[1].cache.status = core::TargetValidationState::ConfigJump;
+    auto valJumpDefault = io::FanucLsPostProcessor::validateProgram(jumpProg);
+    std::string errJumpDefault;
+    std::string lsJumpDefault = io::FanucLsPostProcessor::generateLsString(jumpProg, {}, &errJumpDefault);
+    check(!valJumpDefault.ok && valJumpDefault.hasErrors() && lsJumpDefault.empty() && !errJumpDefault.empty(),
+          "FIX-EXPORT-GATE-001: default LsPostConfig rejects ConfigJump as Error and refuses export");
+
+    io::LsPostConfig allowJumpConfig;
+    allowJumpConfig.blockOnConfigJump = false;
+    auto valJumpWarn = io::FanucLsPostProcessor::validateProgram(jumpProg, allowJumpConfig);
+    check(valJumpWarn.ok && !valJumpWarn.hasErrors() && !valJumpWarn.issues.empty(),
+          "blockOnConfigJump=false keeps ConfigJump as Warning and allows export");
+
+    core::Program nearProg = testProg;
+    nearProg.operations[0].targets[1].cache.status = core::TargetValidationState::NearCollision;
+    auto valNear = io::FanucLsPostProcessor::validateProgram(nearProg);
+    check(valNear.ok && !valNear.hasErrors() && !valNear.issues.empty(),
+          "NearCollision produces Warning and remains exportable under default config");
+
+    core::Program singProg = testProg;
+    singProg.operations[0].targets[1].cache.status = core::TargetValidationState::Singularity;
+    auto valSing = io::FanucLsPostProcessor::validateProgram(singProg);
+    check(valSing.ok && !valSing.hasErrors() && !valSing.issues.empty(),
+          "Singularity produces Warning and remains exportable under default config");
+
+    // FIX-EXPORT-GATE-003: lock default LsPostConfig{} gates in test_postprocessor
+    // (endpoint Collision, mid-segment writeback Collision, ConfigJump).
+    {
+        check(io::LsPostConfig{}.blockOnCollision && io::LsPostConfig{}.blockOnConfigJump,
+              "FIX-EXPORT-GATE-003: default LsPostConfig keeps blockOnCollision and blockOnConfigJump");
+
+        core::Program endpointColl = testProg;
+        endpointColl.operations[0].targets[1].cache.valid = true;
+        endpointColl.operations[0].targets[1].cache.status = core::TargetValidationState::Collision;
+        auto valEndpoint = io::FanucLsPostProcessor::validateProgram(endpointColl);
+        std::string errEndpoint;
+        std::string lsEndpoint = io::FanucLsPostProcessor::generateLsString(endpointColl, {}, &errEndpoint);
+        check(!valEndpoint.ok && valEndpoint.hasErrors() && lsEndpoint.empty() && !errEndpoint.empty(),
+              "FIX-EXPORT-GATE-003: default LsPostConfig rejects endpoint Collision and refuses generateLsString");
+
+        core::Program jumpLock = testProg;
+        jumpLock.operations[0].targets[1].cache.valid = true;
+        jumpLock.operations[0].targets[1].cache.status = core::TargetValidationState::ConfigJump;
+        auto valJump = io::FanucLsPostProcessor::validateProgram(jumpLock);
+        std::string errJump;
+        std::string lsJump = io::FanucLsPostProcessor::generateLsString(jumpLock, {}, &errJump);
+        check(!valJump.ok && valJump.hasErrors() && lsJump.empty() && !errJump.empty(),
+              "FIX-EXPORT-GATE-003: default LsPostConfig rejects ConfigJump and refuses generateLsString");
+
+        // Mid-segment writeback shape (item 2): IK may remain valid while status=Collision.
+        core::Program writebackShape = testProg;
+        writebackShape.operations[0].targets[0].cache.valid = true;
+        writebackShape.operations[0].targets[0].cache.status = core::TargetValidationState::Valid;
+        writebackShape.operations[0].targets[1].cache.valid = true;
+        writebackShape.operations[0].targets[1].cache.status = core::TargetValidationState::Collision;
+        writebackShape.operations[0].targets[1].cache.issueMessage = "Sweep collides (cache writeback)";
+        auto valWb = io::FanucLsPostProcessor::validateProgram(writebackShape);
+        std::string errWb;
+        std::string lsWb = io::FanucLsPostProcessor::generateLsString(writebackShape, {}, &errWb);
+        check(!valWb.ok && valWb.hasErrors() && lsWb.empty() && !errWb.empty(),
+              "FIX-EXPORT-GATE-003: default validateProgram rejects mid-segment Collision writeback shape (valid=true, status=Collision)");
+
+        // Live sweep: validateAndSimulateProgram must write Collision, then default post rejects.
+        {
+            const auto robot = device::RobotModel::createFanucM10iA();
+            algo::OpwKinematics kin(robot);
+            core::UnitsSettings settings;
+            algo::CollisionAndSimEngine engine(kin, settings);
+            const auto utool = core::Transform4d::identity();
+            const auto home = robot.homeJointsRad;
+            auto endJoints = home;
+            endJoints[0] += 0.4;
+
+            const double jDist = algo::OpwKinematics::weightedJointDistance(home, endJoints);
+            const double sampleStep = 0.05;
+            const double segDuration = std::max(0.2, jDist / 1.5);
+            const int numSteps = std::max(2, static_cast<int>(std::ceil(segDuration / sampleStep)));
+            const int midStep = std::max(1, numSteps / 2);
+            const double alpha = static_cast<double>(midStep) / static_cast<double>(numSteps);
+            std::array<double, 6> midJoints{};
+            for (size_t k = 0; k < 6; ++k) {
+                midJoints[k] = home[k] + alpha * (endJoints[k] - home[k]);
+            }
+            const auto midTcp = kin.forwardKinematics(midJoints, utool).tcpPoseInBase;
+            const core::Vec3 gateCenter = midTcp.pos + (-midTcp.rot.colZ()) * 95.0;
+            constexpr double half = 6.0;
+
+            core::SceneNode gate;
+            gate.id = "gate003_sweep_gate";
+            gate.name = "GATE003_Sweep_Gate";
+            gate.type = core::SceneNodeType::Part;
+            gate.visible = true;
+            gate.collisionRole = core::CollisionRole::Fixture;
+            gate.collisionMesh.bboxMin = gateCenter - core::Vec3{half, half, half};
+            gate.collisionMesh.bboxMax = gateCenter + core::Vec3{half, half, half};
+            const std::vector<core::SceneNode> scene{gate};
+
+            const auto endTcp = kin.forwardKinematics(endJoints, utool).tcpPoseInBase;
+            core::Program sweepProg;
+            sweepProg.id = "prog_gate003_sweep";
+            sweepProg.name = "GATE003";
+            sweepProg.startState.homeJointsRad = home;
+            core::Operation op;
+            op.id = "op_gate003";
+            core::Target target;
+            target.id = "via_end";
+            target.name = "Joint_End";
+            target.role = core::TargetRole::VIA;
+            target.motion = core::MotionType::J;
+            target.poseInUFrame = endTcp;
+            op.targets.push_back(target);
+            sweepProg.operations.push_back(op);
+
+            (void)engine.validateAndSimulateProgram(
+                sweepProg,
+                core::Transform4d::identity(),
+                core::Transform4d::identity(),
+                utool,
+                scene,
+                sampleStep);
+            const auto& endCache = sweepProg.operations[0].targets[0].cache;
+            check(endCache.status == core::TargetValidationState::Collision,
+                  "FIX-EXPORT-GATE-003: validateAndSimulateProgram writes mid-segment Collision to cache",
+                  "status=" + std::to_string(static_cast<int>(endCache.status)) + " msg=" + endCache.issueMessage);
+            check(endCache.valid,
+                  "FIX-EXPORT-GATE-003: mid-segment Collision writeback keeps cache.valid true");
+            const auto lsVal = io::FanucLsPostProcessor::validateProgram(sweepProg);
+            std::string lsErr;
+            const std::string lsBody = io::FanucLsPostProcessor::generateLsString(sweepProg, {}, &lsErr);
+            check(!lsVal.ok && lsVal.hasErrors() && lsBody.empty() && !lsErr.empty(),
+                  "FIX-EXPORT-GATE-003: after mid-segment sweep writeback, default LsPostConfig rejects export");
+        }
+    }
+
+    // FIX-EXPORT-GATE-003: UTF-8 Chinese path .ls export (same utf8ToPath as ProjectSerializer)
+    {
+        // Keep Chinese segments as UTF-8 string concat (do not round-trip via path::string()).
+        const std::string tempRoot = std::filesystem::temp_directory_path().string();
+        const std::string chineseDir = tempRoot + "/olp_ls_中文路径导出_001";
+        const std::string chinesePath = chineseDir + "/工位导出_WELD_001.ls";
+        std::string chineseErr;
+        const bool chineseOk = io::FanucLsPostProcessor::exportToFile(testProg, chinesePath, {}, &chineseErr);
+        const auto chineseFs = io::utf8ToPath(chinesePath);
+        check(chineseOk && std::filesystem::exists(chineseFs),
+              "FIX-EXPORT-GATE-003: exportToFile writes .ls under UTF-8 Chinese path",
+              chineseErr);
+        if (chineseOk) {
+            std::ifstream ifs(chineseFs, std::ios::binary);
+            std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+            check(content.find("/PROG  TEST_PROG") != std::string::npos,
+                  "FIX-EXPORT-GATE-003: Chinese-path .ls content contains /PROG header");
+            check(content.find("! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)") != std::string::npos,
+                  "FIX-EXPORT-GATE-004: Chinese-path exportToFile .ls contains RISK-001 draft watermark");
+        }
+        std::error_code rmEc;
+        std::filesystem::remove_all(io::utf8ToPath(chineseDir), rmEc);
+    }
+
     // 3. String generation & structure
     std::string genErr;
     std::string lsText = io::FanucLsPostProcessor::generateLsString(testProg, {}, &genErr);
@@ -212,6 +408,14 @@ void testFanucLsPostProcessorValidationAndExport() {
     check(lsText.find("MEMORY_SIZE\t=") != std::string::npos, "Header contains MEMORY_SIZE");
     check(lsText.find("/APPL") != std::string::npos, "Contains /APPL section");
     check(lsText.find("/MN") != std::string::npos, "Contains /MN section");
+    check(lsText.find("! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)") != std::string::npos,
+          "FIX-EXPORT-GATE-004: generateLsString embeds RISK-001 draft watermark in /MN");
+    {
+        const auto mnPos = lsText.find("/MN");
+        const auto draftPos = lsText.find("! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)");
+        check(mnPos != std::string::npos && draftPos != std::string::npos && draftPos > mnPos,
+              "FIX-EXPORT-GATE-004: draft watermark appears after /MN header");
+    }
     check(lsText.find("J P[1:APPROACH] 60% CNT100") != std::string::npos, "MN has J move with speed% and CNT");
     check(lsText.find("L P[2:WELD_START] WELD_SPEED FINE") != std::string::npos, "MN has L move with WELD_SPEED FINE");
     check(lsText.find("J P[") != std::string::npos && lsText.find("J P[1:APPROACH] WELD_SPEED") == std::string::npos,
@@ -296,4 +500,112 @@ void testFanucLsPostProcessorValidationAndExport() {
     check(winExportOk && std::filesystem::exists(winOutFile),
           "MainWindow::exportFanucLs writes .ls file to disk");
     std::filesystem::remove(winOutFile);
+
+    // FIX-EXPORT-GATE-005 / OPEN-P1-2: with collision geometry and empty lastSimulationResult,
+    // const validate/preview must refuse (no blind trust of Valid caches).
+    {
+        ui::MainWindow winStale;
+        auto& staleDoc = winStale.document();
+        staleDoc.controllers.clear();
+        staleDoc.controllers.push_back(controllerUnit);
+
+        core::SceneNode fixture;
+        fixture.id = "stale_fixture";
+        fixture.name = "StaleFixture";
+        fixture.type = core::SceneNodeType::Part;
+        fixture.collisionRole = core::CollisionRole::Fixture;
+        fixture.collisionMesh.bboxMin = {-10.0, -10.0, -10.0};
+        fixture.collisionMesh.bboxMax = {10.0, 10.0, 10.0};
+        staleDoc.sceneNodes.push_back(fixture);
+
+        check(winStale.lastSimulationResult().frames.empty(),
+              "FIX-EXPORT-GATE-005: setup has empty lastSimulationResult before export gate");
+        auto staleVal = winStale.validateProgramForExport("PART_A");
+        check(!staleVal.ok && staleVal.hasErrors(),
+              "FIX-EXPORT-GATE-005: validateProgramForExport refuses when collision geometry present but sim missing");
+        std::string stalePreviewErr;
+        std::string stalePreview = winStale.previewFanucLs("PART_A", &stalePreviewErr);
+        check(stalePreview.empty() && !stalePreviewErr.empty(),
+              "FIX-EXPORT-GATE-005: previewFanucLs refuses with explicit message when sim missing");
+
+        // Non-const export path force-resims; with only a far fixture and Valid IK caches
+        // the re-sim may still succeed or fail depending on IK — either way it must not
+        // blindly export without attempting ensureProgramSimulatedForExport.
+        check(winStale.ensureProgramSimulatedForExport("PART_A"),
+              "FIX-EXPORT-GATE-005: ensureProgramSimulatedForExport runs against current scene");
+        // After ensure, const validate must no longer take the "sim missing" refuse path
+        // (either ok from clean caches or real Errors from re-sim — not the stale-cache message).
+        auto afterEnsure = winStale.validateProgramForExport("PART_A");
+        bool refusedForStale = false;
+        for (const auto& is : afterEnsure.issues) {
+            if (is.message.find("no fresh simulation") != std::string::npos) {
+                refusedForStale = true;
+            }
+        }
+        check(!refusedForStale,
+              "FIX-EXPORT-GATE-005: after ensureProgramSimulatedForExport, stale-sim refuse is cleared");
+    }
+
+    // FIX-EXPORT-GATE-006 / OPEN-P2-GATE005-1: exportAllPrograms must ensure each program
+    // before FanucLsPostProcessor::exportControllerPrograms (same safety as exportFanucLs).
+    {
+        ui::MainWindow winAll;
+        auto& allDoc = winAll.document();
+        allDoc.controllers.clear();
+        allDoc.controllers.push_back(controllerUnit);
+
+        core::SceneNode fixture;
+        fixture.id = "all_export_fixture";
+        fixture.name = "AllExportFixture";
+        fixture.type = core::SceneNodeType::Part;
+        fixture.collisionRole = core::CollisionRole::Fixture;
+        fixture.collisionMesh.bboxMin = {-10.0, -10.0, -10.0};
+        fixture.collisionMesh.bboxMax = {10.0, 10.0, 10.0};
+        allDoc.sceneNodes.push_back(fixture);
+
+        check(winAll.lastSimulationResult().frames.empty(),
+              "FIX-EXPORT-GATE-006: setup has empty lastSimulationResult before exportAllPrograms");
+
+        auto staleBefore = winAll.validateProgramForExport("PART_A");
+        check(!staleBefore.ok && staleBefore.hasErrors(),
+              "FIX-EXPORT-GATE-006: validate refuses pre-exportAllPrograms when sim missing");
+
+        const std::string allDir =
+            (std::filesystem::temp_directory_path() / "olp_ls_export_all_gate006").string();
+        std::filesystem::remove_all(allDir);
+        std::vector<std::string> allFiles;
+        std::vector<std::string> allErrs;
+        (void)winAll.exportAllPrograms(allDir, {}, &allFiles, &allErrs);
+
+        // Regardless of write success (IK/collision may still fail validation), ensure must
+        // have run so const validate no longer takes the stale-sim refuse path.
+        auto afterAll = winAll.validateProgramForExport("PART_A");
+        bool refusedForStaleAll = false;
+        for (const auto& is : afterAll.issues) {
+            if (is.message.find("no fresh simulation") != std::string::npos) {
+                refusedForStaleAll = true;
+            }
+        }
+        check(!refusedForStaleAll,
+              "FIX-EXPORT-GATE-006: exportAllPrograms clears stale-sim refuse via ensure");
+
+        // Also cover PART_B (second program under same controller) was ensured.
+        auto afterAllB = winAll.validateProgramForExport("PART_B");
+        bool refusedForStaleB = false;
+        for (const auto& is : afterAllB.issues) {
+            if (is.message.find("no fresh simulation") != std::string::npos) {
+                refusedForStaleB = true;
+            }
+        }
+        check(!refusedForStaleB,
+              "FIX-EXPORT-GATE-006: exportAllPrograms ensures each program id under controller");
+
+        ui::MainWindow winEmpty;
+        std::vector<std::string> emptyErrs;
+        bool emptyOk = winEmpty.exportAllPrograms(allDir, {}, nullptr, &emptyErrs);
+        check(!emptyOk && !emptyErrs.empty(),
+              "FIX-EXPORT-GATE-006: exportAllPrograms refuses when document has no controllers");
+
+        std::filesystem::remove_all(allDir);
+    }
 }

@@ -18,6 +18,8 @@ void testGizmoAndUndoRedo100Steps();
 void testFanucLsGeneration();
 void testPathEditsAndCommandGates();
 void testSweepCollisionBetweenClearTargets();
+void testNearSweepDoesNotShortCircuitHardCollision();
+void testHardTierCollisionPrefersOverConfigJump();
 void testApproachTransitClearsWall();
 void testMainWindowZones();
 void testBRepMeshRenderingAndEdgePicking();

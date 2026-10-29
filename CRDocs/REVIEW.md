@@ -1,3 +1,1077 @@
+# 审核结论 — FULL REAUDIT Audit_X
+
+> **Task ID**：`FIX-EXPORT-FULL-REAUDIT`  
+> **Task**：FIX-EXPORT GATE-001..006 累计改动全盘独立复审（与协调方交叉验证）  
+> **Round**：FULL REAUDIT  
+> **Reviewer**：Si_FastSuite_Audit_X（执行臂；独立取证，**不复用**旧 Round / 协调方行号当证据）  
+> **Reviewed at**：2026-10-29 ~22:30 Asia/Singapore (UTC+8)  
+> **Repo**：`/workspace/Si_FastSuite`（working tree 相对 `HEAD` `19cb1ac`；`git fetch/status/pull` 已同步，branch = `origin/main`）  
+> **设计权威**：`Docs/OLP_System_Design_Claude.md` v1.1（M10/M12 / 算法层无 Qt / ROBOGUIDE 验收已对照）  
+> **约束**：只写 CRDocs；**未改**工程业务/测试源码；禁止 CloudAgent；主计划 FIX-EXPORT-SAFETY **仍 CLOSED**（本轮无新 P0）  
+> **Compile/test**：box **未**编译/复跑 ctest。Windows **`SiFastSuiteOLP_AllTests` 805 passed / 0 failed** 采信 STATUS/IMPLEMENTATION/协调方声称；**Audit_X 本端未复跑**。
+
+## Verdict
+
+**APPROVED**（按本任务规则：无新 P0/P1 → APPROVED；主计划保持 CLOSED）。
+
+风险口径上 **同意** 协调方 `PASS_WITH_RISKS`：**是** — 默认写出主链门禁成立，但仍有已文档化 P2 + 主线 RISK-001 OPEN + 805/0 未复跑；不定零风险干净 PASS，亦不定 CHANGES_REQUESTED。
+
+| 项 | 结论 |
+| :--- | :--- |
+| 新 P0 | **无** |
+| 新 P1 | **无** |
+| 主计划 `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` | **仍 CLOSED**（勿重开） |
+| 协调方 Verdict `PASS_WITH_RISKS` | **同意其风险分层**；本端正式 Verdict = **APPROVED** |
+| Windows 805/0 | **采信声称**；Audit_X **未复跑** |
+
+---
+
+## 方法（独立、禁止复用旧结论）
+
+1. `git fetch` / `status` / `pull --ff-only`；基线 `HEAD=19cb1ac`；累计未提交 diff 为审核面。  
+2. 通读对照（**不作证据**）：`CRDocs/FULL_REAUDIT_COORDINATOR_2026-10-29.md`、`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`、`CROSS_AUDIT_FINAL_COORDINATOR.md`、`IMPLEMENTATION.md`、`STATUS.md`。  
+3. **重新** `Read`/`rg`/`git diff`：`FanucLsPostProcessor.{h,cpp}`、`CollisionAndSim.{h,cpp}`、`Utf8Path.{h,cpp}`、`ProjectSerializer.cpp`、`LsExportDialog.cpp`、`MainWindow.{h,cpp}`、`SampleSession.cpp`、`test_postprocessor.cpp`、`test_collision.cpp`、`test_main.cpp`、`CMakeLists.txt`。  
+4. Opw：`git diff HEAD -- OpwKinematics.*` 空；工作树 md5 = HEAD 对象 md5。  
+5. `rg` 确认 `include/olp/algo` + `src/algo` **无** Qt/`QObject`/`QString`。  
+6. 深度：逐主链推演 + 点名三项专核；不粘贴协调方证据表当本轮结论。
+
+---
+
+## 主链 8 项 — 现取证行号表
+
+| # | 主链项 | 判定 | 本轮现取证（path:line） |
+| :--- | :--- | :--- | :--- |
+| 1 | 默认门禁（`blockOnCollision`/`blockOnConfigJump` → validate severities） | **CLOSED/OK** | 默认 true：`FanucLsPostProcessor.h:15-16`；Collision Error/Warning：`FanucLsPostProcessor.cpp:110-120`；ConfigJump：`:123-131`；`result.ok=!hasErrors()`：`:207`；`!ok`→空串：`:215-225`；空 body→`exportToFile` false：`:393-396`；UI 默认勾选：`LsExportDialog.cpp:61-62`；`config_{}` 默认：`LsExportDialog.h:29` |
+| 2 | Near 不短路 Hard | **CLOSED/OK** | 拆旗：`CollisionAndSim.cpp:282-284`；扫掠条件仅 `!postedHardSweepCollision`：`:356-357`；Hard 置旗+写 Collision：`:364-373`；Near 另旗不中断：`:374-386`；Test 9b **强制** `sawNear`：`test_collision.cpp:274-276` + Hard/最终 Collision：`:271-278` |
+| 3 | Hard 内 Collision 优先（`shouldUpgradeCacheStatus`） | **CLOSED/OK** | 实现：`CollisionAndSim.cpp:37-65`（同 Hard 且 incoming=Collision → true）；公开 API：`CollisionAndSim.h:132-137`；写回调用：`:317-318,:338-339,:372-373,:384-385`；`cache.valid` 故意不改：`:26`；Test 9c：`test_collision.cpp:287-308`；注册：`test_main.cpp:48` |
+| 4 | gate-off Collision → Warning（禁静默纯绿） | **CLOSED/OK** | `blockOnCollision=false` → Warning：`FanucLsPostProcessor.cpp:112-120`；UI 有 Warning 走黄列：`LsExportDialog.cpp:143-157`（仅 `ok==true` 且 issues 非空）；锁测：`test_postprocessor.cpp:214-232` |
+| 5 | export/refresh ensure；const 缺仿真拒 | **CLOSED/OK** | stale 规则：`MainWindow.cpp:551-564`；ensure：`:566-598`；const validate 拒：`:609-620`；preview 拒：`:631-637`；`exportFanucLs` 先 ensure：`:647-656`；`exportAllPrograms` per-program ensure：`:669-692`；dialog refresh ensure：`LsExportDialog.cpp:120-122`；写盘走 `exportFanucLs`：`:215`；文档变更清旗：`MainWindow.cpp:19` |
+| 6 | `utf8ToPath` / 路径 | **CLOSED/OK** | API：`Utf8Path.h:11`；实现 Win/非 Win：`Utf8Path.cpp:19-30`；`exportToFile`/`exportControllerPrograms`：`FanucLsPostProcessor.cpp:399-406,:430-442`；`#include Utf8Path`：同文件头；ProjectSerializer 改调共享：`:803,:872`；diff 删本地匿名 utf8；CMake 入 `olp_io`：`CMakeLists.txt:123` |
+| 7 | 水印/红条（RISK-001 draft；不关 kinematics RISK） | **CLOSED/OK（门禁）/ RISK-001 仍 OPEN** | `/MN` 首条：`FanucLsPostProcessor.cpp:240-242`；`LINE_COUNT=mnLines.size()`：`:328`；红条独立局部 QLabel：`LsExportDialog.cpp:32-42`；`refreshPreview` 只改 `statusLabel_`/`codeEdit_`（`:114-178`），**零**引用 `riskBanner`；锁测水印：`test_postprocessor.cpp:395-417` |
+| 8 | OpwKinematics 相对 HEAD 零 diff；`olp_algo` 无 Qt | **CLOSED/OK** | `git diff HEAD -- OpwKinematics.*` → 0 bytes；h/cpp md5 与 `git show HEAD:…` 一致；`rg Qt\|QObject\|QString\|Q_` on `src/algo`+`include/olp/algo` → **NO_QT** |
+
+**SampleSession 拒写**：`SampleSession.cpp:218-249` — `!ok \|\| blockingIssue` → 不调用 `exportToFile`，exit 2。  
+**端到端中段硬撞**：Test 9 `test_collision.cpp:187-194`（cache Collision + 默认 validate `!ok`）。
+
+---
+
+## 协调方点名重点抽核（专节）
+
+### A) 文档级 freshness（非 per-program）— 协调方 P2-A
+
+**判定：同意 P2-A = OPEN P2（不定 P1）。**
+
+现取证：
+
+- `exportSimEnsured_` 为 **文档级** 单 bool（`MainWindow.h:149-150`）。  
+- `exportSimulationMissingOrStale()`：有碰撞几何时，只要 `exportSimEnsured_==true` **或** `lastSimulationResult_.frames` 非空即视为非 stale（`MainWindow.cpp:551-564`）——**不**按 `programId` 记账。  
+- 写出路径仍 **per-program** ensure：`exportFanucLs` `:647`；`exportAllPrograms` `:674-686`。  
+- 附加测弱：GATE-006 对 PART_B 的「清拒」断言（`test_postprocessor.cpp:592-601`）在「仅 ensure A」后也可因文档级旗变绿，**不能单独**证明 B 被 ensure；产品循环本身（`:674-686`）仍成立。
+
+**严重度**：维持 **P2**。写出主链有 per-program ensure，不定 P1；const validate/preview 多程序可误导。
+
+### B) GATE-006 负路径（ensure 失败跳过 controller）
+
+**判定：同意测弱 = OPEN P2；产品行为正确。**
+
+现取证：
+
+- ensure 失败仅当 `findProgramInDocMutable` 空（`MainWindow.cpp:567-569`）。  
+- `exportAllPrograms` 失败 → errors + `continue` 跳过 bulk（`:676-688`）。  
+- 正常遍历 `cu.programs` 时，`key=id/name` 几乎总能命中自身 → ensure-fail→skip 分支近死代码。  
+- 锁测覆盖：stale 清拒 PART_A/B、空 controllers（`test_postprocessor.cpp:549-607`）；**无**构造 ensure=false→skip-controller 负路径。
+
+**严重度**：维持 **P2**（测覆盖缺口，非门禁击穿）。
+
+### C) SampleSession 拒写不删旧 `WELD_001.ls`
+
+**判定：同意 = OPEN P2。**
+
+现取证：
+
+- 拒写分支：`SampleSession.cpp:228-237` 只打日志，**不** `exportToFile`。  
+- 全文件 `rg`：无 `remove`/`unlink`/`filesystem::remove` 针对 `WELD_001.ls`。  
+- 成功路径才写：`:238-239`。  
+- 残留：磁盘旧 `build/WELD_001.ls` 可「看似正式」。
+
+**严重度**：维持 **P2**。
+
+---
+
+## 与协调方对照（同意 / 不同意）
+
+| 主题 | 协调方 | Audit_X 本轮 | 同意？ |
+| :--- | :--- | :--- | :--- |
+| 总评口径 | `PASS_WITH_RISKS` | 正式 **APPROVED**；风险分层同意 PASS_WITH_RISKS | **同意风险分层**；Verdict 规则用 APPROVED |
+| 无新 P0/P1 | 声称无 | 独立复核：**确认无** | **同意** |
+| 主计划 CLOSED | 勿重开除非 P0 | **仍 CLOSED** | **同意** |
+| GATE-001..006 主体 | PASS | 主链 8 项均 CLOSED/OK | **同意** |
+| OPEN-P1-1..4 已关 | 确认关闭 | sawNear 强制 / ensure / gate-off Warning / Hard Collision 优先 — 现树成立 | **同意** |
+| OPEN-P2-GATE005-1 | 产品关闭；负路径测弱 P2 | 同左 | **同意** |
+| P2-A 文档级 freshness | OPEN P2 | **同意 OPEN P2**；并指出 PART_B 清拒断言偏弱 | **同意** |
+| P2-B GATE-006 负路径 | OPEN P2 | **同意** | **同意** |
+| P2-C SampleSession 旧文件 | OPEN P2 | **同意** | **同意** |
+| P2-D..I / RISK-001 | 残留 | 抽核水印≠修 Opw；RISK-001 **仍 OPEN** | **同意** |
+| Opw 零 diff / olp_algo 无 Qt | PASS | 本轮哈希+rg 再核 | **同意** |
+| Windows 805/0 | 采信未复跑 | **同样采信，未复跑** | **同意** |
+| 协调方证据行号 | 自称准确 | 本轮重读后与现树一致（容许小幅行漂已按现树重标） | **未见造假** |
+
+**不同意点**：**无实质性不同意**。仅口径：协调方用 `PASS_WITH_RISKS` 强调风险残留；本任务规则下无新 P0/P1 → 正式写 **APPROVED**，并明确同意其风险分层。
+
+---
+
+## 新问题
+
+| 级别 | ID | 说明 |
+| :--- | :--- | :--- |
+| P0 | （无） | 默认 `LsPostConfig{}` + ensure 写出路径未见硬撞/ConfigJump 静默可导出 |
+| P1 | （无） | 先前 OPEN-P1-1..4 / OPEN-P2-GATE005-1 关闭证据在现树成立 |
+| P2 | P2-A..I（既有） | 与协调方列表一致；本轮未新开 P2 ID。补充：GATE-006 PART_B 清拒断言对「逐 program ensure」证明力偏弱（归入 P2-A/B，不升 P1） |
+
+---
+
+## 设计对齐（v1.1 摘录）
+
+- M12 后处理校验/预览/`.ls` + ROBOGUIDE 验收 → 与默认门禁、水印、红条一致；RISK-001 草稿门禁符合「未金样对拍不得当真机」。  
+- M10 离散+段内采样、碰撞/接近两级 → Near/Hard 拆分与写回一致。  
+- 「算法层不依赖 Qt」→ `CollisionAndSim` / Opw 无 Qt；ensure 在 UI `MainWindow`。  
+- J2/J3 需 ROBOGUIDE 核对 → 计划冻结 Opw，仅水印 — 符合。
+
+---
+
+## 未检查
+
+- box 未编译、未跑 ctest；**未复验** 805/0。  
+- 未 GUI 点击对话框；未打开真实样件 `.ls`。  
+- 未跑 ROBOGUIDE 金样（RISK-001 OPEN）。  
+- 未审 HTML 导出器、CommandManager 大拆、cadHandle/dirty（计划冻结）。  
+- 未验证极稀 `sampleStepSec` 漏撞、Ignored 角色误标等预存风险的运行时几何。
+
+---
+
+## Bottom line（可转发 Verdict 包）
+
+- **Verdict: APPROVED**  
+- **同意协调方 PASS_WITH_RISKS：是** — 默认主链安全拒止成立，但 P2+RISK-001+未复跑 805/0，不定零风险。  
+- **主计划：仍 CLOSED**  
+- **新 P0/P1：无**
+
+*End of FULL REAUDIT Audit_X.*
+
+---
+
+# 审核结论 — FIX-EXPORT-GATE-006 Round 1
+
+> **Task ID**：`FIX-EXPORT-GATE-006`
+> **Task**：消化 OPEN-P2-GATE005-1（`exportAllPrograms` 导出前 ensure）
+> **Round**：1
+> **Reviewer**：Si_FastSuite_Audit_X（独立交叉审核执行端）
+> **Reviewed at**：2026-10-29 ~22:02 Asia/Singapore (UTC+8)
+> **Executor**：执行方（Si_FastSuite；本轮仅审，未改工程业务/测试源码）
+> **Verdict**：**APPROVED**
+>
+> **方法**：`git fetch/status/pull`（working tree 相对 `origin/main`）；通读 `CRDocs/STATUS.md`、`IMPLEMENTATION.md`、本文件 GATE-005 残留、`CROSS_AUDIT_FINAL_COORDINATOR.md` OPEN-P1-2/`OPEN-P2-GATE005-1` 描述；`rg`+`Read` 取证 `exportAllPrograms` / `ensureProgramSimulatedForExport` / GATE-006 锁测；核对 `exportFanucLs`/`LsExportDialog` 既有门禁未削弱；冻结核对 `OpwKinematics` 哈希=HEAD、`olp_algo` 无 Qt。
+>
+> **未改**工程业务/测试源码；**禁止 CloudAgent**；仅更新本文件与 `CRDocs/STATUS.md`。
+> **Windows 测试**：采信协调方/执行方声称 — 2026-10-29 Asia/Singapore，`Compile.bat` exit 0，`SiFastSuiteOLP_AllTests` **805 passed / 0 failed**（含 GATE-006）。**Audit_X 本端未复跑**（box 无完整 Qt/OCCT/FCL Windows 工具链）。
+
+## Verdict
+
+**APPROVED**。`OPEN-P2-GATE005-1` **CLOSED**。未见新 P0/P1。**勿重开** `PlanDocs/FIX-EXPORT-SAFETY`（仍 CLOSED；本项为已关闭计划后的小额 P2 follow-up）。
+
+| ID | 判定 | 一行证据摘要 |
+|---|---|---|
+| OPEN-P2-GATE005-1 | **CLOSED** | `MainWindow.cpp:669-692` per-program ensure → 失败记错+`continue` 跳过 bulk；锁测 `test_postprocessor.cpp:549-607` |
+
+---
+
+## 范围
+
+对照协调方摘要 + GATE-005 REVIEW 残留 + IMPLEMENTATION：
+
+1. `exportAllPrograms` 在 `exportControllerPrograms` 前对每个 program 调用 `ensureProgramSimulatedForExport`（id 优先，否则 name）
+2. ensure 失败 → 收集 errors，跳过该 controller 的 bulk 写出
+3. 单测 GATE-006（stale 清拒 PART_A/PART_B + 空 controllers 拒）
+4. 不削弱既有单程序 `exportFanucLs` / const validate-preview 门禁
+
+冻结：`OpwKinematics.{h,cpp}` 工作树哈希 = HEAD（`e02edf1…` / `73b34cc…`）；`include/olp/algo` + `src/algo` **无 Qt include**。
+
+---
+
+## 逐条取证
+
+### OPEN-P2-GATE005-1 — `exportAllPrograms` ensure — **CLOSED**
+
+**GATE-005 残留要点**：`exportAllPrograms` 曾直接 `exportControllerPrograms`，不走 ensure（约旧行 659-674）；全库原无调用方。
+
+**实现**：
+
+| 证据 | 说明 |
+|---|---|
+| `src/ui/MainWindow.cpp:659-667` | 空 controllers → false + `"Document has no controllers"`（行为保留） |
+| `src/ui/MainWindow.cpp:669-686` | 每 controller：遍历 `cu.programs`；`key = id 非空 ? id : name`；`ensureProgramSimulatedForExport(key)`；失败 → `controllerEnsureOk=false`、`allSuccess=false`、errors 推 `"No program found for export (ensure failed): <label>"` |
+| `src/ui/MainWindow.cpp:687-688` | `!controllerEnsureOk` → **`continue`**，不调用 `exportControllerPrograms` |
+| `src/ui/MainWindow.cpp:690-692` | 全部 ensure 成功才 bulk；bulk 失败仍累计 `allSuccess` |
+| `src/ui/MainWindow.cpp:566-598` | ensure 本体未改（GATE-005）：无几何标 ensured；有几何则 `validateAndSimulateProgram` 写回 cache |
+| `src/ui/MainWindow.cpp:642-656` | `exportFanucLs` 仍先 ensure — **未削弱** |
+| `src/ui/MainWindow.cpp:601-639` | const validate/preview stale 拒仍在 |
+| `src/ui/LsExportDialog.cpp:122,215` | 预览 ensure + 写盘走 `exportFanucLs` — **未削弱** |
+
+**测试**：
+
+| 证据 | 说明 |
+|---|---|
+| `tests/test_postprocessor.cpp:463-470` | fixture：`PART_A`/`PART_B`（id 空 → key=name，ensure 可分程命中） |
+| `tests/test_postprocessor.cpp:549-571` | GATE-006：有 Fixture + 空 frames → 调用前 const 拒 |
+| `tests/test_postprocessor.cpp:578-590` | `exportAllPrograms` 后 PART_A 不再 `"no fresh simulation"` |
+| `tests/test_postprocessor.cpp:592-601` | PART_B 同样清拒（覆盖多 program） |
+| `tests/test_postprocessor.cpp:603-607` | 空 controllers → `!ok` 且 errors 非空 |
+| `tests/test_postprocessor.cpp:504-546` | GATE-005 单程序 stale/ensure 锁测 **仍在** |
+
+**判断**：CLOSED。每个 program 均 ensure；失败路径记错并跳过该 controller；单程序门禁未削弱；无静默纯绿新路径（ensure 成功后仍经 `exportToFile`/`validateProgram` 碰撞门禁，与 `exportFanucLs` 同级）。
+
+**测弱（P2，不升 P1）**：未强制构造 ensure 返回 false 的用例（ensure 仅「找不到 program」返 false；正常遍历 `cu.programs` 几乎总成功）。失败跳过路径靠代码审读确认，不挡 CLOSED。
+
+---
+
+## 连带 / 新问题
+
+| 级别 | ID | 说明 |
+|---|---|---|
+| （无 P0） | — | 未见击穿默认碰撞/导出门禁 |
+| （无新 P1） | — | — |
+| P2（测弱） | — | GATE-006 未锁 ensure-fail→skip-controller 负路径 |
+| P2（既有设计） | — | `exportSimEnsured_` 文档级标志；多 program 覆盖 `lastSimulationResult_` — GATE-005 既有，非本轮新引入 |
+| P2（既有） | OPEN-P2-1..6 | 交叉审计其他项；本轮非目标 |
+| 说明 | — | `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` 保持 **CLOSED**；主线 `RISK-001` 等仍 OPEN |
+
+---
+
+## 证据索引（关键路径:行号）
+
+1. `src/ui/MainWindow.cpp:674-688` — per-program ensure + 失败跳过 controller
+2. `src/ui/MainWindow.cpp:690` — 成功后才 `exportControllerPrograms`
+3. `src/ui/MainWindow.cpp:647` — 单程序 export 仍 ensure
+4. `tests/test_postprocessor.cpp:549-607` — GATE-006 锁测
+5. `tests/test_postprocessor.cpp:504-546` — GATE-005 锁测仍在
+6. Opw 哈希 = HEAD；algo 无 Qt include
+
+---
+
+## 结论（给协调方）
+
+- **Verdict = APPROVED**
+- **OPEN-P2-GATE005-1 = CLOSED**
+- **新 P0/P1：无**
+- **主计划 `FIX-EXPORT-SAFETY`：仍 CLOSED**（勿重开，除非发现 P0）
+- Windows：**采信协调方 805 passed / 0 failed**；**Audit_X 未复跑**
+
+---
+
+# 审核结论 — FIX-EXPORT-GATE-005 Round 1
+
+> **Task ID**：`FIX-EXPORT-GATE-005`
+> **Task**：交叉审计 OPEN-P1-1..4 关闭（P1 closeout after FINAL）
+> **Round**：1
+> **Reviewer**：Si_FastSuite_Audit_X（独立交叉审核执行端）
+> **Reviewed at**：2026-10-29 ~21:55 Asia/Singapore (UTC+8)
+> **Executor**：执行方（Si_FastSuite；本轮仅审，未改工程业务/测试源码）
+> **Verdict**：**APPROVED**
+>
+> **方法**：`git fetch/status`（working tree 相对 `origin/main`）；通读 `CRDocs/CROSS_AUDIT_FINAL_COORDINATOR.md` §3、`IMPLEMENTATION.md`、`STATUS.md`、`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`；对 OPEN-P1-1..4 **逐条** `rg`+`Read` 取证（CollisionAndSim / FanucLsPostProcessor / MainWindow / LsExportDialog / test_collision / test_postprocessor / test_main / test_support）；核对 `shouldUpgradeCacheStatus` 为 public、`OpwKinematics` 相对 HEAD 零 diff、`olp_algo` 无 Qt include。
+>
+> **未改**工程业务/测试源码；**禁止 CloudAgent**；仅更新本文件与 `CRDocs/STATUS.md`。
+> **Windows 测试**：采信协调方/执行方声称 — 2026-10-29 ~21:53 Asia/Singapore，`Compile.bat` exit 0（首轮 C2248 private 已改 public），`SiFastSuiteOLP_AllTests` **800 passed / 0 failed**。**Audit_X 本端未复跑**（box 无完整 Qt/OCCT/FCL Windows 工具链；仓库无 build 产物）。
+
+## Verdict
+
+**APPROVED**。OPEN-P1-1..4 **均 CLOSED**；未见新 P0/P1。**计划关闭阻塞解除**（可按「本计划范围无 OPEN P0/P1」口径关闭 `FIX-EXPORT-SAFETY`；主线 `RISK-001` 等仍 OPEN）。
+
+| ID | 判定 | 一行证据摘要 |
+|---|---|---|
+| OPEN-P1-1 | **CLOSED** | `tests/test_collision.cpp:274-276` `check(sawNear, …GATE-005…)` |
+| OPEN-P1-2 | **CLOSED** | `MainWindow.cpp:647` / `LsExportDialog.cpp:122` ensure；const 拒 `MainWindow.cpp:610-620,631-637`；锁测 `test_postprocessor.cpp:504-546` |
+| OPEN-P1-3 | **CLOSED** | `FanucLsPostProcessor.cpp:110-120` 始终报告；gate on→Error / off→Warning；锁测 `test_postprocessor.cpp:214-232` |
+| OPEN-P1-4 | **CLOSED** | `CollisionAndSim.h:135-137` public；`CollisionAndSim.cpp:37-65` Hard 内 Collision 优先；Test 9c `test_collision.cpp:287-308` + `test_main.cpp:48` |
+
+---
+
+## 范围
+
+对照 `CROSS_AUDIT_FINAL_COORDINATOR.md` §3 OPEN-P1-1..4 关闭意图 + 本轮协调方摘要：
+
+1. Test 9b 强制 `sawNear`
+2. 有碰撞几何时 export/refresh → `ensureProgramSimulatedForExport`；const validate/preview 缺仿真 → 明确 Error 拒
+3. Collision 始终入 issues；gate on→Error，gate off→Warning（禁静默纯绿）
+4. `shouldUpgradeCacheStatus` public；Hard 内 Collision 可替换 ConfigJump/Unreachable/JLE；Test 9c
+
+冻结核对：`OpwKinematics.{h,cpp}` 工作树哈希 = HEAD（`e02edf1…` / `73b34cc…`）；`rg` 确认 `include/olp/algo` + `src/algo` **无 Qt include**。
+
+---
+
+## 逐条取证（对照 §3）
+
+### OPEN-P1-1 — Test 9b `sawNear` — **CLOSED**
+
+**§3 要点**：Test 9b 不断言 `sawNear==true`，失败信息仅打印 `nearIssueSeen`；计划项 2「先 Near 再硬撞」测弱。关闭：加 `check(sawNear, …)`。
+
+**实现/测试**：
+
+| 证据 | 说明 |
+|---|---|
+| `tests/test_collision.cpp:258-268` | 遍历 `sim.issues` 置 `sawNear` / `sawHard` |
+| `tests/test_collision.cpp:274-276` | **新增** `check(sawNear, "FIX-EXPORT-GATE-005: NearCollision must be observed before hard Collision …")` |
+| `tests/test_collision.cpp:271-283` | 仍锁 `sawHard`、最终 `cache.status==Collision`、`cache.valid` |
+| `tests/test_main.cpp:47` | 仍注册 `testNearSweepDoesNotShortCircuitHardCollision` |
+
+**判断**：CLOSED。断言强制观察到 Near；若 Near 被短路则红。注：断言不比较 issues 时间序，但与「Near 不短路 Hard」语义等价锁定。
+
+### OPEN-P1-2 — 导出 freshness — **CLOSED**
+
+**§3 要点**：`exportFanucLs` / `LsExportDialog` / `exportAllPrograms` 不强制重跑仿真，门禁盲信 `target.cache`。处置：文档化已知限制 **或** 导出前强制/提示重仿真。
+
+**实现/测试**：
+
+| 证据 | 说明 |
+|---|---|
+| `include/olp/ui/MainWindow.h:90-93,128-130,149-150` | 声明 `ensureProgramSimulatedForExport` / freshness 辅助 / `exportSimEnsured_` |
+| `src/ui/MainWindow.cpp:530-548` | `documentHasCollisionRelevantGeometry`（非 Ignored + AABB/角色） |
+| `src/ui/MainWindow.cpp:551-564` | `exportSimulationMissingOrStale`：有碰撞几何且无 frames 且未 ensure → stale |
+| `src/ui/MainWindow.cpp:566-598` | `ensureProgramSimulatedForExport` 对当前场景重跑 `validateAndSimulateProgram` |
+| `src/ui/MainWindow.cpp:601-622` | const `validateProgramForExport`：stale → Error「no fresh simulation」 |
+| `src/ui/MainWindow.cpp:625-639` | const `previewFanucLs`：stale → 空串 + 明确 errorOut |
+| `src/ui/MainWindow.cpp:642-656` | `exportFanucLs` **先** `ensureProgramSimulatedForExport` |
+| `src/ui/LsExportDialog.cpp:120-122` | `refreshPreview` 开头 ensure |
+| `src/ui/LsExportDialog.cpp:215` | 对话框写盘走 `exportFanucLs`（再 ensure） |
+| `src/ui/MainWindow.cpp:19` | `handleDocumentChanged` 清 `exportSimEnsured_=false` |
+| `tests/test_postprocessor.cpp:504-546` | 有 Fixture + 空 frames → const 拒；ensure 后清除 stale 拒信文案 |
+
+**判断**：CLOSED（相对本轮关闭摘要与 §3 处置选项）。主 UI/API 导出与预览刷新已强制重仿真；const 路径明确拒信。
+
+**残留（P2，不升 P1）**：`MainWindow::exportAllPrograms`（`src/ui/MainWindow.cpp:659-674`）仍直接 `exportControllerPrograms`，**未** ensure。全库无调用方（仅声明/定义）。记 `OPEN-P2-GATE005-1`；不挡计划关闭。
+
+### OPEN-P1-3 — gate off 禁纯绿静默 — **CLOSED**
+
+**§3 要点**：`blockOnCollision=false` 时 Collision 完全不报告 → 纯绿可导出硬撞。关闭：卸载门禁至少 Warning 黄列。
+
+**实现/测试**：
+
+| 证据 | 说明 |
+|---|---|
+| `src/io/FanucLsPostProcessor.cpp:110-120` | Collision **始终** `push_back`；`blockOnCollision? Error : Warning` |
+| `src/io/FanucLsPostProcessor.cpp:207` | `result.ok = !hasErrors()` — Warning 不挡 `ok` |
+| `src/ui/LsExportDialog.cpp:143-157` | `ok && !issues.empty()` → 黄「校验通过（含警告）」 |
+| `tests/test_postprocessor.cpp:214-232` | gate off：`ok`、无 Error、issues 非空、含「hard collision」Warning；`generateLsString` 非空 |
+| `tests/test_postprocessor.cpp:234-241` | 默认 gate 仍拒 Collision（未削弱项 1） |
+
+**判断**：CLOSED。无「静默纯绿」路径；门禁语义未反转。
+
+### OPEN-P1-4 — Hard 同级 Collision 优先 — **CLOSED**
+
+**§3 要点**：同级 Hard 严格 `>`，先 ConfigJump 再 Collision 不升级；`blockOnConfigJump=false` 且 `blockOnCollision=true` 时硬撞可被挡住。关闭：Collision 优先或单测锁顺序。
+
+**实现/测试**：
+
+| 证据 | 说明 |
+|---|---|
+| `include/olp/algo/CollisionAndSim.h:132-137` | `shouldUpgradeCacheStatus` **public static**（修 C2248） |
+| `src/algo/CollisionAndSim.cpp:19-27` | `upgradeTargetCacheFromSegmentIssue` 改调该策略 |
+| `src/algo/CollisionAndSim.cpp:37-65` | Soft < Near < Hard；同级 Hard 且 `incoming==Collision && current!=Collision` → 升级 |
+| `tests/test_collision.cpp:287-308` | Test 9c 真值表：ConfigJump/Unreachable/JLE→Collision；禁降级 |
+| `tests/test_support.h:22` + `tests/test_main.cpp:48` | 声明并注册 |
+
+**判断**：CLOSED。策略与单测锁定；public 可访问。注：9c 为策略真值表（非活扫掠集成），符合 §3「至少单测锁该顺序」。
+
+---
+
+## 连带 / 新问题
+
+| 级别 | ID | 说明 |
+|---|---|---|
+| （无 P0） | — | 默认门禁主链未见击穿 |
+| （无新 P1） | — | — |
+| P2 | **OPEN-P2-GATE005-1** | `exportAllPrograms` 不走 ensure（无调用方） |
+| P2 | （既有） | 交叉审计 OPEN-P2-1..6；本轮非目标 |
+| 说明 | — | `ensure`/`validateOperation` 写 cache 不经 CommandManager — 与既有 `validateOperation` 模式一致，非本轮新引入 P1 |
+| 说明 | — | `olp_algo` 无 Qt；UI 导出仍经后处理 +（对话框）CommandManager 文档变更路径清 `exportSimEnsured_` |
+
+---
+
+## 证据索引（关键路径:行号）
+
+1. `tests/test_collision.cpp:274-276` — P1-1 `check(sawNear)`
+2. `src/ui/MainWindow.cpp:647` + `src/ui/LsExportDialog.cpp:122` — P1-2 ensure
+3. `src/ui/MainWindow.cpp:610-620,631-637` — P1-2 const 拒
+4. `tests/test_postprocessor.cpp:504-546` — P1-2 锁测
+5. `src/io/FanucLsPostProcessor.cpp:110-120` — P1-3 分流
+6. `tests/test_postprocessor.cpp:214-232` — P1-3 锁测
+7. `include/olp/algo/CollisionAndSim.h:135-137` + `src/algo/CollisionAndSim.cpp:37-65` — P1-4 策略
+8. `tests/test_collision.cpp:287-308` — P1-4 Test 9c
+9. Opw 哈希 = HEAD；algo 无 Qt include
+
+---
+
+## 结论（给协调方）
+
+- **Verdict = APPROVED**
+- OPEN-P1-1..4 **全部 CLOSED**
+- **计划关闭阻塞：解除**（`FIX-EXPORT-SAFETY` 可按完成定义关闭）
+- 主线仍 OPEN：`RISK-001`、`RISK-002`、`M10-FCL-005`、`M11-009`、`M14-012`、`M14-013`、`M15-001`；另记 `OPEN-P2-GATE005-1`
+- Windows：**协调方声称 800 passed / 0 failed**；**Audit_X 未复跑**
+
+---
+
+# 审核结论 — FIX-EXPORT-GATE-FINAL（全量独立深度审查）
+
+> **Task ID**：`FIX-EXPORT-GATE-FINAL`
+> **Task**：对 `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` 项 1–4 **累计 diff** 全量独立深度审查（交互与连带回归）
+> **Round**：FINAL
+> **Reviewer**：Si_FastSuite_Audit_X（独立审核执行端）
+> **Reviewed at**：2026-10-29 Asia/Singapore (UTC+8)
+> **Executor**：执行方（Si_FastSuite；本轮仅审）
+> **Verdict**：**APPROVED**
+>
+> **方法（本轮重新取证，禁止复用各 Round 旧 REVIEW 结论作证据）**：
+> 1. `git status` / `git diff HEAD --stat` / 全量相关 `git diff HEAD`；
+> 2. 通读未跟踪文件 `include/olp/io/Utf8Path.h`、`src/io/Utf8Path.cpp`、`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`；
+> 3. 精读实际源码：`FanucLsPostProcessor.{h,cpp}`、`CollisionAndSim.cpp`（扫掠与写回）、`LsExportDialog.{h,cpp}`、`SampleSession.cpp`、`ProjectSerializer.cpp`（utf8 抽离）、`CMakeLists.txt`、`tests/test_{postprocessor,collision,main,support.*}`；
+> 4. 交叉核对 `MainWindow::{previewFanucLs,exportFanucLs,exportAllPrograms}` 调用链；
+> 5. `git hash-object` 证明 `OpwKinematics.{h,cpp}` 与 `HEAD` 字节一致；确认根 `Plan.md` / `.claude/Plan.md` / `PlanDocs/STATUS.md`(IDLE) / DIR-001 **无 diff**。
+>
+> **未改**工程业务/测试源码；**禁止 CloudAgent**；**仅**更新本文件与 `CRDocs/STATUS.md`。
+> **Windows 采信**（IMPLEMENTATION §四 / 项4 记录）：2026-10-29 ~20:56 Asia/Singapore，`Tools\Compile.bat` exit 0；`SiFastSuiteOLP_AllTests` **783 passed / 0 failed**（含 GATE-001..004）。**本审核 box 未复跑**编译/测试（无完整 Qt/OCCT/FCL Windows 工具链）。
+
+## 总判定
+
+| 范围 | 结论 |
+|---|---|
+| 项 1 门禁 | **PASS** |
+| 项 2 扫掠写回 | **PASS**（含「端点 Valid、段中撞 → 默认不漏拦」证明） |
+| 项 3 utf8 + 锁测 | **PASS** |
+| 项 4 水印/横幅 + Opw 冻结 | **PASS**；**RISK-001 仍须 OPEN** |
+| 交互与连带清单（7 条） | **主链 PASS**；协调方另列 OPEN-P1-1..4（见补记） |
+| 计划「完成定义」 | **主链达标；关闭阻塞** — 协调方 OPEN-P1-1..4 未清；主线 DIR-001 / RISK-001 仍 OPEN |
+
+**Verdict = APPROVED（主链）**。
+
+> **2026-10-29 补记（吸收协调方交叉抽核，非复审改码）**：协调方独立交叉抽核见 `CRDocs/CROSS_AUDIT_FINAL_COORDINATOR.md`，Verdict=**PASS_WITH_RISKS**。**不同意**上文「本计划范围内无 OPEN P0/P1 → 可关闭本修复计划」的完成定义口径。Audit_X **保留**项 1–4 主链 APPROVED（默认仿真→validate→拒写 + utf8 + 水印主体达标），但承认 FINAL 对连带脚枪/测弱项偏乐观。
+>
+> **计划关闭阻塞于协调方 OPEN P1**（详情与证据以交叉抽核文档为准）：
+> - **OPEN-P1-1**：Test 9b 不断言 `sawNear==true`
+> - **OPEN-P1-2**：UI/MainWindow 导出不强制重跑 `validateAndSimulateProgram`
+> - **OPEN-P1-3**：卸载碰撞门禁后 Collision 不报告，可纯绿导出硬撞
+> - **OPEN-P1-4**：Hard 同级严格 `>`，ConfigJump 可挡住后续 Collision 状态文案/升级
+>
+> 在 P1 修复轮再审通过或书面降级签收前，**不得**按计划完成定义关闭 FIX-EXPORT-SAFETY。`STATUS.md` 已同步为「主链 APPROVED / 计划关闭阻塞」。本补记未改工程代码。
+
+---
+
+## 累计改动面核对（本轮）
+
+**已跟踪相对 HEAD（业务/测）**：`CMakeLists.txt`、`FanucLsPostProcessor.h/cpp`、`CollisionAndSim.cpp`、`ProjectSerializer.cpp`、`LsExportDialog.cpp`、`SampleSession.cpp`、`test_collision.cpp`、`test_postprocessor.cpp`、`test_main.cpp`、`test_support.h`，以及 `CRDocs/*`。
+
+**未跟踪（必须纳入，已审）**：`include/olp/io/Utf8Path.h`、`src/io/Utf8Path.cpp`、`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`。
+
+**明确未改**：`OpwKinematics.*`（工作树哈希 = HEAD：`73b34cc…` / `e02edf1…`）；根 `Plan.md`、`.claude/Plan.md`、DIR-001、`PlanDocs/STATUS.md`(IDLE)。
+
+---
+
+## 项 1 — 后处理默认门禁 — PASS
+
+| 检查点 | 结论 | 本轮证据 |
+|---|---|---|
+| `blockOnCollision` / `blockOnConfigJump` 默认 true | **PASS** | `include/olp/io/FanucLsPostProcessor.h:15-16` |
+| `validateProgram`：Collision / ConfigJump → Error；Near / Singularity → Warning | **PASS** | `src/io/FanucLsPostProcessor.cpp:110-146`；`result.ok=!hasErrors()` 于 `:203`；`hasErrors` 定义于头文件 `:36-41` |
+| `LsExportDialog` 默认勾选碰撞阻断；ok+Warning 黄列；ConfigJump 保持默认 | **PASS** | `LsExportDialog.cpp:61-62` `setChecked(true)`；`:139-160` 有 issue 时黄「校验通过（含警告）」否则绿；成员 `config_{}`（`LsExportDialog.h:29`）默认构造保留 `blockOnConfigJump=true`，`refreshPreview:115-118` **不**覆写该字段 |
+| `SampleSession` 默认拒写正式 `WELD_001.ls` | **PASS** | `SampleSession.cpp:218-250`：`refuseProductionLs = !lsVal.ok \|\| blockingIssue`；真则不调用 `exportToFile`，`exitCode=2`，summary 明示门禁拒绝 |
+
+锁测（本轮源码）：`tests/test_postprocessor.cpp` GATE-001 默认拒 Collision/ConfigJump、Near/Singularity 可导出 Warning（约 `:214-246`）。
+
+---
+
+## 项 2 — 段内扫掠短路与 cache 回写 — PASS
+
+| 检查点 | 结论 | 本轮证据 |
+|---|---|---|
+| Near 不短路硬撞；`sweepCollided`→Collision | **PASS** | `CollisionAndSim.cpp:274-276` 拆 `postedHardSweepCollision` / `postedNearSweepIssue`；`:349` 仅 hard 短路；`:356-365` `sweepCollided` 强制 Collision + 写回；`:366-378` Near 单独、可继续扫 |
+| 段内问题按优先级回写 `cache.status`；不改 `cache.valid` | **PASS** | `:16-49` `CacheSeverityTier` Hard>Near>Soft；`upgradeTargetCacheFromSegmentIssue` 仅升 status/message，注释明示不动 `valid`；调用点 Unreachable `:309-310`、ConfigJump `:330-331`、Collision `:364-365`、Near `:376-377` |
+| **端点 Valid、段中撞 → 默认 validateProgram 不漏拦** | **PASS（已证明）** | 因果链：① 端点先置 Valid（`:250-251`，`valid=true` 于 `:231`）；② 段中 `sweepCollided` 写回**该段目标** `target.cache.status=Collision`（`:364-365`），`valid` 仍 true；③ `validateProgram` 遍历**所有** target（`:60` 起），`blockOnCollision && status==Collision` → Error（`:110-116`）→ `ok=false`；④ `generateLsString` 拒空串（`:211-221`）。单测锁：`test_collision.cpp:182-194`（写回 Collision + `validateProgram !ok`）；`test_postprocessor.cpp` GATE-003 live sweep 块（约 `:286-354`） |
+
+Near→Hard 升级单测：`testNearSweepDoesNotShortCircuitHardCollision`（`test_collision.cpp:199-280`，经 `test_main.cpp` 注册）。
+
+---
+
+## 项 3 — utf8 共享与门禁锁测 — PASS
+
+| 检查点 | 结论 | 本轮证据 |
+|---|---|---|
+| 共享 `utf8ToPath` | **PASS** | 新 `Utf8Path.h/.cpp`（Win `MultiByteToWideChar(CP_UTF8)` / 非 Win `u8path`）；`CMakeLists.txt` 入 `olp_io`；`ProjectSerializer.cpp` 删本地实现、改 `#include "olp/io/Utf8Path.h"`，仍于 `namespace olp::io` 调 `utf8ToPath`（约 `:803,:872`）；`FanucLsPostProcessor.cpp:395-402` `exportToFile` 用 path 打开；`:427-438` `exportControllerPrograms` 用 utf8 字符串拼接路径避免 ACP `path::string()` 回转 |
+| 中文路径单测；门禁锁测仍在 | **PASS** | `test_postprocessor.cpp:358-379` 中文目录导出 + 读回 `/PROG`；同文件 GATE-001/003 锁测仍在（端点 Collision、ConfigJump、写回 shape、live sweep） |
+
+---
+
+## 项 4 — RISK-001 草稿门禁 — PASS（RISK 仍 OPEN）
+
+| 检查点 | 结论 | 本轮证据 |
+|---|---|---|
+| `/MN` 水印；`LINE_COUNT` | **PASS** | `FanucLsPostProcessor.cpp:236-237` 首条 `addMnLine`；`:324-325` `LINE_COUNT`/`MEMORY_SIZE` 基于 `mnLines.size()`；`:337-340` 编号循环 |
+| 红条常驻 vs `refreshPreview` | **PASS** | `LsExportDialog.cpp:32-42` 独立 `riskBanner`；`:114-174` 只改 `statusLabel_`/`codeEdit_`，零引用横幅 |
+| 未改 OpwKinematics | **PASS** | 工作树无 Opw diff；哈希=HEAD |
+| **RISK-001 仍须 OPEN** | **PASS（未误关）** | `CRDocs/STATUS.md` Open 列表含 `RISK-001`；水印文案 `UNVERIFIED`；横幅「严禁…成品下发」；代码无「已对拍/已关闭 RISK」伪装 |
+
+GATE-004 三断言：`test_postprocessor.cpp:375-376,391-397`。
+
+---
+
+## 交互与连带（主动查找）— 全部 PASS
+
+| # | 问题 | 结论 | 本轮证明要点 |
+|---|---|---|---|
+| 1 | 端点 Valid 段中撞是否漏拦 | **不漏** | 见项 2 因果链 + collision/postprocessor 锁测 |
+| 2 | Near 短路是否复现 | **不复现** | hard/near 分旗；9b 单测要求最终 Collision |
+| 3 | `cache.valid` 语义是否被破坏 | **未破坏** | 写回故意不改 `valid`；单测要求 Collision 时 `valid==true` |
+| 4 | 默认门禁与 UI 一致性 | **一致** | 头文件默认 true；对话框勾选碰撞；ConfigJump 无 UI 开关但 `config_{}` 保持默认 true |
+| 5 | 中文路径导出含水印且门禁仍生效 | **是** | utf8 写出 + GATE-004 中文路径水印断言；门禁在 `generateLsString` 先于写盘 |
+| 6 | SampleSession 拒写/放行 | **正确** | 拒：不写正式 ls、exit 2；放行：`exportToFile`→含水印 |
+| 7 | RISK-001 是否被误关 | **未误关** | STATUS Open + 文案 UNVERIFIED；Opw 未改 |
+
+**计划完成定义**：本计划范围内 **无 OPEN P0/P1** → 可关闭本修复计划。主线 `RISK-001` 等仍 OPEN（计划明示水印≠关 RISK）。
+
+---
+
+## 残留风险（不挡 APPROVED / 不挡关闭本计划）
+
+1. **RISK-001 主线仍 OPEN**（运动学符号/耦合未验证；需 ROBOGUIDE/示教器金样对拍）。
+2. Hard 同档（Unreachable/Collision/ConfigJump）互不覆盖 message（`>` 非 `>=`）——均仍为后处理 Error，**不构成漏拦**（P2 信息粒度）。
+3. `exportControllerPrograms` / `MainWindow` 路径未再单独 `find` 水印字符串（逻辑必经 `generateLsString`，P2 覆盖）。
+4. **box 未复跑**；采信 Windows **783/0**。
+5. 无 Warning 时绿「校验通过」与红条并存——分层提示，非清横幅缺陷。
+
+---
+
+## 给协调方 / 主代理（可立刻 priority）
+
+| 字段 | 值 |
+|---|---|
+| Verdict | **APPROVED** |
+| 可否关闭本修复计划 | **可以关闭** `FIX-EXPORT-SAFETY`（项1–4+FINAL 完成定义满足） |
+| OPEN P0/P1（本计划范围） | **无** |
+| 主线仍 OPEN | `RISK-001`（及 STATUS 既有 RISK-002、M10-FCL-005、M11-009、M14-012/013、M15-001） |
+| 项1–4 摘要 | 门禁默认真拒撞/跳变；扫掠 Near 不短路且写回；utf8 共享+中文测；水印+红条；Opw 冻结 |
+| 关键证据（≥8） | `FanucLsPostProcessor.h:15-16`；`FanucLsPostProcessor.cpp:110-146`；`:203`；`:236-237`；`:324-325`；`:395-402`；`CollisionAndSim.cpp:40-49`；`:349-378`；`LsExportDialog.cpp:32-42,61-62,139-160`；`SampleSession.cpp:218-250`；`Utf8Path.cpp`+`CMakeLists.txt`；`test_collision.cpp:182-194,272-280`；Opw 哈希=HEAD |
+| Windows | **783 passed / 0 failed**（采信；box 未复跑） |
+
+---
+
+# 审核结论 — FIX-EXPORT-GATE-004 Round 1
+
+> **Task ID**：`FIX-EXPORT-GATE-004`
+> **Task**：RISK-001 草稿门禁（P0-Gate，不动算法）
+> **Round**：1
+> **Reviewer**：Si_FastSuite_Audit_X（独立审核执行端）
+> **Reviewed at**：2026-10-29 Asia/Singapore (UTC+8)
+> **Executor**：执行方（Si_FastSuite）
+> **Verdict**：**APPROVED**
+>
+> 本轮为**格外严格**的独立深度审核（回应用户对前几轮「是否认真核对每个代码、深度思考连带问题」的质疑）：逐段通读 `git diff` 中本项新增点与调用链；精读 `src/io/FanucLsPostProcessor.cpp` `/MN` 组装、编号循环、`LINE_COUNT`/`MEMORY_SIZE`、`exportToFile`、`exportControllerPrograms`；精读 `src/ui/LsExportDialog.cpp` `setupUi` 红条与 `refreshPreview` 全部分支；精读 `tests/test_postprocessor.cpp` 三条 `FIX-EXPORT-GATE-004` 断言及相邻 GATE-001/003 锁测；核对 `SampleSession.cpp` 写出路径、`MainWindow::{previewFanucLs,exportFanucLs,exportAllPrograms}` 是否均经 `generateLsString`；用 `git hash-object` 与 `HEAD` 比对证明 `OpwKinematics.{h,cpp}` **字节级未改**；确认项 1–3 默认门禁 / 扫掠写回 / `utf8ToPath` 锁测仍在。对照权威：`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` **仅项 4**、`CRDocs/IMPLEMENTATION.md`、`STATUS.md`（审前 READY_FOR_REVIEW）、`Docs/OLP_System_Design_Claude.md` v1.1。**未改**工程业务/测试源码；**禁止 CloudAgent**；**未开** `FIX-EXPORT-GATE-FINAL`；仅更新本文件与 `STATUS.md`。Windows 实测采信用户机（IMPLEMENTATION §四：~20:56 Asia/Singapore 2026-10-29，`Compile.bat` exit 0，**783 passed / 0 failed**，GATE-004 三断言 PASS，`build/WELD_001.ls` 含水印）；**本审核未在 box 复跑编译/测试**（box 无完整 Qt/OCCT/FCL Windows 工具链；仓库内亦无 `WELD_001.ls` 样件文件可本地打开）。
+
+## 总判定
+
+| 项 | 结论 |
+|---|---|
+| 1. `.ls` `/MN` 头部插入 `! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)` | **PASS** |
+| 2. `LsExportDialog` 顶部常驻醒目提示（未对拍 / 严禁成品下发真机） | **PASS** |
+| 3. 单测三断言：`generateLsString` / `exportToFile`（含中文路径）含水印 + 位于 `/MN` 之后 | **PASS** |
+| 4. **禁止**修改 OpwKinematics 耦合/turns/offsets/signCorrections | **PASS**（工作树相对 HEAD 哈希一致） |
+
+四条强制范围全部实质达标，与计划项 4 及 `IMPLEMENTATION.md` 声明一致，未见夸大。强制连带排查 A–F **均无发现 P0/P1 连带缺陷**。**Verdict = APPROVED**。**可以**由协调方开 `FIX-EXPORT-GATE-FINAL`（本审核端不提前开 FINAL）。
+
+---
+
+## 逐段 diff / 源码核对（重点文件:行号）
+
+### 1) `/MN` 草稿水印 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `src/io/FanucLsPostProcessor.cpp:231-239` | `mnLines` + `addMnLine`；在 `UFRAME_NUM` / `UTOOL_NUM` **之前**插入 `"  ! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)"` |
+| `src/io/FanucLsPostProcessor.cpp:236-237` | 注释明确 RISK-001 draft gate；文案与计划项 4 / IMPLEMENTATION 一字不差 |
+| `src/io/FanucLsPostProcessor.cpp:324-325` | `LINE_COUNT = mnLines.size()`；`MEMORY_SIZE` 同用 `mnLines.size()` —— 草稿行自然计入，无硬编码行数 |
+| `src/io/FanucLsPostProcessor.cpp:337-340` | `/MN` 后 `for (i…) setw(4)<<(i+1)<<":"<<mnLines[i]<<" ;\n"` —— 草稿为 **MN 行号 1**，后续行号整体 +1，循环仍正确 |
+| `src/io/FanucLsPostProcessor.cpp:241-273` | `nextPIndex` 从 1 起为 **P[] 寄存器**编号，与 MN 行号独立；运动仍为 `J P[1:…]` / `L P[2:…]`，断言 `tests/test_postprocessor.cpp:399-400` 仍锁 P 索引而非 MN 行号 |
+
+手工推演：草稿 → UFRAME → UTOOL → Operation 注释 → 首条运动，则运动为 MN 行 5、P[1] 不变。既有单测**不**锁具体 `LINE_COUNT` 数值或 `1: UFRAME`（全库 `rg` 无此类硬锁），+1 行不破坏断言面。输出形态与 IMPLEMENTATION 声称一致：`   1:  ! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001) ;`（与既有 `! --- Operation` 注释同一 `addMnLine` 风格）。
+
+### 2) `LsExportDialog` 常驻红条 vs `refreshPreview` — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `src/ui/LsExportDialog.cpp:32-42` | 独立 `QLabel* riskBanner`（parent=`this`，入 `mainLayout`）；深红底 `#5c1a1a` + `#e06c75` 边框；文案含「尚未完成示教器 / ROBOGUIDE 金样对拍」「仅为草稿」「**严禁直接作为成品下发真机**」 |
+| `src/ui/LsExportDialog.cpp:44-47` | `statusLabel_` 为**另一**控件，位于横幅之下 |
+| `src/ui/LsExportDialog.cpp:114-174` | `refreshPreview` **只**写 `statusLabel_` / `codeEdit_`（130、147、155、172 行），**零**引用 `riskBanner` —— 刷新校验**不会**清掉红条 |
+| `src/ui/LsExportDialog.cpp:139-160` | 项 1 黄警示路径仍在：`ok && issues` → `#e5c07b`「校验通过（含警告）」；无 issue 才绿。红条与黄列/绿通过**并存、互不覆盖** |
+| `src/ui/LsExportDialog.cpp:61-62` | `chkBlockCollision_->setChecked(true)` 仍为项 1 默认（本轮未削弱） |
+
+横幅为局部栈指针、非成员：Qt 父子所有权保证生命周期；常驻静态文案无需后续改写。预览 `codeEdit_` 来自 `generateLsString`（137 行），故 UI 预览文本亦含水印。
+
+### 3) 三断言 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `tests/test_postprocessor.cpp:375-376` | GATE-004：中文路径 `exportToFile` 读回内容含 `! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)` |
+| `tests/test_postprocessor.cpp:391-392` | GATE-004：`generateLsString` 导出文本含水印 |
+| `tests/test_postprocessor.cpp:393-397` | GATE-004：`draftPos > mnPos`（水印出现在 `/MN` 之后） |
+| `rg -c FIX-EXPORT-GATE-004` | 恰好 **3** 处，与 IMPLEMENTATION / STATUS 声称一致 |
+
+第三条不锁「必须为 MN 行号 1」，但源码插入点已是首条 `addMnLine`（见上）。中文路径断言嵌在 `if (chineseOk)` 内：若中文写出失败则 GATE-003 已先失败；Windows 783/0 且显式列出该断言 PASS，说明该路径已实测走到。
+
+### 4) OpwKinematics 冻结 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `git status` / `git diff --name-only` | **无** `OpwKinematics.*` |
+| `git hash-object` == `git rev-parse HEAD:…` | `src/algo/OpwKinematics.cpp` = `73b34cc988d5e5a838b50d806f409e8693922670`；`include/olp/algo/OpwKinematics.h` = `e02edf15938b1130bb62092539e2802282ac9ccc` —— 与提交树**完全一致** |
+| mtime | Opw `2026-10-29 13:56`（基线）；Fanuc/LsDialog/test_postprocessor `20:55`（本项编辑窗） |
+
+未改耦合、`offsetsRad`、`signCorrections`、turns。
+
+---
+
+## 强制连带排查清单 A–F
+
+### A. FANUC `/MN` 行号 / `LINE_COUNT` — **PASS（无缺陷）**
+
+插入草稿后：`LINE_COUNT`/`MEMORY_SIZE` 与编号循环均基于同一 `mnLines` 容器（`:324-325`、`:337-340`）。P[] 索引用独立 `nextPIndex`（`:241-248`），运动指令断言仍以 `P[1:APPROACH]` 等为准（`:399`），不被 MN 行号平移破坏。未见「插注释却硬编码旧行号」类错误。
+
+### B. `exportControllerPrograms` 多程序 — **PASS（同带水印）**
+
+| 证据 | 说明 |
+|---|---|
+| `FanucLsPostProcessor.cpp:415-447` | 逐程序拼 UTF-8 路径后调 `exportToFile` |
+| `FanucLsPostProcessor.cpp:383-389` | `exportToFile` → `generateLsString` |
+| `FanucLsPostProcessor.cpp:236-237` | 水印在 `generateLsString` 内无条件分支（校验通过才生成正文） |
+
+故多程序路径**只要写出成功即含水印**。`tests/test_postprocessor.cpp:455-460` 只断言两文件存在、**未再读回水印**——覆盖缺口属 **P2 测弱**（产品路径已正确），**不构成 P0/P1**，不据此 CHANGES_REQUESTED。`MainWindow::exportAllPrograms`（`:551-566`）同样经 `exportControllerPrograms`。
+
+### C. SampleSession → `WELD_001.ls` — **PASS（经 `exportToFile` 即含水印）**
+
+| 证据 | 说明 |
+|---|---|
+| `src/ui/SampleSession.cpp:221-239` | 门禁拒绝则**不写**；否则 `FanucLsPostProcessor::exportToFile(sampleProg, lsOut)` |
+| 调用链 | `exportToFile` → `generateLsString` → 水印行 |
+
+成功写出时必含水印。Windows 证据（采信 IMPLEMENTATION §四）：`build/WELD_001.ls` 含 `1:  ! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001) ;`。box 无该文件、未复跑样例。若门禁拒绝写出，则无「无水印正式文件」旁路——与项 1 拒写语义一致。
+
+### D. UI 红条与 Warning 黄列并存 / `refreshPreview` 是否清横幅 — **PASS**
+
+红条（`:32-42`）与 `statusLabel_`（`:45-47`）分离；`refreshPreview` 仅改后者（见上）。黄警示（项 1，`:146-153`）与红条可同时可见；绿「语法与运动学校验通过」（`:155-160`）亦不清除红条。设计分层：语法/门禁校验通过 ≠ RISK-001 已关闭。非互清缺陷。
+
+### E. 是否误改 Opw 或削弱项 1–3 — **PASS（未削弱）**
+
+| 检查 | 结果 |
+|---|---|
+| Opw | 哈希一致，见上 |
+| 项 1 默认 | `FanucLsPostProcessor.h:15-16` 仍 `blockOnCollision{true}` / `blockOnConfigJump{true}`；`LsExportDialog.cpp:62` 勾选 true；GATE-001 断言 `:214-229` 仍在 |
+| 项 2 扫掠写回 | `CollisionAndSim.cpp` 仍含 Near 不短路 / `upgradeTargetCacheFromSegmentIssue`；GATE-002 断言在 `tests/test_collision.cpp:182-280` |
+| 项 3 utf8ToPath | `exportToFile` `:395-402` 仍用 `utf8ToPath`；GATE-003 锁测 `:249-374` 仍在；本项仅在中文路径块**追加**水印断言 |
+
+本项 diff 对 Fanuc 核心仅 **+2 行水印**（另含项 1–3 已 APPROVED 存量）。未发现放宽默认或删除锁测。
+
+### F. P0/P1 连带缺陷 → 必须 CHANGES_REQUESTED — **未发现**
+
+主动搜索后的残留均为已知/可接受层级：
+- RISK-001 **仍 OPEN**（水印/UI 不修正运动学符号——计划明示）。
+- 多程序/MainWindow 导出测未重复断言水印字符串（**P2 覆盖**）。
+- 绿「校验通过」与红「严禁下发」并存（分层提示，非清横幅）。
+- 累计项 1–4 工作树 diff 待 **FINAL** 全量审。
+- box 未复跑；采信 Windows 783/0。
+
+**无 P0/P1 → 不改为 CHANGES_REQUESTED。**
+
+---
+
+## 与文档一致性
+
+- **PLAN 项 4**：三条交付 + Opw 冻结全部落地；非目标（不改 HTML、不拆 CommandManager、不改根 Plan/DIR-001、`PlanDocs/STATUS.md` 仍 IDLE）遵守。
+- **IMPLEMENTATION.md**：声明与真实 diff 对齐；水印位置、横幅不被 `refreshPreview` 覆盖、三断言标签、Windows 783/0 / GATE-004 文案列表可核对；未声称关闭 RISK-001；未声称 box 已编译。
+- **设计基线**：草稿门禁服务于「未对拍不得当真机成品」的安全可见性；与 v1.1 强调 ROBOGUIDE/真机验收前提一致，且**不**假装已完成对拍。
+- **工作树**仍含项 1–3 已审 diff；本轮只审项 4 增量与连带，不重开已 APPROVED 项之结论，但已用断言与哈希做回归抽查。
+
+---
+
+## 残留风险（不挡本项 APPROVED）
+
+1. **RISK-001 仍 OPEN**：水印与 UI 仅草稿门禁，不消除 J2/J3 耦合/符号偏差。
+2. **FINAL 未开**：项 1–4 累计 diff 须另开 `FIX-EXPORT-GATE-FINAL` 全量独立审查后，本安全门禁计划才可关闭。
+3. **测覆盖 P2**：`exportControllerPrograms` / `MainWindow::exportFanucLs` 未单独 `find` 水印（逻辑上必经 `generateLsString`）。
+4. **box 无编译证据**；采信用户机 Windows 结果。仓库内无 `WELD_001.ls` 可二次打开核对。
+5. UI：无警告时绿通过文案紧邻红条——可能被粗心用户误读为「可下发」；红条文案已足够醒目，属体验残留而非本项漏改。
+
+---
+
+## 给协调方（可立刻 priority）
+
+| 字段 | 值 |
+|---|---|
+| Verdict | **APPROVED** |
+| 可否开 FINAL | **可以**开 `FIX-EXPORT-GATE-FINAL`（本端未开） |
+| 范围 1–4 | **全部 PASS** |
+| 连带 A–F | **全部 PASS / 无 P0/P1** |
+| 修改点（若 CHANGES） | 无 |
+| 关键证据（≥5） | `FanucLsPostProcessor.cpp:236-237`；`:324-325`；`:337-340`；`LsExportDialog.cpp:32-42`；`:114-174`（仅改 statusLabel_）；`test_postprocessor.cpp:375-376,391-397`；Opw 哈希=HEAD |
+| 残留 | RISK-001 OPEN；待 FINAL；box 未复跑 |
+
+---
+
+# 审核结论 — FIX-EXPORT-GATE-003 Round 1
+
+> **Task ID**：`FIX-EXPORT-GATE-003`
+> **Task**：门禁单测加固与 `.ls` UTF-8 路径（P1-7 部分 + 项1/2 锁测）
+> **Round**：1
+> **Reviewer**：Si_FastSuite_Audit_X（独立审核执行端）
+> **Reviewed at**：2026-10-29 Asia/Singapore (UTC+8)
+> **Executor**：执行方（Si_FastSuite）
+> **Verdict**：**APPROVED**
+>
+> 本轮为独立深度审核：通读 `include/olp/io/Utf8Path.h`、`src/io/Utf8Path.cpp` 全文；细读 `git diff` 中 `ProjectSerializer.cpp`（删本地匿名 `utf8ToPath`）、`FanucLsPostProcessor.cpp` 的 `exportToFile` / `exportControllerPrograms`、`CMakeLists.txt` 入链、`tests/test_postprocessor.cpp` 全部 FIX-EXPORT-GATE-003 断言块；核对 `tests/test_tjoint_regression.cpp` **无 diff**（可选未做）。对照权威：`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` **仅项 3**、`CRDocs/IMPLEMENTATION.md`、`STATUS.md`（审前 READY_FOR_REVIEW）、设计基线 `Docs/OLP_System_Design_Claude.md` v1.1 相关。**未改**工程业务/测试源码；**禁止 CloudAgent**；**未开项 4**；仅更新本文件与 `STATUS.md`。Windows 实测采信用户机（DESKTOP-L4AMHKJ，~20:30 Asia/Singapore 2026-10-29，`Compile.bat --reconfigure` exit 0，**780 passed / 0 failed**）；**采信用户机，本审核未在 box 复跑**。
+
+## 总判定
+
+| 项 | 结论 |
+|---|---|
+| 1. `tests/test_postprocessor.cpp` 锁定默认拒止：端点 Collision、段中扫掠 Collision（含 sim 写回后）、ConfigJump | **PASS** |
+| 2. `FanucLsPostProcessor::exportToFile`（及 `exportControllerPrograms`）与 `ProjectSerializer` **共享** `utf8ToPath` | **PASS** |
+| 3. 中文路径 `.ls` 导出单测 | **PASS** |
+| 4. 可选 tjoint 收紧 | **非目标（执行方明确未做）** — 不判漏改、不据此 CHANGES_REQUESTED |
+
+三条强制范围全部实质达标，与计划项 3 及 `IMPLEMENTATION.md` 声明一致，未见夸大。可选 tjoint 按计划允许跳过且已记入 IMPLEMENTATION §一.4。**Verdict = APPROVED**。项 4 明确未开，见残留风险。
+
+---
+
+## 逐条证据（≥3 条 `文件:行号` / 条）
+
+### 1) 默认门禁锁测（端点 Collision / 段中扫掠 Collision / ConfigJump）— PASS
+
+| 证据 | 说明 |
+|---|---|
+| `tests/test_postprocessor.cpp:252-262` | 默认 `LsPostConfig{}` 仍启用 `blockOnCollision`/`blockOnConfigJump`；端点 `valid=true`+`status=Collision` → `validateProgram` !ok + `generateLsString` 空 |
+| `tests/test_postprocessor.cpp:264-271` | 端点 `ConfigJump`（`valid=true`）→ 默认拒写 |
+| `tests/test_postprocessor.cpp:273-284` | 写回形状：首点 Valid、次点 `valid=true`/`status=Collision` → 默认拒写（锁项 2 语义） |
+| `tests/test_postprocessor.cpp:337-354` | 活扫掠：`validateAndSimulateProgram` 写回 `Collision` 且 `valid` 仍 true → 默认 `validateProgram`/`generateLsString` 拒导出 |
+| `include/olp/io/FanucLsPostProcessor.h:15-16` | 产品默认仍为 `blockOnCollision{true}` / `blockOnConfigJump{true}`（项 1 已 APPROVED；本项锁测不改默认） |
+
+断言文案均含 `FIX-EXPORT-GATE-003:`，与 IMPLEMENTATION §四 所列 Windows 显式 PASS 一致。活扫掠几何与 GATE-002 Test 9 同源（home→endJoints[+0.4]、门盒 `half=6`、偏置 95mm），见残留风险。
+
+### 2) 共享 `utf8ToPath`（导出与工程序列化同语义）— PASS
+
+| 证据 | 说明 |
+|---|---|
+| `include/olp/io/Utf8Path.h:11` / `src/io/Utf8Path.cpp:19-30` | 公共 `olp::io::utf8ToPath`：Windows `MultiByteToWideChar(CP_UTF8)`→`path(wstring)`；非 Windows `u8path` — 与原 `ProjectSerializer` 匿名实现同语义 |
+| `CMakeLists.txt:123` | `olp_io` 增加 `src/io/Utf8Path.cpp` |
+| `src/io/ProjectSerializer.cpp:6` + `:803` / `:872` | `#include "olp/io/Utf8Path.h"`；`saveToFile`/`loadFromFile` 调用共享函数；本地匿名 `utf8ToPath` 已从 diff 删除（仓库内仅剩 `Utf8Path.*` 定义） |
+| `src/io/FanucLsPostProcessor.cpp:2` + `:393-400` | `#include Utf8Path.h`；`exportToFile`：`utf8ToPath` + `ofstream(path)`（不再 `path(string)`/`ofstream(string)`） |
+| `src/io/FanucLsPostProcessor.cpp:424-436` | `exportControllerPrograms`：目录 `utf8ToPath(outputDir)`；子路径 **UTF-8 字符串拼接**（避免 `path::string()` CP936 损毁），再交 `exportToFile` |
+
+全库 `std::filesystem::path utf8ToPath` 定义仅存于 `Utf8Path.h/cpp`，满足「共享、非双份」。
+
+### 3) 中文路径 `.ls` 导出单测 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `tests/test_postprocessor.cpp:358-374` | 路径含 `olp_ls_中文路径导出_001/工位导出_WELD_001.ls`；`exportToFile` 成功 + `filesystem::exists(utf8ToPath(...))` |
+| `tests/test_postprocessor.cpp:370-374` | 读回内容含 `/PROG  TEST_PROG` |
+| `tests/test_postprocessor.cpp:376-377` | 清理用 `utf8ToPath(chineseDir)`，与产品路径语义一致 |
+
+Windows 实测（采信）显式 PASS：Chinese-path `exportToFile` 与 `/PROG` 内容。依赖源文件 UTF-8 + MSVC `/utf-8`（与 M14-010 同类），见残留风险。
+
+### 4) 可选 tjoint 收紧 — 非目标（不判 FAIL）
+
+| 证据 | 说明 |
+|---|---|
+| `git diff -- tests/test_tjoint_regression.cpp` | **0 行**（本项未改） |
+| `tests/test_tjoint_regression.cpp:252-262` | `allTargetsValid` 仍仅排除 Unreachable/JointLimitExceeded/ConfigJump，**未**要求 `status == Valid` |
+| `CRDocs/IMPLEMENTATION.md` §一.4 / §二 | 执行方明确 prefer leave out；产品门禁未放宽 |
+
+按任务说明与计划「可选」条款：**不得**因未做判 CHANGES_REQUESTED。
+
+---
+
+## 与文档一致性
+
+- **PLAN 项 3**：三条强制范围均已落地；可选 tjoint 跳过且文档化；非目标（项 4、不改 OpwKinematics、不改 HTML、不拆 CommandManager、不改根 Plan / DIR-001、`PlanDocs/STATUS.md` 保持 IDLE）遵守——核对 `PlanDocs/STATUS.md` 仍为 IDLE。
+- **IMPLEMENTATION.md**：声明与真实 diff 对齐；明确 box 未编译、Windows 780/0 与 GATE-003 断言文案列表；未把「可选已做」或「项 4 已做」写成完成。§一.2「未改 FanucLsPostProcessor.h 公开 API / 默认」指本轮不重开项 1 默认——working tree 中该头文件相对 baseline 的改动属项 1 已 APPROVED 存量，本项锁测消费之，未见夸大。
+- **设计基线**：UTF-8 路径与后处理门禁锁测服务于真机导出安全可见性；本项不声称关闭 RISK-001。
+- **项 1/2 依赖**：默认拒 Collision/ConfigJump（项 1）+ 扫掠写回 cache（项 2）已 APPROVED；本项在 `test_postprocessor` 加锁并修 `.ls` 路径。未草率复用空话——本轮通读了 Utf8Path 全文、导出两函数与 GATE-003 断言块。
+- **工作树仍含项 1/2 已审 diff**（`CollisionAndSim` / `LsExportDialog` / `SampleSession` / `test_collision` 等）；本轮只审项 3 相关路径，不把项 1/2 结论重开。
+
+---
+
+## 构建与测试证据（采信用户机；box 未复跑）
+
+- 机器：`DESKTOP-L4AMHKJ`；时间：2026-10-29 ~20:30 Asia/Singapore (UTC+8)
+- `Tools\Compile.bat --reconfigure` **exit 0**
+- `SiFastSuiteOLP_AllTests`：**780 passed / 0 failed**
+- 显式 PASS（与源码断言文案一致）：默认门禁锁、端点 Collision、ConfigJump、写回形状拒导出、活扫掠写回 Collision/`valid` true、写回后拒导出、Chinese-path `exportToFile`、`/PROG` 内容
+- **采信用户机，本审核未在 box 复跑**（box 无完整 Qt+OCCT+vcpkg Windows 工具链）。静态 Read / `git diff` / `rg` 已核对实现与断言。
+
+---
+
+## 残留风险（APPROVED 必须列）
+
+1. **项 4 未开**：`.ls` RISK-001 草稿水印与对话框常驻提示仍待做；**勿在本 STATUS=APPROVED 前由审核方开项**。
+2. **RISK-001 仍 OPEN**：运动学符号/耦合冻结；本项不关闭。
+3. **可选 tjoint 收紧未做**：`allTargetsValid` 仍不要求 `status==Valid`；Collision/Near 目标在 tjoint 回归中仍可能绿。非本项缺口。
+4. **活扫掠锁测与 GATE-002 Test 9 同源**：若某机 FCL/步数未撞到门，GATE-003 活扫掠与 Test 9 会一并失败（非静默放宽）；写回形状断言不依赖 FCL，仍锁后处理。
+5. **中文路径单测**：`temp_directory_path().string()` 在极端非 ASCII 用户目录下可能与 UTF-8 字面量拼接混码；常见 Temp 为 ASCII。依赖 `/utf-8` 编译。`exportControllerPrograms` 用 `/` 拼接 UTF-8，Windows 接受且最终仍走 `utf8ToPath`。
+6. **`ProjectSerializer.cpp` 残留 `#include <windows.h>`**：抽离 `utf8ToPath` 后 Win32 头可能不再需要；属卫生项，不影响行为，不挡 APPROVED。
+7. **工作树累计项 1+2+3 diff 未提交**：全量 `FIX-EXPORT-GATE-FINAL` 审查仍待四项均 APPROVED 后另开。
+
+---
+
+## 本轮范围内无 CHANGES_REQUESTED
+
+三条强制 PASS + 可选明确非目标 → **APPROVED**。下一步：仅当本 STATUS=APPROVED 后由执行方开项 4（`FIX-EXPORT-GATE-004`）。
+
+---
+
+# 审核结论 — FIX-EXPORT-GATE-002 Round 1
+
+> **Task ID**：`FIX-EXPORT-GATE-002`
+> **Task**：段内扫掠短路拆分 + 段内问题回写 `target.cache`（P0-2 + D.1）
+> **Round**：1
+> **Reviewer**：Si_FastSuite_Audit_X（独立审核执行端）
+> **Reviewed at**：2026-10-29 Asia/Singapore (UTC+8)
+> **Executor**：执行方（Si_FastSuite）
+> **Verdict**：**APPROVED**
+>
+> 本轮为独立深度审核：通读 `src/algo/CollisionAndSim.cpp` 中 `validateAndSimulateProgram` 全文（含扫掠循环与端点校验）、匿名 `cacheSeverityTier` / `upgradeTargetCacheFromSegmentIssue`，以及 `tests/test_collision.cpp` Test 9 / 9b 全文；细读 `git diff` 对本项相关 hunk（CollisionAndSim + collision 单测 + 注册）。追踪链路：扫掠采样 → Near/Hard 标志 → `sim.issues` → `target.cache` 回写 → `FanucLsPostProcessor::validateProgram` 读 `cache.status` 拒写。对照权威：`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` **仅项 2**、`CRDocs/IMPLEMENTATION.md`、设计基线「离散 + 段内采样防端点不撞中间撞」。**未改**工程业务/测试源码；**禁止 CloudAgent**；**未开项 3/4**；仅更新本文件与 `STATUS.md`。Windows 实测采信用户机（DESKTOP-L4AMHKJ，~17:14 Asia/Singapore 2026-10-29）；**采信用户机，本审核未在 box 复跑**。
+
+## 总判定
+
+| 项 | 结论 |
+|---|---|
+| 1. `postedSweepIssue` 拆分：Near 不得短路同段后续硬撞；`sweepCollided` 记/升级 Collision | **PASS** |
+| 2. 段内 Collision / L 段 Unreachable / 段内 ConfigJump(>15°) 按优先级回写 `target.cache.status` + `issueMessage` | **PASS** |
+| 3. 不改 `cache.valid`=IK 存在语义（碰撞点可仍 valid=true） | **PASS** |
+| 4. 单测：Test 9 段中硬撞→默认 `validateProgram` !ok；Test 9b Near 不短路硬撞且最终 Collision | **PASS** |
+
+四条范围全部实质达标，与计划项 2 及 `IMPLEMENTATION.md` 声明一致，未见夸大。**Verdict = APPROVED**。项 3/4 明确未做，见残留风险。
+
+---
+
+## 逐条证据（≥3 条 `文件:行号` / 条）
+
+### 1) `postedSweepIssue` 拆分 + Near 不短路硬撞 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `src/algo/CollisionAndSim.cpp:274-276` | 旧单一 `postedSweepIssue` 拆为 `postedHardSweepCollision` + `postedNearSweepIssue` |
+| `src/algo/CollisionAndSim.cpp:348-349` | 扫掠门控仅 `!postedHardSweepCollision`；Near 后仍继续扫 |
+| `src/algo/CollisionAndSim.cpp:356-365` | `sweepCollided` → 推 `Collision` issue + Hard 回写 cache；置 `postedHardSweepCollision` |
+| `src/algo/CollisionAndSim.cpp:366-378` | 仅 clearance 不足 → Near（一次）；`postedNearSweepIssue` **不**阻止后续硬撞分支 |
+
+旧逻辑「Near 或 Hard 任一命中即 `postedSweepIssue=true`」已消除。与 PLAN「NearCollision 不得短路同段后续硬碰撞；`sweepCollided` 必须升级记录 Collision」一致。
+
+### 2) 段内问题按优先级回写 cache — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `src/algo/CollisionAndSim.cpp:25-38` | `cacheSeverityTier`：Hard=`Unreachable|Collision|ConfigJump|JointLimitExceeded`；Near=`NearCollision`；其余 Soft |
+| `src/algo/CollisionAndSim.cpp:40-49` | `upgradeTargetCacheFromSegmentIssue`：仅新 tier **严格更高** 时写 `status`+`issueMessage`；**不改** `valid` |
+| `src/algo/CollisionAndSim.cpp:309-310` | L 段无逆解 → `Unreachable` Hard 回写 |
+| `src/algo/CollisionAndSim.cpp:330-331` | L 段关节步 >15° → `ConfigJump` Hard 回写 |
+| `src/algo/CollisionAndSim.cpp:364-365` / `:376-377` | 扫掠 Hard/Near 回写；Hard 可升级 Near |
+
+优先级 Hard > Near > Soft（含 Valid）与计划一致。`JointLimitExceeded` 归 Hard 属合理加固（防扫掠 Near 降级端点硬状态），计划字面未单列，记入残留说明而非缺口。
+
+调用链闭环：`for (auto& target : op.targets)`（`:178`）→ 段内 upgrade 写同一 `target` 引用 → `inOutProgram` 上 cache 对后处理可见。
+
+### 3) `cache.valid` 语义未改 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `src/algo/CollisionAndSim.cpp:48` | 注释明确：leave `cache.valid` unchanged（= IK 存在） |
+| `src/algo/CollisionAndSim.cpp:231` | 有 IK 时端点仍 `target.cache.valid = true`，再可能被 status 标 Collision |
+| `tests/test_collision.cpp:190-191` | Test 9：段中 Collision 回写后仍要求 `endCache.valid` |
+| `tests/test_collision.cpp:279-280` | Test 9b：Near→Collision 升级后 `valid` 仍 true |
+
+碰撞由 `status` 表达、后处理按 status 阻断（项 1 已 APPROVED 的 `blockOnCollision`）；本项未把碰撞点改成 `valid=false`。与 PLAN/IMPLEMENTATION 一致。
+
+### 4) 单测锁定（Test 9 / 9b）— PASS
+
+| 证据 | 说明 |
+|---|---|
+| `tests/test_collision.cpp:184-194` | Test 9：`sweepHit` + `cache.status==Collision` + `valid` + 默认 `validateProgram` → `!ok && hasErrors()` |
+| `tests/test_collision.cpp:271-280` | Test 9b：`sawHard` + 最终 `cache.status==Collision` + `valid`；detail 记录是否见过 Near |
+| `tests/test_support.h:21` / `tests/test_main.cpp:47` | `testNearSweepDoesNotShortCircuitHardCollision` 已声明并注册 |
+| `src/io/FanucLsPostProcessor.cpp:109-116` | 默认 `blockOnCollision` 下 `cache.status==Collision` → Error（项 1 依赖；Test 9 闭合链路） |
+
+Windows 实测（采信）：`Compile.bat` exit 0；**771 passed / 0 failed**；显式 PASS 含 mid-segment Collision 回写、`valid` 仍 true、默认 validateProgram 拒段中撞、9b Near 不短路且最终 Collision；`--verify` 仍写出仅 Near 的 `WELD_001.ls`（无硬撞，符合设计）。
+
+---
+
+## 与文档一致性
+
+- **PLAN 项 2**：四条范围均已落地；非目标（项 3/4、不改 OpwKinematics、不改 HTML 架构、不拆 CommandManager）遵守——本项 diff 主战场为 `CollisionAndSim.cpp` + collision 单测/注册。
+- **IMPLEMENTATION.md**：声明与真实 diff 对齐；明确 L 段 Unreachable/ConfigJump 有代码路径、本轮无独立几何单测——无夸大「已有专用几何单测」。
+- **设计基线**：段内采样防「端点不撞中间撞」（OLP 设计 M10/校验相关）与本项回写+门禁可见数据面一致；本项不声称关闭 RISK-001。
+- **项 1 依赖**：默认 `validateProgram` 拒 Collision 已 APPROVED；本项负责把段中扫掠写入 `target.cache.status`，使该门禁能看见段中硬撞。未草率复用项 1 空话——本轮通读了 CollisionAndSim 全文与本项 hunk。
+- **PlanDocs/STATUS.md** 仍应保持 IDLE（执行方声明未改）；根 Plan / DIR-001 未在本项触及。
+
+---
+
+## 构建与测试证据（采信用户机；box 未复跑）
+
+- 机器：`DESKTOP-L4AMHKJ`；时间：2026-10-29 ~17:14 Asia/Singapore (UTC+8)
+- `Tools\Compile.bat` **exit 0**
+- `SiFastSuiteOLP_AllTests`：**771 passed / 0 failed**
+- 显式 PASS（与源码断言文案一致）：mid-segment hard sweep → Collision 回写；`cache.valid` 仍 true；默认 `validateProgram` 拒段中撞；9b Near 不短路硬撞且最终 Collision
+- `--verify` 仍写出 `WELD_001.ls`：仅 Near（clearance below safe），无硬撞阻断——符合 Near=Warning 可导出设计
+- **采信用户机，本审核未在 box 复跑**（box 无完整 Qt+OCCT+vcpkg Windows 工具链）。静态 Read/`git diff`/`rg` 已核对实现与断言。
+
+---
+
+## 残留风险（APPROVED 必须列）
+
+1. **L 段 Unreachable/ConfigJump 回写无独立几何单测**：代码已接 `upgradeTargetCacheFromSegmentIssue`（`:309-310` / `:330-331`），但本轮验收单测聚焦扫掠 Collision（Test 9/9b）。项 3 可加锁测。
+2. **Test 9b 几何依赖放大 `collisionSafeClearanceMm=120`**：以制造「先 Near 后 Hard」采样序；断言以 `sawHard`+status=Collision 为主，`sawNear` 仅 detail。结构上 Near 标志已不短路，但若某机采样从未触发 Near issue，测试仍可通过——不削弱 Hard 路径覆盖。
+3. **同 Hard 档位不互覆盖**：`upgrade` 用严格更高 tier；若端点已是 `ConfigJump`/`Collision`，后续同档扫掠 Hard 不改 `issueMessage`。默认门禁下两者均可拒导出，安全不漏；消息文案可能保留先到者。
+4. **Soft 状态可被扫掠 Near 升级**：`Singularity`/`NearJointLimit`/`Valid` 属 Soft；段中 Near 可覆盖端点 Singularity。计划未要求保护 Singularity，属可接受行为，UI/诊断时需知。
+5. **项 3/4 未开**：UTF-8 路径加固、RISK-001 `.ls` 水印仍 OPEN；RISK-001 运动学符号仍冻结。不挡本项 APPROVED。
+6. **工作树仍含项 1 已审 diff**：`FanucLsPostProcessor*` / `LsExportDialog` / `SampleSession` / `test_postprocessor` 等与本项并存于 working tree；本轮只审项 2 相关路径，不把项 1 结论重开。
+
+---
+
+## 本轮范围内无 CHANGES_REQUESTED
+
+四条 PASS → **APPROVED**。下一步：仅当本 STATUS=APPROVED 后由执行方开项 3（`FIX-EXPORT-GATE-003`）。
+
+---
+
+# 审核结论 — FIX-EXPORT-GATE-001 Round 1
+
+> **Task ID**：`FIX-EXPORT-GATE-001`
+> **Task**：后处理默认门禁（P0-1 + P0-3）：`blockOnCollision`/`blockOnConfigJump` 默认拒止、NearCollision/Singularity Warning、LsExportDialog 黄警示、SampleSession 拒写正式 WELD_001.ls、单测锁定默认配置
+> **Round**：1
+> **Reviewer**：Si_FastSuite_Audit_X（独立审核执行端）
+> **Reviewed at**：2026-10-29 Asia/Singapore (UTC+8)
+> **Executor**：执行方（Si_FastSuite）
+> **Verdict**：**APPROVED**
+>
+> 本轮为独立深度审核：通读 working tree `git diff` 与相关函数全文（非仅 hunk），追踪 `validateProgram` → `generateLsString` → `exportToFile`、`LsExportDialog` OK/Warning 路径、`SampleSession` 写 `WELD_001.ls` 路径及单测断言。对照权威：`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` 项 1、`CRDocs/IMPLEMENTATION.md`、设计基线 M12 后处理相关。**未读取**任何 `Si_FastSuite_Audit_Report*.md`。**未改**业务/测试源码；**未开项 2**；仅更新本文件与 `STATUS.md`。测试结果采信用户机（DESKTOP-L4AMHKJ）实测写入 `IMPLEMENTATION.md` §四，本审核未在 box 复跑 Windows 编译/ctest。
+
+## 总判定
+
+| 项 | 结论 |
+|---|---|
+| 1. `LsPostConfig` 默认 `blockOnCollision`/`blockOnConfigJump` = true | **PASS** |
+| 2. `validateProgram`：ConfigJump 门禁开→Error；NearCollision/Singularity→Warning | **PASS** |
+| 3. `LsExportDialog`：碰撞阻断默认勾选；ok+Warning 黄列；ConfigJump 保持默认门禁 | **PASS** |
+| 4. `SampleSession`：默认校验失败/阻断优先失败返回，不静默写正式 `WELD_001.ls` | **PASS** |
+| 5. `tests/test_postprocessor.cpp` 锁定默认拒止 Collision + ConfigJump | **PASS** |
+
+五项范围全部实质达标，与 `FIX-EXPORT-SAFETY-PLAN.md` 项 1 及 `IMPLEMENTATION.md` 声明一致，未见夸大。**Verdict = APPROVED**。项 2（扫掠→`target.cache`）明确未做，见下方残留风险（不阻断本项通过）。
+
+---
+
+## 逐条证据（≥3 条 `文件:行号` / 条）
+
+### 1) `LsPostConfig` 默认 true + `blockOnConfigJump` — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `include/olp/io/FanucLsPostProcessor.h:15` | `bool blockOnCollision{true};`（旧默认 false，diff 已改） |
+| `include/olp/io/FanucLsPostProcessor.h:16` | 新增 `bool blockOnConfigJump{true};`，位于 Collision 与 Unreachable 之间 |
+| `tests/test_postprocessor.cpp:207-208` | `check(LsPostConfig{}.blockOnCollision && LsPostConfig{}.blockOnConfigJump, ...)` 锁定默认 |
+
+与 PLAN「默认改为 true / 新增 blockOnConfigJump{true}」及 IMPLEMENTATION §1 一致。
+
+### 2) `validateProgram` 严重度分流 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `src/io/FanucLsPostProcessor.cpp:109-116` | `Collision` 仅在 `config.blockOnCollision` 时记 **Error**（默认已开） |
+| `src/io/FanucLsPostProcessor.cpp:118-127` | `ConfigJump`：`blockOnConfigJump` → Error，否则 Warning |
+| `src/io/FanucLsPostProcessor.cpp:129-145` | `NearCollision` / `Singularity` → **Warning**（不挡 `ok`） |
+| `src/io/FanucLsPostProcessor.cpp:202-203` | `result.ok = !result.hasErrors();` Warning 不置 `ok=false` |
+| `src/io/FanucLsPostProcessor.cpp:210-220` | `generateLsString` 先 `validateProgram`；`!ok` 返回空串拒写 |
+| `src/io/FanucLsPostProcessor.cpp:380-389` | `exportToFile` → `generateLsString`，空 body 返回 false |
+
+调用链闭环：默认配置下端点 Collision/ConfigJump → Error → `ok=false` → 拒生成/拒导出；NearCollision/Singularity → Warning → 可导出。与 PLAN/IMPLEMENTATION 一致，无夸大。
+
+### 3) `LsExportDialog` UI 门禁与黄警示 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `src/ui/LsExportDialog.cpp:49-50` | `chkBlockCollision_->setChecked(true)`（旧 false） |
+| `include/olp/ui/LsExportDialog.h:29` | `io::LsPostConfig config_{};` 成员默认含 `blockOnConfigJump=true` |
+| `src/ui/LsExportDialog.cpp:103-106` | `refreshPreview` 只写回 collision/arc/home 四字段，**不覆盖** `blockOnConfigJump` |
+| `src/ui/LsExportDialog.cpp:127-149` | `ok && !issues.empty()` → 黄色「校验通过（含警告，可导出）」+ 明细 `#e5c07b`；仅无 issue 时纯绿 |
+| `src/ui/LsExportDialog.cpp:123-125,199` | 预览与 `exportToFile` 均使用同一 `config_` |
+
+无 ConfigJump 勾选框时依赖默认门禁——符合计划「keep config default」。禁止纯绿掩盖 Warning 已落实。
+
+### 4) `SampleSession` 优先失败返回 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `src/ui/SampleSession.cpp:206-215` | 仿真 `blockingIssue`：Collision / Unreachable / JointLimitExceeded / ConfigJump / `hasConfigJumpInLinear` |
+| `src/ui/SampleSession.cpp:221-223` | 默认 `validateProgram(sampleProg)`；`refuseProductionLs = !lsVal.ok \|\| blockingIssue` |
+| `src/ui/SampleSession.cpp:227-239` | 拒写分支：不调用 `exportToFile`；仅非拒绝时写 `build/WELD_001.ls` |
+| `src/ui/SampleSession.cpp:243-250` | 拒绝时 `exitCode=2`，summary「导出门禁拒绝写出正式 WELD_001.ls」；旧「文件仍已写出」文案已删除 |
+
+选择「优先失败返回」符合 PLAN。HTML 预览路径保留。注：当仅有段内扫掠问题、端点 cache 仍 Valid 时，靠 `blockingIssue`（sim.issues）拒写——属对本项门禁的额外弥补，不能替代项 2 的 cache 回写。
+
+### 5) 单测锁定默认拒止 — PASS
+
+| 证据 | 说明 |
+|---|---|
+| `tests/test_postprocessor.cpp:207-208` | 默认两开关均为 true |
+| `tests/test_postprocessor.cpp:209-213` | 默认配置 + Collision → `!ok` + `generateLsString` 空 |
+| `tests/test_postprocessor.cpp:215-221` | 默认配置 + ConfigJump → Error 拒导出 |
+| `tests/test_postprocessor.cpp:223-227` | `blockOnConfigJump=false` → Warning 可导出 |
+| `tests/test_postprocessor.cpp:229-239` | NearCollision / Singularity → Warning 可导出 |
+
+静态验证测试文案与 IMPLEMENTATION §四所列 PASS 名称一致。
+
+---
+
+## 与文档一致性
+
+- **PLAN 项 1**：五条范围均已落地；非目标（不改 CollisionAndSim 扫掠）遵守——`src/algo/*` 无本轮 diff。
+- **IMPLEMENTATION.md**：声明与真实 diff 对齐，无夸大「项 2 已做」；明确未改 OpwKinematics / HTML 架构 / 根 Plan。
+- **设计基线 M12**：命名校验、输出预览、后处理配置等与本次默认门禁加固方向一致；本项不声称关闭 RISK-001。
+- **PlanDocs/STATUS.md** 仍为 IDLE；根 `Plan.md` / `.claude/Plan.md` 未改——符合独立新计划约束。
+
+---
+
+## 构建与测试证据（采信用户机；box 未复跑）
+
+- 机器：`DESKTOP-L4AMHKJ`，路径 `C:\Users\mimovr\Desktop\TEmp\Si_FastSuite`
+- 时间：2026-10-29 约 16:17–16:19 Asia/Singapore (UTC+8)
+- 重建：`FanucLsPostProcessor.obj` / `test_postprocessor.obj` / `olp_tests.exe` / `SiFastSuiteOLP.exe`
+- `LastTest.log`：`SiFastSuiteOLP_AllTests` **765 passed, 0 failed**
+- 显式 PASS（与源码断言文案一致）：默认启用两门禁；默认拒 Collision；默认拒 ConfigJump；`blockOnConfigJump=false` 时 ConfigJump 为 Warning 可导出；NearCollision/Singularity 默认 Warning 可导出
+- **测试结果采信用户机实测，本审核未在 box 复跑**（box 无完整 Qt+OCCT+vcpkg Windows 工具链）。静态 `rg`/Read 已确认测试代码锁定默认行为。
+
+---
+
+## 残留风险（必须；项 2 未做）
+
+1. **项 2 未做（P0 残留）**：`CollisionAndSim.cpp` 段内扫掠（约 `postedSweepIssue` / `sweepCollided`，见 `src/algo/CollisionAndSim.cpp:234-315`）仅向 `sim.issues` 推送 Collision/NearCollision，**不回写**受影响 `target.cache.status`。后处理 `validateProgram` 只看端点 cache。因此「首尾 Valid、段中硬撞」在仅调用后处理 API（无 SampleSession 的 sim 旁路）时仍可能漏拦。SampleSession 用 `blockingIssue` 部分弥补，**不能**视为项 2 完成。须在 `FIX-EXPORT-GATE-002` 处理。
+2. **NearCollision 扫掠短路**：当前 `postedSweepIssue=true` 后同段后续硬碰撞采样可被跳过——属项 2 范围，本项未改。
+3. **UI 无 ConfigJump 开关**：关闭需改代码或后续加 checkbox；本项按计划接受。
+4. **默认变严**：依赖旧「默认放行 Collision/ConfigJump」的外部脚本须显式关开关。
+5. **项 3/4 未做**：UTF-8 路径加固、RISK-001 `.ls` 水印——计划串行后续项，不挡本项 APPROVED。
+
+---
+
+## 本轮范围内无 CHANGES_REQUESTED
+
+无需修改点。仅当开 `FIX-EXPORT-GATE-002` 时实施扫掠/cache 回写。
+
+---
+
 # 审核结论 — BUGFIX-COMPILE-BAT-001 Round 1
 
 > **Task ID**：`BUGFIX-COMPILE-BAT-001`

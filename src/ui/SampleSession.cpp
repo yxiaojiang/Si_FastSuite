@@ -215,24 +215,42 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
         }
     }
 
+    // FIX-EXPORT-GATE-001: under default LsPostConfig, prefer fail-return — do not silently
+    // write a production-looking WELD_001.ls when validateProgram fails or sim reported
+    // blocking Collision/Unreachable/JointLimit/ConfigJump issues.
+    const auto& sampleProg = doc.controllers[0].programs[0];
+    const auto lsVal = olp::io::FanucLsPostProcessor::validateProgram(sampleProg);
+    const bool refuseProductionLs = !lsVal.ok || blockingIssue;
+
     const std::string lsOut = wsRoot + "/build/WELD_001.ls";
     const std::string htmlOut = wsRoot + "/build/WELD_001_Preview.html";
-    const bool lsOk = olp::io::FanucLsPostProcessor::exportToFile(doc.controllers[0].programs[0], lsOut);
+    bool lsOk = false;
+    if (refuseProductionLs) {
+        std::cerr << "Refusing production WELD_001.ls write (FIX-EXPORT-GATE-001 prefer fail-return).\n";
+        for (const auto& is : lsVal.issues) {
+            if (is.severity == olp::io::LsValidationIssue::Severity::Error) {
+                std::cerr << "      -> LS Error: " << is.message << "\n";
+            }
+        }
+        if (blockingIssue && lsVal.ok) {
+            std::cerr << "      -> Simulation reported blocking issues not yet reflected as post-processor Errors.\n";
+        }
+    } else {
+        lsOk = olp::io::FanucLsPostProcessor::exportToFile(sampleProg, lsOut);
+    }
     const bool htmlOk = olp::io::HtmlAnimationExporter::exportSingleFileHtml(
-        htmlOut, doc.controllers[0].programs[0], doc.sceneNodes, simRes);
+        htmlOut, sampleProg, doc.sceneNodes, simRes);
     if (!lsOk || !htmlOk) {
         std::cerr << "Export failed. .ls=" << (lsOk ? "ok" : "failed")
                   << " html=" << (htmlOk ? "ok" : "failed") << "\n";
-        result.exitCode = 1;
-        result.summary = "导出失败。";
+        result.exitCode = refuseProductionLs ? 2 : 1;
+        result.summary = refuseProductionLs
+            ? "导出门禁拒绝写出正式 WELD_001.ls（校验/阻断问题）。"
+            : "导出失败。";
         return finish(result);
     }
-    if (blockingIssue) {
-        std::cerr << "Verification found blocking reachability or collision issues. Files were written for inspection.\n";
-        result.exitCode = 2;
-    } else {
-        result.exitCode = 0;
-    }
+
+    result.exitCode = 0;
 
     std::ostringstream summary;
     summary.setf(std::ios::fixed);
@@ -240,9 +258,6 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
     summary << "示例工位已加载。节拍 " << result.cycleTimeSec
             << " 秒，焊接 " << result.weldTimeSec
             << " 秒，" << result.frameCount << " 帧。";
-    if (result.exitCode != 0) {
-        summary << " 有阻塞问题，文件仍已写出。";
-    }
     result.summary = summary.str();
 
     std::cout << "      -> Exported FANUC .ls: " << lsOut << "\n";

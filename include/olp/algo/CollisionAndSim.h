@@ -128,6 +128,14 @@ public:
         const std::vector<core::SceneNode>& sceneNodes,
         double sampleStepSec = 0.05) const;
 
+
+    // FIX-EXPORT-GATE-005 / OPEN-P1-4: Hard-tier upgrade policy used by segment writeback.
+    // Same Soft < Near < Hard tiers; within Hard, Collision replaces ConfigJump/Unreachable/
+    // JointLimitExceeded so export-blocking Collision is not masked by an earlier Hard status.
+    static bool shouldUpgradeCacheStatus(
+        core::TargetValidationState current,
+        core::TargetValidationState incoming) noexcept;
+
 private:
     const OpwKinematics& kinematics_;
     core::UnitsSettings settings_;

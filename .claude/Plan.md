@@ -1,6 +1,6 @@
 # Plan.md — 当前活跃事项
 
-> 最近刷新：2026-10-29。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001`。
+> 最近刷新：2026-10-29 Asia/Singapore（UTC+8）。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001`。`FIX-EXPORT-SAFETY` 已收口并移入 `Plan-archive.md`，不再列为本文件活跃实现项。
 
 ## 里程碑达成度
 
@@ -13,7 +13,7 @@
 | 导入整工位 STEP，换成可动 M-10iA | 完成 | 方案 A 与 Test 4 |
 | TcpGizmo 示教，撤销和重做 | 完成 | 边拾取与手柄已落地，且旋转平移解耦与撤销性能瓶颈已闭环修复 |
 | 视口里播放轨迹 | 完成 | TCP 轨迹、TCP 预览球与连杆 0～6 烘焙位姿驱动均已落地（`M11-005`） |
-| 导出 `.ls` 并在 ROBOGUIDE 跑出一致轨迹 | 部分完成 | 能生成程序，没有上机对拍（`RISK-001`） |
+| 导出 `.ls` 并在 ROBOGUIDE 跑出一致轨迹 | 部分完成 | 默认门禁与草稿水印已落地（FIX-EXPORT CLOSED）；仍无上机/ROBOGUIDE 对拍（`RISK-001`） |
 | 工程文件保存和打开 | 完成 | `M14-PROJECT-JSON-001` Round 3 APPROVED。`M14-012`、`M14-013` 仍延期 |
 
 ### M2 可演示闭环
@@ -26,10 +26,12 @@
 | 2D PDF 工艺报告 | 部分完成 | `M13-REPORT-PDF-001` 已通过；焊缝清单、问题清单、离屏多视角在 `M13-006` |
 | 单文件 HTML 三维动画 | 未做 | 现导出是二维 TCP 折线 |
 | 3D PDF 五天熔断 | 完成 | 执行熔断收口（`RISK-003` CLOSED），三维可交互仿真交付统一收口至基于 Web 标准的单文件离线 HTML 3D 动画包，2D 报告由 QPdfWriter 承载 |
-| 交互与视口操作体验 | 完成 | 工业级转盘相机（Turntable Orbit）、键位功能映射、Dock 分割条无死锁弹性布局均已落地（759 项测试全过） |
+| 交互与视口操作体验 | 完成 | 工业级转盘相机（Turntable Orbit）、键位功能映射、Dock 分割条无死锁弹性布局均已落地 |
 
 ## 正在做的事
 
-1. **[OPEN] 无 ROBOGUIDE 继续开发（`RISK-001`）。** 用户决定暂不安装。耦合保持 +1，圈数仍按 J1、J4、J6。关节程序不能当已对过示教器的成品。
+1. **[OPEN] `RISK-001`（主线首选）** — 无 ROBOGUIDE / 真机金样对拍前，J2/J3 耦合符号、圈数轴与法兰相对示教器位姿仍未核验。导出水印与红条只是草稿门禁，不关闭本风险。用户决定暂不安装 ROBOGUIDE 时，关节程序不能当已对过示教器的成品。
+2. **（可选备注，非新 PlanDocs 话题）** FIX-EXPORT 残留 P2（文档级 freshness P2-A、GATE-006 负路径测弱、SampleSession 旧 `.ls` 等）跟踪在 `CRDocs/REVIEW.md` FULL REAUDIT 与 `CRDocs/DEFERRED.md`；用户点名清理前不另开实现计划，**勿重开** `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`。
+3. **下一步等待用户** — 指定处理 `RISK-001`、清理上述 P2，或开启新主线。提问阶段只分析不改码；`olp_algo` 无 Qt；UI 经 CommandManager；禁止对本仓库使用 Cursor CloudAgent。
 
-已完成项移入 `Plan-archive.md`。回退间隙 `RISK-002`，以及 `CRDocs/DEFERRED.md` 里的延期项仍有效。第 7 步已通过。HTML 三维动画仍是「未做」。
+已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix 叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。HTML 三维动画仍是「未做」。

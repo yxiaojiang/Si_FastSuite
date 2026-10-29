@@ -120,6 +120,7 @@ add_library(olp_io STATIC
     src/io/FanucLsPostProcessor.cpp
     src/io/HtmlAnimationExporter.cpp
     src/io/ProjectSerializer.cpp
+    src/io/Utf8Path.cpp
 )
 target_include_directories(olp_io PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

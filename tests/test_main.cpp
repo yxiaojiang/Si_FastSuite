@@ -44,6 +44,8 @@ int main(int argc, char* argv[]) {
      testFanucLsGeneration();
      testPathEditsAndCommandGates();
   testSweepCollisionBetweenClearTargets();
+  testNearSweepDoesNotShortCircuitHardCollision();
+  testHardTierCollisionPrefersOverConfigJump();
      testApproachTransitClearsWall();
      testMainWindowZones();
     testBRepMeshRenderingAndEdgePicking();

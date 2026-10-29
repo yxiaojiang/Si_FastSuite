@@ -3,6 +3,7 @@
 #endif
 
 #include "olp/io/ProjectSerializer.h"
+#include "olp/io/Utf8Path.h"
 
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -28,20 +29,6 @@ using json = nlohmann::json;
 constexpr int kCurrentSchemaVersion = 1;
 constexpr const char* kFileFormatTag = "SiFastSuite_Project";
 constexpr const char* kGeneratorTag = "SiFastSuite OLP v0.1.0";
-
-std::filesystem::path utf8ToPath(const std::string& utf8Str) {
-#ifdef _WIN32
-    if (utf8Str.empty()) return {};
-    const int wideLen = MultiByteToWideChar(CP_UTF8, 0, utf8Str.c_str(), -1, nullptr, 0);
-    if (wideLen <= 0) return std::filesystem::u8path(utf8Str);
-    std::wstring wideStr(static_cast<size_t>(wideLen), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8Str.c_str(), -1, wideStr.data(), wideLen);
-    if (!wideStr.empty() && wideStr.back() == L'\0') wideStr.pop_back();
-    return std::filesystem::path(wideStr);
-#else
-    return std::filesystem::u8path(utf8Str);
-#endif
-}
 
 // --- Math & Vector Helpers ---
 

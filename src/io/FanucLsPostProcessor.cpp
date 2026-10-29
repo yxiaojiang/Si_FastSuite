@@ -1,4 +1,5 @@
 #include "olp/io/FanucLsPostProcessor.h"
+#include "olp/io/Utf8Path.h"
 
 #include <cctype>
 #include <filesystem>
@@ -106,9 +107,13 @@ LsValidationResult FanucLsPostProcessor::validateProgram(
                 });
             }
 
-            if (config.blockOnCollision && t.cache.status == core::TargetValidationState::Collision) {
+            // FIX-EXPORT-GATE-005 / OPEN-P1-3: always surface Collision — Error when gate on,
+            // Warning when gate off (never silent pure-green with hard hits).
+            if (t.cache.status == core::TargetValidationState::Collision) {
                 result.issues.push_back({
-                    LsValidationIssue::Severity::Error,
+                    config.blockOnCollision
+                        ? LsValidationIssue::Severity::Error
+                        : LsValidationIssue::Severity::Warning,
                     op.id,
                     t.id,
                     "Target '" + tLabel + "' has hard collision"
@@ -117,10 +122,30 @@ LsValidationResult FanucLsPostProcessor::validateProgram(
 
             if (t.cache.status == core::TargetValidationState::ConfigJump) {
                 result.issues.push_back({
-                    LsValidationIssue::Severity::Warning,
+                    config.blockOnConfigJump
+                        ? LsValidationIssue::Severity::Error
+                        : LsValidationIssue::Severity::Warning,
                     op.id,
                     t.id,
                     "Target '" + tLabel + "' has arm configuration jump"
+                });
+            }
+
+            if (t.cache.status == core::TargetValidationState::NearCollision) {
+                result.issues.push_back({
+                    LsValidationIssue::Severity::Warning,
+                    op.id,
+                    t.id,
+                    "Target '" + tLabel + "' has near-collision clearance warning"
+                });
+            }
+
+            if (t.cache.status == core::TargetValidationState::Singularity) {
+                result.issues.push_back({
+                    LsValidationIssue::Severity::Warning,
+                    op.id,
+                    t.id,
+                    "Target '" + tLabel + "' is near a singularity"
                 });
             }
 
@@ -212,6 +237,8 @@ std::string FanucLsPostProcessor::generateLsString(
         mnLines.push_back(body);
     };
 
+    // RISK-001 draft gate: always watermark /MN — do not treat export as production TP download.
+    addMnLine("  ! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)");
     addMnLine("  UFRAME_NUM=" + std::to_string(program.uframeNumber));
     addMnLine("  UTOOL_NUM=" + std::to_string(program.utoolNumber));
 
@@ -369,13 +396,14 @@ bool FanucLsPostProcessor::exportToFile(
         return false;
     }
 
-    std::filesystem::path p(outputFilePath);
+    // Same UTF-8 path semantics as ProjectSerializer (Windows CP936-safe).
+    const std::filesystem::path p = utf8ToPath(outputFilePath);
     if (p.has_parent_path()) {
         std::error_code ec;
         std::filesystem::create_directories(p.parent_path(), ec);
     }
 
-    std::ofstream ofs(outputFilePath, std::ios::binary);
+    std::ofstream ofs(p, std::ios::binary);
     if (!ofs.is_open()) {
         if (errorOut) *errorOut = "Could not open file for writing: " + outputFilePath;
         return false;
@@ -399,13 +427,19 @@ bool FanucLsPostProcessor::exportControllerPrograms(
         return false;
     }
 
-    std::filesystem::path dir(outputDir);
+    // Keep UTF-8 directory string; exportToFile applies utf8ToPath.
+    const std::filesystem::path dir = utf8ToPath(outputDir);
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
 
     bool allSuccess = true;
     for (const auto& prog : controller.programs) {
-        const std::string filePath = (dir / (prog.name + ".ls")).string();
+        std::string filePath = outputDir;
+        if (!filePath.empty()) {
+            const char last = filePath.back();
+            if (last != '/' && last != '\\') filePath.push_back('/');
+        }
+        filePath += prog.name + ".ls";
         std::string err;
         if (exportToFile(prog, filePath, config, &err)) {
             if (exportedFiles) exportedFiles->push_back(filePath);

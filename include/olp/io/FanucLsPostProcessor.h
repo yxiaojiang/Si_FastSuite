@@ -12,7 +12,8 @@ struct LsPostConfig {
     bool includeArcWeldingAppl{true};
     bool appendReturnHome{true};
     bool emitHomeAsJointTarget{false};
-    bool blockOnCollision{false};
+    bool blockOnCollision{true};
+    bool blockOnConfigJump{true};
     bool blockOnUnreachable{true};
     int maxCommentLength{16};
     int maxProgramCommentLength{32};

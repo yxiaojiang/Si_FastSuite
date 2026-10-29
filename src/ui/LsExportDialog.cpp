@@ -29,6 +29,18 @@ void LsExportDialog::setupUi() {
     mainLayout->setContentsMargins(12, 12, 12, 12);
     mainLayout->setSpacing(10);
 
+    // RISK-001: persistent banner — not overwritten by refreshPreview status.
+    auto* riskBanner = new QLabel(this);
+    riskBanner->setWordWrap(true);
+    riskBanner->setTextFormat(Qt::RichText);
+    riskBanner->setText(QString::fromUtf8(
+        "<div style='background-color:#5c1a1a; color:#ffcccc; border:2px solid #e06c75; "
+        "border-radius:4px; padding:10px 12px;'>"
+        "<b>⚠ RISK-001 草稿门禁</b> — 尚未完成示教器 / ROBOGUIDE 金样对拍。"
+        "本导出仅为草稿，<b>严禁直接作为成品下发真机</b>。"
+        "</div>"));
+    mainLayout->addWidget(riskBanner);
+
     // Header info / status
     statusLabel_ = new QLabel(this);
     statusLabel_->setTextFormat(Qt::RichText);
@@ -47,7 +59,7 @@ void LsExportDialog::setupUi() {
     chkHomeJoint_ = new QCheckBox(QString::fromUtf8("Home 输出为 GP1 关节点"), optGroup);
     chkHomeJoint_->setChecked(false);
     chkBlockCollision_ = new QCheckBox(QString::fromUtf8("阻断碰撞点导出"), optGroup);
-    chkBlockCollision_->setChecked(false);
+    chkBlockCollision_->setChecked(true);
 
     optLayout->addWidget(chkArcAppl_);
     optLayout->addWidget(chkReturnHome_);
@@ -105,6 +117,10 @@ void LsExportDialog::refreshPreview() {
     config_.emitHomeAsJointTarget = chkHomeJoint_->isChecked();
     config_.blockOnCollision = chkBlockCollision_->isChecked();
 
+    // FIX-EXPORT-GATE-005 / OPEN-P1-2: re-sim against current scene before trusting caches
+    // so geometry edits cannot leave a pure-green stale Valid export preview.
+    (void)controller_.ensureProgramSimulatedForExport("");
+
     const auto& doc = controller_.document();
     const core::Program* activeProg = nullptr;
     for (const auto& cu : doc.controllers) {
@@ -125,12 +141,28 @@ void LsExportDialog::refreshPreview() {
     const std::string lsText = io::FanucLsPostProcessor::generateLsString(*activeProg, config_, &errStr);
 
     if (valResult.ok && !lsText.empty()) {
-        statusLabel_->setText(QString::fromUtf8(
-            "<span style='color:#98c379;'><b>✓ 语法与运动学校验通过</b></span> "
-            "| 程序: <b>%1</b> | 操作数: %2 | 注释: \"%3\"")
-            .arg(QString::fromStdString(activeProg->name))
-            .arg(activeProg->operations.size())
-            .arg(QString::fromStdString(activeProg->comment)));
+        QString issuesHtml;
+        for (const auto& is : valResult.issues) {
+            // Warnings only expected when ok==true; list them in yellow — never hide behind pure green.
+            issuesHtml += QString::fromUtf8("<br/>• <span style='color:#e5c07b;'>%1</span>")
+                              .arg(QString::fromStdString(is.message));
+        }
+        if (!valResult.issues.empty()) {
+            statusLabel_->setText(QString::fromUtf8(
+                "<span style='color:#e5c07b;'><b>⚠ 校验通过（含警告，可导出）</b></span> "
+                "| 程序: <b>%1</b> | 操作数: %2 | 注释: \"%3\"%4")
+                .arg(QString::fromStdString(activeProg->name))
+                .arg(activeProg->operations.size())
+                .arg(QString::fromStdString(activeProg->comment))
+                .arg(issuesHtml));
+        } else {
+            statusLabel_->setText(QString::fromUtf8(
+                "<span style='color:#98c379;'><b>✓ 语法与运动学校验通过</b></span> "
+                "| 程序: <b>%1</b> | 操作数: %2 | 注释: \"%3\"")
+                .arg(QString::fromStdString(activeProg->name))
+                .arg(activeProg->operations.size())
+                .arg(QString::fromStdString(activeProg->comment)));
+        }
         codeEdit_->setPlainText(QString::fromStdString(lsText));
     } else {
         QString issuesHtml;

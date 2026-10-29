@@ -87,6 +87,10 @@ public:
     const algo::SimulationResult& lastSimulationResult() const noexcept { return lastSimulationResult_; }
 
     // M12: FANUC .ls validation, preview & export
+    // FIX-EXPORT-GATE-005 / OPEN-P1-2: when the document has collision-relevant geometry,
+    // re-simulate the program against the current scene so export does not trust a stale
+    // Valid cache. Returns false if the program cannot be found.
+    bool ensureProgramSimulatedForExport(const std::string& programId = "");
     io::LsValidationResult validateProgramForExport(const std::string& programId = "") const;
     std::string previewFanucLs(const std::string& programId = "", std::string* errorOut = nullptr) const;
     bool exportFanucLs(
@@ -120,6 +124,10 @@ private:
     void notifySelectionChanged();
     void handleDocumentChanged();
     void syncRobotJointsFromSelectedTarget();
+    // True when scene has non-Ignored collision geometry that can invalidate prior Valid caches.
+    bool documentHasCollisionRelevantGeometry() const noexcept;
+    // Const-path gate: collision geometry present but no cached sim frames → stale / missing sim.
+    bool exportSimulationMissingOrStale() const noexcept;
 
     bool inValidation_{false};
 
@@ -138,6 +146,8 @@ private:
     std::vector<SelectionListener> selectionListeners_{};
     int nextSelectionListenerId_{1};
     algo::SimulationResult lastSimulationResult_{};
+    // Set by ensureProgramSimulatedForExport; cleared on document change before re-validation.
+    bool exportSimEnsured_{false};
     int lastSampleExitCode_{0};
     int lastFrameCount_{0};
     double lastCycleTimeSec_{0.0};

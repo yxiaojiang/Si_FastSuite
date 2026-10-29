@@ -161,6 +161,7 @@ void testSweepCollisionBetweenClearTargets() {
     op.targets.push_back(target);
     program.operations.push_back(op);
 
+    // Endpoint poses are physically clear before simulation (see startHits/endHits above).
     const auto sim = engine.validateAndSimulateProgram(
         program,
         olp::core::Transform4d::identity(),
@@ -177,11 +178,134 @@ void testSweepCollisionBetweenClearTargets() {
             sweepHit = true;
         }
     }
-    const bool endpointClear =
-        program.operations[0].targets[0].cache.status != olp::core::TargetValidationState::Collision;
-    check(sweepHit && endpointClear,
+    const auto& endCache = program.operations[0].targets[0].cache;
+    // FIX-EXPORT-GATE-002: mid-segment hard hit must write back target.cache.status.
+    // Old assertion required endpointClear (no writeback); intentionally flipped.
+    check(sweepHit,
           "Joint interpolation reports a torch sweep through a fixture the targets miss",
           issueText);
+    check(endCache.status == olp::core::TargetValidationState::Collision,
+          "FIX-EXPORT-GATE-002: mid-segment hard sweep writes Collision back to target.cache.status",
+          "status=" + std::to_string(static_cast<int>(endCache.status)) + " msg=" + endCache.issueMessage);
+    check(endCache.valid,
+          "FIX-EXPORT-GATE-002: cache.valid stays true when endpoint IK exists (collision is status-only)");
+    const auto lsVal = olp::io::FanucLsPostProcessor::validateProgram(program);
+    check(!lsVal.ok && lsVal.hasErrors(),
+          "FIX-EXPORT-GATE-002: after validateAndSimulateProgram, default validateProgram rejects mid-segment Collision writeback");
+}
+
+
+void testNearSweepDoesNotShortCircuitHardCollision() {
+    std::cout << "\n--- Test 9b: FIX-EXPORT-GATE-002 NearCollision must not short-circuit hard sweep ---\n";
+    const auto robot = olp::device::RobotModel::createFanucM10iA();
+    olp::algo::OpwKinematics kin(robot);
+    olp::core::UnitsSettings settings;
+    // Inflate safe clearance so approaching samples become NearCollision before the mid hard hit.
+    settings.collisionSafeClearanceMm = 120.0;
+    olp::algo::CollisionAndSimEngine engine(kin, settings);
+    const auto utool = olp::core::Transform4d::identity();
+    const auto home = robot.homeJointsRad;
+    auto endJoints = home;
+    endJoints[0] += 0.4;
+
+    const double jDist = olp::algo::OpwKinematics::weightedJointDistance(home, endJoints);
+    const double sampleStep = 0.05;
+    const double segDuration = std::max(0.2, jDist / 1.5);
+    const int numSteps = std::max(2, static_cast<int>(std::ceil(segDuration / sampleStep)));
+    const int midStep = std::max(1, numSteps / 2);
+    const double alpha = static_cast<double>(midStep) / static_cast<double>(numSteps);
+    std::array<double, 6> midJoints{};
+    for (size_t k = 0; k < 6; ++k) {
+        midJoints[k] = home[k] + alpha * (endJoints[k] - home[k]);
+    }
+    const auto midTcp = kin.forwardKinematics(midJoints, utool).tcpPoseInBase;
+    const olp::core::Vec3 gateCenter = midTcp.pos + (-midTcp.rot.colZ()) * 95.0;
+    constexpr double half = 6.0;
+
+    olp::core::SceneNode gate;
+    gate.id = "sweep_gate_near_then_hard";
+    gate.name = "Sweep_Gate_NearThenHard";
+    gate.type = olp::core::SceneNodeType::Part;
+    gate.visible = true;
+    gate.collisionRole = olp::core::CollisionRole::Fixture;
+    gate.collisionMesh.bboxMin = gateCenter - olp::core::Vec3{half, half, half};
+    gate.collisionMesh.bboxMax = gateCenter + olp::core::Vec3{half, half, half};
+    const std::vector<olp::core::SceneNode> scene{gate};
+
+    const auto endTcp = kin.forwardKinematics(endJoints, utool).tcpPoseInBase;
+    olp::core::Program program;
+    program.id = "prog_sweep_near_hard";
+    program.startState.homeJointsRad = home;
+    olp::core::Operation op;
+    op.id = "op_sweep_near_hard";
+    olp::core::Target target;
+    target.id = "via_end";
+    target.name = "Joint_End";
+    target.role = olp::core::TargetRole::VIA;
+    target.motion = olp::core::MotionType::J;
+    target.poseInUFrame = endTcp;
+    op.targets.push_back(target);
+    program.operations.push_back(op);
+
+    const auto sim = engine.validateAndSimulateProgram(
+        program,
+        olp::core::Transform4d::identity(),
+        olp::core::Transform4d::identity(),
+        utool,
+        scene,
+        sampleStep);
+
+    bool sawNear = false;
+    bool sawHard = false;
+    std::string issueText;
+    for (const auto& issue : sim.issues) {
+        issueText += issue.description + "; ";
+        if (issue.state == olp::core::TargetValidationState::NearCollision) {
+            sawNear = true;
+        }
+        if (issue.state == olp::core::TargetValidationState::Collision) {
+            sawHard = true;
+        }
+    }
+    const auto& endCache = program.operations[0].targets[0].cache;
+    check(sawHard,
+          "FIX-EXPORT-GATE-002: hard sweep Collision is recorded even if NearCollision appeared earlier",
+          issueText);
+    check(sawNear,
+          "FIX-EXPORT-GATE-005: NearCollision must be observed before hard Collision (locks no-short-circuit)",
+          issueText);
+    check(endCache.status == olp::core::TargetValidationState::Collision,
+          "FIX-EXPORT-GATE-002: final target.cache.status is Collision (not stuck on NearCollision)",
+          "status=" + std::to_string(static_cast<int>(endCache.status)) +
+              " nearIssueSeen=" + std::string(sawNear ? "yes" : "no") +
+              " msg=" + endCache.issueMessage);
+    check(endCache.valid,
+          "FIX-EXPORT-GATE-002: cache.valid remains true after Near→Collision upgrade");
+}
+
+
+void testHardTierCollisionPrefersOverConfigJump() {
+    std::cout << "\n--- Test 9c: FIX-EXPORT-GATE-005 Hard-tier Collision replaces ConfigJump ---\n";
+    using S = olp::core::TargetValidationState;
+    // Soft → Hard always upgrades
+    check(olp::algo::CollisionAndSimEngine::shouldUpgradeCacheStatus(S::Valid, S::Collision),
+          "FIX-EXPORT-GATE-005: Valid → Collision upgrades");
+    check(olp::algo::CollisionAndSimEngine::shouldUpgradeCacheStatus(S::NearCollision, S::Collision),
+          "FIX-EXPORT-GATE-005: NearCollision → Collision upgrades");
+    // Same Hard tier: Collision must replace ConfigJump / Unreachable (OPEN-P1-4)
+    check(olp::algo::CollisionAndSimEngine::shouldUpgradeCacheStatus(S::ConfigJump, S::Collision),
+          "FIX-EXPORT-GATE-005: ConfigJump → Collision upgrades (Collision preferred within Hard)");
+    check(olp::algo::CollisionAndSimEngine::shouldUpgradeCacheStatus(S::Unreachable, S::Collision),
+          "FIX-EXPORT-GATE-005: Unreachable → Collision upgrades within Hard");
+    check(olp::algo::CollisionAndSimEngine::shouldUpgradeCacheStatus(S::JointLimitExceeded, S::Collision),
+          "FIX-EXPORT-GATE-005: JointLimitExceeded → Collision upgrades within Hard");
+    // Must not downgrade Collision to ConfigJump / Near
+    check(!olp::algo::CollisionAndSimEngine::shouldUpgradeCacheStatus(S::Collision, S::ConfigJump),
+          "FIX-EXPORT-GATE-005: Collision is not replaced by ConfigJump");
+    check(!olp::algo::CollisionAndSimEngine::shouldUpgradeCacheStatus(S::Collision, S::NearCollision),
+          "FIX-EXPORT-GATE-005: Collision is not replaced by NearCollision");
+    check(!olp::algo::CollisionAndSimEngine::shouldUpgradeCacheStatus(S::Collision, S::Valid),
+          "FIX-EXPORT-GATE-005: Collision is not replaced by Valid");
 }
 
 

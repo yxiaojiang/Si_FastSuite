@@ -1,5 +1,11 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-29：FIX-EXPORT-SAFETY GATE-001..006 CLOSED（全盘复审 PASS_WITH_RISKS / APPROVED）
+
+1. **[DONE] 导出安全门禁修复计划收口。** 任务轨 `FIX-EXPORT-GATE-001`..`006` + `FIX-EXPORT-FULL-REAUDIT`。`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` **CLOSED**。协调方 `CRDocs/FULL_REAUDIT_COORDINATOR_2026-10-29.md` 结论 **PASS_WITH_RISKS**；Audit_X `CRDocs/REVIEW.md` FULL REAUDIT 交叉验证后 **APPROVED**；`CRDocs/STATUS.md` 记 APPROVED。计划范围内无新 P0/P1。Windows 声称全量测试 **805 passed / 0 failed**（box 未复跑）。
+2. **关键交付**：默认 `blockOnCollision`/`blockOnConfigJump`；Near 不短路硬撞；Hard 同级 Collision 优先；导出前 ensure（含 `exportAllPrograms`）；共享 `utf8ToPath`；RISK-001 `/MN` 水印 + 对话框红条；Opw 未改；`olp_algo` 无 Qt。
+3. **残留（不挡关闭）**：主线 `RISK-001` 仍 OPEN（水印≠修运动学）；P2-A 文档级 freshness、GATE-006 负路径测弱、SampleSession 旧 `.ls` 等见 REVIEW/DEFERRED。**勿因 P2 重开** FIX-EXPORT 计划。
+
 ## 2026-10-28：结束 3D PDF 悬置并加 T 型接头回归（DIR-001 第 7 步）
 
 1. **[DONE] 3D PDF 熔断收口，并建立 Scene 1 T 型接头回归。** 任务号 `M15-TJOINT-REGRESSION-001`，Round 1 **APPROVED**。`RISK-003` 关闭。Test 23 覆盖该 STEP 的导入、跨零件焊缝、平分线、焊丝豁免、轨迹和 `.ls`。审核方复跑 752 项通过，`--verify` 退出码 0。`M15-001` 延期：平分线绝对值、碰撞状态和夹具角色断言仍可收紧。HTML 三维动画仍未做。

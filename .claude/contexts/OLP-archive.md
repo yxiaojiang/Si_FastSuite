@@ -2,6 +2,8 @@
 
 > 状态：**当前活跃主线**（2026-10-26：有 OCCT 时 STEP 先走 OCCT。腹板和前箱壁的第 3 条焊缝与内置解析端点、方向一致。审计修复在 `02b8005`；Qt 6.12.0 与 OCCT 8.0.0 已安装；`build-full` 已编译）。按模块记的已做步骤在 `.claude/contexts/steps/`。
 
+> **2026-10-29 Asia/Singapore**：`FIX-EXPORT-SAFETY` GATE-001..006 CLOSED；协调方 `CRDocs/FULL_REAUDIT_COORDINATOR_2026-10-29.md` = PASS_WITH_RISKS；Audit_X `CRDocs/REVIEW.md` FULL REAUDIT = APPROVED；计划 `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` 保持 CLOSED；`RISK-001` 仍 OPEN。详见 `.claude/SessionBrief.md` / `Plan-archive.md`。
+
 ## 0. 2026-10-25 场景核验拍板与 C++ 工程骨架落地
 
 1. **真实场景核验与 3.4 节拍板结论**：
