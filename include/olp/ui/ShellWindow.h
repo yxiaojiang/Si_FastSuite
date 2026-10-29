@@ -66,6 +66,7 @@ private:
     void showPropertiesForScene(const QString& nodeId);
     void showPropertiesForTarget(const QString& targetId);
     void updateUndoActions();
+    void updateActionStates();
     void fillIssues();
     void applySelection();
     void syncJogFromRobot();
@@ -74,6 +75,8 @@ private:
     MainWindow& controller_;
     std::function<void()> loader_{};
     OcctViewport* viewport_{nullptr};
+    size_t lastSceneNodeCount_{0};
+    size_t lastSeamCount_{0};
     int documentListenerId_{-1};
     int selectionListenerId_{-1};
 
@@ -98,6 +101,13 @@ private:
     QAction* olpAction_{nullptr};
     QAction* undoAction_{nullptr};
     QAction* redoAction_{nullptr};
+    QAction* exportMenuAction_{nullptr};
+    QAction* exportPdfAction_{nullptr};
+    QAction* exportAction_{nullptr};
+    QAction* pathAction_{nullptr};
+    QAction* slerpAction_{nullptr};
+    QAction* prevTargetAction_{nullptr};
+    QAction* nextTargetAction_{nullptr};
     struct RefreshGuard {
         int& depth;
         explicit RefreshGuard(int& d) : depth(d) { ++depth; }

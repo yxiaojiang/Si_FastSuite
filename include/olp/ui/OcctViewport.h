@@ -5,6 +5,7 @@
 
 #ifdef OLP_HAS_QT6
 #include <QWidget>
+class QEnterEvent;
 #endif
 
 #include <functional>
@@ -114,6 +115,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void enterEvent(QEnterEvent* event) override;
 #endif
 
 private:

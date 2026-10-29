@@ -29,6 +29,7 @@
 #include <QPixmap>
 #include <QPointer>
 #include <QPolygonF>
+#include <QScrollArea>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QPlainTextEdit>
@@ -103,17 +104,27 @@ bool ShellWindow::zoneChecked(const QString& title) const {
 }
 
 void ShellWindow::buildChrome() {
+    setCursor(Qt::ArrowCursor);
     setStyleSheet(QString::fromUtf8(
         "QMainWindow { background: #d5dde4; }"
-        "QMenuBar { background: #243746; color: #f2f5f7; }"
-        "QMenuBar::item:selected { background: #3d5d78; }"
-        "QMenu { background: #f7f9fb; color: #1c2830; }"
+        "QMenuBar { background: #243746; color: #f2f5f7; padding: 2px 6px; }"
+        "QMenuBar::item { background: transparent; padding: 4px 10px; border-radius: 4px; }"
+        "QMenuBar::item:hover, QMenuBar::item:selected { background: #3d5d78; color: #ffffff; }"
+        "QMenuBar::item:pressed { background: #1a2a36; color: #ffffff; }"
+        "QMenu { background: #ffffff; color: #1c2830; border: 1px solid #c5d0d9; padding: 4px 0px; border-radius: 4px; }"
+        "QMenu::item { padding: 6px 28px 6px 24px; background: transparent; }"
+        "QMenu::item:selected, QMenu::item:hover { background: #3d5d78; color: #ffffff; }"
+        "QMenu::item:disabled { color: #9aa7b1; background: transparent; }"
+        "QMenu::item:disabled:selected, QMenu::item:disabled:hover { color: #9aa7b1; background: transparent; }"
+        "QMenu::separator { height: 1px; background: #e1e7ec; margin: 4px 8px; }"
         "QToolBar { background: #f4f7fa; border: 0; border-bottom: 1px solid #d5dee6; spacing: 0; padding: 0; }"
         "QToolButton { color: #1c2830; padding: 2px 4px; border: 1px solid transparent; border-radius: 4px; background: transparent; }"
         "QToolButton:hover { background: #e5f1f7; }"
         "QToolButton:checked { background: #d5edf6; color: #143644; border-color: #1f6f8b; }"
         "QToolButton:disabled { color: #93a1ab; }"
-        "QDockWidget::title { background: #2c4558; color: white; padding: 6px; }"
+        "QDockWidget { color: #ffffff; font-weight: bold; }"
+        "QDockWidget > QWidget { color: #1c2830; font-weight: normal; }"
+        "QDockWidget::title { background: #243746; color: #ffffff; padding: 6px 10px; font-weight: bold; }"
         "QStatusBar { background: #243746; color: #f2f5f7; }"
         "QTreeWidget, QTableWidget, QListWidget, QPlainTextEdit { background: #fbfcfd; color: #1c2830; }"
         "QHeaderView::section { background: #e4ebf1; padding: 4px; }"));
@@ -143,15 +154,15 @@ void ShellWindow::buildChrome() {
     fileMenu->insertAction(loadAction, importAction);
     loadAction->setToolTip(QString::fromUtf8("导入示例焊接工位并生成焊缝。"));
     connect(loadAction, &QAction::triggered, this, &ShellWindow::loadSample);
-    auto* exportMenuAction = fileMenu->addAction(commandIcon(IconKind::Export, fileInk), QString::fromUtf8("导出 FANUC .ls 程序..."));
-    exportMenuAction->setToolTip(QString::fromUtf8("导出当前工位程序为 FANUC ASCII .ls 格式。"));
-    connect(exportMenuAction, &QAction::triggered, this, [this] {
+    exportMenuAction_ = fileMenu->addAction(commandIcon(IconKind::Export, fileInk), QString::fromUtf8("导出 FANUC .ls 程序..."));
+    exportMenuAction_->setToolTip(QString::fromUtf8("导出当前工位程序为 FANUC ASCII .ls 格式。"));
+    connect(exportMenuAction_, &QAction::triggered, this, [this] {
         LsExportDialog dlg(controller_, this);
         dlg.exec();
     });
-    auto* exportPdfAction = fileMenu->addAction(commandIcon(IconKind::Export, fileInk), QString::fromUtf8("导出 2D PDF 工艺报告..."));
-    exportPdfAction->setToolTip(QString::fromUtf8("导出当前工位 SOP 工艺指导书为 PDF 文件。"));
-    connect(exportPdfAction, &QAction::triggered, this, [this] {
+    exportPdfAction_ = fileMenu->addAction(commandIcon(IconKind::Export, fileInk), QString::fromUtf8("导出 2D PDF 工艺报告..."));
+    exportPdfAction_->setToolTip(QString::fromUtf8("导出当前工位 SOP 工艺指导书为 PDF 文件。"));
+    connect(exportPdfAction_, &QAction::triggered, this, [this] {
         const QString path = QFileDialog::getSaveFileName(
             this, QString::fromUtf8("导出 2D PDF 工艺报告"),
             QStringLiteral("Workcell_SOP_Report.pdf"),
@@ -220,7 +231,7 @@ void ShellWindow::buildChrome() {
     menuBar()->addMenu(QString::fromUtf8("帮助"))->addAction(
         QString::fromUtf8("关于"), this, [this] {
             statusBar()->showMessage(QString::fromUtf8(
-                "SiFastSuite OLP。左键旋转，中键或右键平移，滚轮向前拉近、向后拉远。"));
+                "SiFastSuite OLP。右键自由旋转，中键移动平移，左键拾取选择，滚轮依光标缩放。"));
         });
 
     auto* fitAction = new QAction(commandIcon(IconKind::Fit, viewInk), QString::fromUtf8("整个工作台"), this);
@@ -236,10 +247,10 @@ void ShellWindow::buildChrome() {
     pickAction->setIconText(QString::fromUtf8("拾取"));
     pickAction->setCheckable(true);
     pickAction->setChecked(true);
-    auto* pathAction = new QAction(commandIcon(IconKind::Path, pathInk), QString::fromUtf8("生成路径"), this);
-    pathAction->setIconText(QString::fromUtf8("路径"));
-    pathAction->setToolTip(QString::fromUtf8("由选中焊缝自动生成操作路径。"));
-    connect(pathAction, &QAction::triggered, this, [this] {
+    pathAction_ = new QAction(commandIcon(IconKind::Path, pathInk), QString::fromUtf8("生成路径"), this);
+    pathAction_->setIconText(QString::fromUtf8("路径"));
+    pathAction_->setToolTip(QString::fromUtf8("由选中焊缝自动生成操作路径。"));
+    connect(pathAction_, &QAction::triggered, this, [this] {
         if (controller_.generateOperationFromSelectedSeam()) {
             statusBar()->showMessage(QString::fromUtf8("已由焊缝生成焊接操作路径。"), 3000);
             refreshFromDocument();
@@ -248,10 +259,10 @@ void ShellWindow::buildChrome() {
         }
     });
 
-    auto* slerpAction = new QAction(commandIcon(IconKind::Path, pathInk), QString::fromUtf8("姿态平滑"), this);
-    slerpAction->setIconText(QString::fromUtf8("平滑"));
-    slerpAction->setToolTip(QString::fromUtf8("对选中操作路径多点姿态执行 SLERP 球形线性插值平滑。"));
-    connect(slerpAction, &QAction::triggered, this, [this] {
+    slerpAction_ = new QAction(commandIcon(IconKind::Path, pathInk), QString::fromUtf8("姿态平滑"), this);
+    slerpAction_->setIconText(QString::fromUtf8("平滑"));
+    slerpAction_->setToolTip(QString::fromUtf8("对选中操作路径多点姿态执行 SLERP 球形线性插值平滑。"));
+    connect(slerpAction_, &QAction::triggered, this, [this] {
         const auto selectedIds = selectedTargetIdsFromTable();
         bool ok = false;
         if (selectedIds.size() >= 2) {
@@ -276,29 +287,29 @@ void ShellWindow::buildChrome() {
     });
 
     auto* simAction = disabledAction(this, QString::fromUtf8("仿真"), QString::fromUtf8("播放机器人轨迹。") + later, IconKind::Sim, pathInk);
-    auto* exportAction = new QAction(commandIcon(IconKind::Export, pathInk), QString::fromUtf8("导出"), this);
-    exportAction->setIconText(QString::fromUtf8("导出"));
-    exportAction->setToolTip(QString::fromUtf8("导出当前工位程序为 FANUC ASCII .ls 格式。"));
-    connect(exportAction, &QAction::triggered, this, [this] {
+    exportAction_ = new QAction(commandIcon(IconKind::Export, pathInk), QString::fromUtf8("导出"), this);
+    exportAction_->setIconText(QString::fromUtf8("导出"));
+    exportAction_->setToolTip(QString::fromUtf8("导出当前工位程序为 FANUC ASCII .ls 格式。"));
+    connect(exportAction_, &QAction::triggered, this, [this] {
         LsExportDialog dlg(controller_, this);
         dlg.exec();
     });
 
-    auto* prevTargetAction = new QAction(QString::fromUtf8("上一目标点"), this);
-    prevTargetAction->setShortcut(QKeySequence(Qt::Key_BracketLeft));
-    prevTargetAction->setToolTip(QString::fromUtf8("单步切换到上一个目标点 [快捷键: '[']"));
-    connect(prevTargetAction, &QAction::triggered, this, [this] {
+    prevTargetAction_ = new QAction(QString::fromUtf8("上一目标点"), this);
+    prevTargetAction_->setShortcut(QKeySequence(Qt::Key_BracketLeft));
+    prevTargetAction_->setToolTip(QString::fromUtf8("单步切换到上一个目标点 [快捷键: '[']"));
+    connect(prevTargetAction_, &QAction::triggered, this, [this] {
         controller_.stepTarget(false);
     });
-    addAction(prevTargetAction);
+    addAction(prevTargetAction_);
 
-    auto* nextTargetAction = new QAction(QString::fromUtf8("下一目标点"), this);
-    nextTargetAction->setShortcut(QKeySequence(Qt::Key_BracketRight));
-    nextTargetAction->setToolTip(QString::fromUtf8("单步切换到下一个目标点 [快捷键: ']']"));
-    connect(nextTargetAction, &QAction::triggered, this, [this] {
+    nextTargetAction_ = new QAction(QString::fromUtf8("下一目标点"), this);
+    nextTargetAction_->setShortcut(QKeySequence(Qt::Key_BracketRight));
+    nextTargetAction_->setToolTip(QString::fromUtf8("单步切换到下一个目标点 [快捷键: ']']"));
+    connect(nextTargetAction_, &QAction::triggered, this, [this] {
         controller_.stepTarget(true);
     });
-    addAction(nextTargetAction);
+    addAction(nextTargetAction_);
     loadAction->setIconText(QString::fromUtf8("示例"));
     newAction->setIconText(QString::fromUtf8("新建"));
     openAction->setIconText(QString::fromUtf8("打开"));
@@ -324,7 +335,7 @@ void ShellWindow::buildChrome() {
         {layoutAction_, olpAction_}));
     ribbonLayout->addWidget(groupDivider(ribbon));
     ribbonLayout->addWidget(commandGroup(ribbon, QString::fromUtf8("编程"),
-        {pickAction, pathAction, slerpAction, simAction, exportAction}));
+        {pickAction, pathAction_, slerpAction_, simAction, exportAction_}));
     ribbonLayout->addWidget(groupDivider(ribbon));
     ribbonLayout->addWidget(commandGroup(ribbon, QString::fromUtf8("视图"), {fitAction}));
     ribbonLayout->addStretch(1);
@@ -408,7 +419,11 @@ void ShellWindow::buildChrome() {
         controller_,
         [this] { return selectedTargetIdsFromTable(); },
         [this] { refreshFromDocument(); });
-    propertyDock_ = makeDock(this, QString::fromUtf8("属性"), propertyPanel_);
+    auto* propScroll = new QScrollArea();
+    propScroll->setWidget(propertyPanel_);
+    propScroll->setWidgetResizable(true);
+    propScroll->setFrameShape(QFrame::NoFrame);
+    propertyDock_ = makeDock(this, QString::fromUtf8("属性"), propScroll);
 
     auto* jogBody = new QWidget();
     auto* jogLayout = new QVBoxLayout(jogBody);
@@ -442,7 +457,11 @@ void ShellWindow::buildChrome() {
         });
     }
     jogLayout->addStretch(1);
-    jogDock_ = makeDock(this, QString::fromUtf8("关节点动"), jogBody);
+    auto* jogScroll = new QScrollArea();
+    jogScroll->setWidget(jogBody);
+    jogScroll->setWidgetResizable(true);
+    jogScroll->setFrameShape(QFrame::NoFrame);
+    jogDock_ = makeDock(this, QString::fromUtf8("关节点动"), jogScroll);
 
     issueList_ = new IssueListPanel();
     connect(issueList_, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
@@ -517,6 +536,7 @@ void ShellWindow::buildChrome() {
 
     resizeDocks({sceneDock_, programDock_}, {280, 280}, Qt::Horizontal);
     resizeDocks({propertyDock_, jogDock_}, {280, 220}, Qt::Vertical);
+    updateActionStates();
 }
 
 void ShellWindow::applyWorkbench(ActiveWorkbench workbench) {
@@ -632,12 +652,26 @@ void ShellWindow::refreshFromDocument() {
     rebuildTargetTable();
     fillIssues();
     syncJogFromRobot();
-    updateUndoActions();
+    updateActionStates();
     if (timeline_ != nullptr) {
         timeline_->invalidate();
     }
     if (viewport_ != nullptr) {
-        viewport_->syncScene();
+        const auto& doc = controller_.document();
+        const bool sceneChanged = (doc.sceneNodes.size() != lastSceneNodeCount_ || doc.seams.size() != lastSeamCount_);
+        lastSceneNodeCount_ = doc.sceneNodes.size();
+        lastSeamCount_ = doc.seams.size();
+
+        if (sceneChanged) {
+            viewport_->syncScene();
+        } else {
+            for (const auto& node : doc.sceneNodes) {
+                if (node.type == core::SceneNodeType::Robot) {
+                    viewport_->syncRobotPosture(node.currentJointsRad);
+                    break;
+                }
+            }
+        }
     }
     applySelection();
 }
@@ -740,6 +774,48 @@ void ShellWindow::updateUndoActions() {
     }
     undoAction_->setEnabled(controller_.commandManager().canUndo());
     redoAction_->setEnabled(controller_.commandManager().canRedo());
+}
+
+void ShellWindow::updateActionStates() {
+    updateUndoActions();
+
+    const auto& doc = controller_.document();
+    bool hasProgramWithTargets = false;
+    size_t totalTargets = 0;
+    for (const auto& cu : doc.controllers) {
+        for (const auto& prog : cu.programs) {
+            for (const auto& op : prog.operations) {
+                totalTargets += op.targets.size();
+                if (!op.targets.empty()) {
+                    hasProgramWithTargets = true;
+                }
+            }
+        }
+    }
+    const bool hasSeams = !doc.seams.empty();
+    const bool hasScene = !doc.sceneNodes.empty();
+
+    if (exportMenuAction_ != nullptr) {
+        exportMenuAction_->setEnabled(hasProgramWithTargets);
+    }
+    if (exportAction_ != nullptr) {
+        exportAction_->setEnabled(hasProgramWithTargets);
+    }
+    if (exportPdfAction_ != nullptr) {
+        exportPdfAction_->setEnabled(hasScene || hasSeams);
+    }
+    if (pathAction_ != nullptr) {
+        pathAction_->setEnabled(hasSeams);
+    }
+    if (slerpAction_ != nullptr) {
+        slerpAction_->setEnabled(totalTargets >= 2);
+    }
+    if (prevTargetAction_ != nullptr) {
+        prevTargetAction_->setEnabled(totalTargets > 0);
+    }
+    if (nextTargetAction_ != nullptr) {
+        nextTargetAction_->setEnabled(totalTargets > 0);
+    }
 }
 
 void ShellWindow::fillIssues() {

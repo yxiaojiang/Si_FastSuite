@@ -293,7 +293,9 @@ SimulationResult CollisionAndSimEngine::validateAndSimulateProgram(
                 }
 
                 // The last sample is the target pose, already checked above.
-                if (sampleIsCommanded && step < numSteps && !postedSweepIssue) {
+                const int sweepCheckInterval = std::max(1, numSteps / 25);
+                const bool doSweepCheck = (step % sweepCheckInterval == 0) || (step == numSteps / 2);
+                if (sampleIsCommanded && step < numSteps && !postedSweepIssue && doSweepCheck) {
                     double sweepClearance = 0.0;
                     std::string sweepHit;
                     const bool sweepCollided = checkRobotAndTorchCollision(

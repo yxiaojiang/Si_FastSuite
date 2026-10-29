@@ -13,6 +13,7 @@
 #include "olp/device/RobotModel.h"
 
 #ifdef OLP_HAS_QT6
+#include <QEnterEvent>
 #include <QFocusEvent>
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -55,6 +56,8 @@
 #include <V3d_Viewer.hxx>
 #include <WNT_Window.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Vec.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
@@ -83,6 +86,10 @@ LRESULT CALLBACK occtRenderWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         }
         EndPaint(hwnd, &ps);
         return 0;
+    }
+    if (msg == WM_SETCURSOR) {
+        SetCursor(LoadCursor(nullptr, IDC_ARROW));
+        return TRUE;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
@@ -157,7 +164,8 @@ OcctViewport::OcctViewport(app::ProjectDocument& doc, app::CommandManager& cmdMg
     setPalette(pal);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
-    setMinimumSize(640, 420);
+    setCursor(Qt::ArrowCursor);
+    setMinimumSize(160, 120);
 }
 
 OcctViewport::~OcctViewport() {
@@ -611,6 +619,11 @@ void OcctViewport::paintEvent(QPaintEvent* event) {
     (void)event;
 }
 
+void OcctViewport::enterEvent(QEnterEvent* event) {
+    QWidget::enterEvent(event);
+    setCursor(Qt::ArrowCursor);
+}
+
 void OcctViewport::wheelEvent(QWheelEvent* event) {
 #ifdef OLP_HAS_OCCT
     if (view_ == nullptr || view_->view.IsNull()) {
@@ -623,11 +636,35 @@ void OcctViewport::wheelEvent(QWheelEvent* event) {
     if (delta == 0) {
         return;
     }
+    const qreal dpr = devicePixelRatioF();
+    const int pixelX = static_cast<int>(std::lround(event->position().x() * dpr));
+    const int pixelY = static_cast<int>(std::lround(event->position().y() * dpr));
     const Handle(Graphic3d_Camera) camera = view_->view->Camera();
-    const double scale = camera->Scale();
     const double notches = std::clamp(std::abs(delta) / 120.0, 1.0, 6.0);
-    const double factor = delta > 0 ? std::pow(1.0 / 1.12, notches) : std::pow(1.12, notches);
-    camera->SetScale(std::clamp(scale * factor, 1.0, 1.0e7));
+
+    const double factor = delta > 0 ? std::pow(1.12, notches) : std::pow(1.0 / 1.12, notches);
+
+    double zoomAtPointXv = 0.0;
+    double zoomAtPointYv = 0.0;
+    view_->view->Convert(pixelX, pixelY, zoomAtPointXv, zoomAtPointYv);
+
+    const double dxv = zoomAtPointXv / factor;
+    const double dyv = zoomAtPointYv / factor;
+
+    camera->SetScale(std::clamp(camera->Scale() / factor, 1.0, 1.0e7));
+
+    const gp_Dir& dir = camera->Direction();
+    const gp_Ax3 cameraCS(camera->Center(), dir.Reversed(), dir ^ camera->Up());
+    const double dx = zoomAtPointXv - dxv;
+    const double dy = zoomAtPointYv - dyv;
+    const gp_Vec cameraPan =
+        gp_Vec(cameraCS.XDirection()) * dx + gp_Vec(cameraCS.YDirection()) * dy;
+    gp_Trsf panTrsf;
+    panTrsf.SetTranslation(cameraPan);
+    camera->Transform(panTrsf);
+
+
+
     view_->view->ZFitAll();
     view_->view->Redraw();
     event->accept();

@@ -343,7 +343,7 @@ bool queryRobotAndTorchCollision(
         if (checkLinks) {
             for (size_t link = 1; link <= 6; ++link) {
                 const double aabbDist = computeAabbMinDistance(linkAabbMin[link], linkAabbMax[link], obsAabbMin, obsAabbMax);
-                if (aabbDist > std::max(outMinClearanceMm, 100.0)) {
+                if (aabbDist >= outMinClearanceMm || aabbDist > 150.0) {
                     continue; // Broadphase culling: discard obviously far apart pairs
                 }
                 const double dist = queryDistanceMm(
@@ -360,7 +360,7 @@ bool queryRobotAndTorchCollision(
         // 2. Check 4 torch spheres along -Z_tcp
         for (size_t s = 0; s < 4; ++s) {
             const double aabbDist = computeAabbMinDistance(sphereAabbMin[s], sphereAabbMax[s], obsAabbMin, obsAabbMax);
-            if (aabbDist > std::max(outMinClearanceMm, 100.0)) {
+            if (aabbDist >= outMinClearanceMm || aabbDist > 150.0) {
                 continue; // Broadphase culling
             }
             const double dist = queryDistanceMm(

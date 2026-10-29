@@ -13,6 +13,7 @@
 
 #ifdef OLP_HAS_QT6
 #include "olp/ui/ShellWindow.h"
+#include <QAction>
 #include <QApplication>
 #include <QListWidget>
 #include <QStringList>
@@ -157,6 +158,29 @@ void testMainWindowZones() {
               shell.zoneChecked(QString::fromUtf8("关节点动")) &&
               !shell.zoneChecked(QString::fromUtf8("程序")),
           "Switching back to the layout workbench hides the program dock");
+
+    check(shell.cursor().shape() == Qt::ArrowCursor, "ShellWindow has default ArrowCursor configured");
+
+    auto findAction = [&](const QString& text) -> QAction* {
+        for (auto* a : shell.findChildren<QAction*>()) {
+            if (a->text() == text) return a;
+        }
+        return nullptr;
+    };
+
+    auto* actExportLs = findAction(QString::fromUtf8("导出 FANUC .ls 程序..."));
+    auto* actExportPdf = findAction(QString::fromUtf8("导出 2D PDF 工艺报告..."));
+    auto* actUndo = findAction(QString::fromUtf8("撤销"));
+    auto* actNew = findAction(QString::fromUtf8("新建"));
+    auto* actOpen = findAction(QString::fromUtf8("打开..."));
+    auto* actLoad = findAction(QString::fromUtf8("加载示例工位"));
+
+    check(actExportLs != nullptr && !actExportLs->isEnabled(), "Empty project: FANUC .ls export is grayed out (disabled)");
+    check(actExportPdf != nullptr && !actExportPdf->isEnabled(), "Empty project: 2D PDF report export is grayed out (disabled)");
+    check(actUndo != nullptr && !actUndo->isEnabled(), "Empty project: Undo is grayed out (disabled)");
+    check(actNew != nullptr && !actNew->isEnabled(), "Unimplemented New action is grayed out (disabled)");
+    check(actOpen != nullptr && actOpen->isEnabled(), "Open action is functional (enabled)");
+    check(actLoad != nullptr && actLoad->isEnabled(), "Load sample action is functional (enabled)");
 #endif
 }
 

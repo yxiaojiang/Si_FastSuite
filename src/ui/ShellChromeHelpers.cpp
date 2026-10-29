@@ -164,6 +164,10 @@ QWidget* groupDivider(QWidget* parent) {
 QDockWidget* makeDock(QMainWindow* owner, const QString& title, QWidget* body) {
     auto* dock = new QDockWidget(title, owner);
     dock->setObjectName(title);
+    QPalette pal = dock->palette();
+    pal.setColor(QPalette::WindowText, QColor(255, 255, 255));
+    pal.setColor(QPalette::Text, QColor(255, 255, 255));
+    dock->setPalette(pal);
     dock->setWidget(body);
     dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
     return dock;

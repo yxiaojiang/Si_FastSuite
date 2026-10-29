@@ -315,8 +315,11 @@ void OcctViewport::mousePressEvent(QMouseEvent* event) {
 
         view_->pressPos = view_->lastPos;
         view_->isClick = true;
-        view_->view->StartRotation(x, y);
-    } else if (event->button() == Qt::MiddleButton || event->button() == Qt::RightButton) {
+    } else if (event->button() == Qt::RightButton) {
+        view_->pressPos = view_->lastPos;
+        view_->rotating = true;
+    } else if (event->button() == Qt::MiddleButton) {
+        view_->pressPos = view_->lastPos;
         view_->panning = true;
     }
 #else
@@ -340,9 +343,11 @@ void OcctViewport::mouseMoveEvent(QMouseEvent* event) {
 
             const core::Transform4d uframeInWorld = computeActiveUFrameInWorld();
             core::Mat3 rotManip = core::Mat3::identity();
+            core::Vec3 origWorldPos(0.0, 0.0, 0.0);
             const auto* target = doc_.findTarget(activeTargetId_);
             if (target != nullptr) {
                 const core::Transform4d targetWorld = uframeInWorld * target->poseInUFrame;
+                origWorldPos = targetWorld.pos;
                 switch (tcpGizmo_.referenceFrame()) {
                 case GizmoRefFrame::Tool:
                     rotManip = targetWorld.rot;
@@ -359,8 +364,11 @@ void OcctViewport::mouseMoveEvent(QMouseEvent* event) {
                 }
             }
 
-            const gp_XYZ transPart = aTrsf.TranslationPart();
-            const core::Vec3 transWorld(transPart.X(), transPart.Y(), transPart.Z());
+            const gp_Pnt origPnt(origWorldPos.x, origWorldPos.y, origWorldPos.z);
+            const gp_Pnt newPnt = origPnt.Transformed(aTrsf);
+            const core::Vec3 transWorld(newPnt.X() - origWorldPos.x,
+                                        newPnt.Y() - origWorldPos.y,
+                                        newPnt.Z() - origWorldPos.z);
             const core::Vec3 rawTrans = rotManip.transposed() * transWorld;
 
             core::Mat3 rotWorld;
@@ -382,20 +390,74 @@ void OcctViewport::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
-    if (event->buttons() & Qt::LeftButton) {
-        if (view_->isClick && (pos - view_->pressPos).manhattanLength() > 4) {
-            view_->isClick = false;
-            view_->rotating = true;
-        }
-        if (view_->rotating) {
-            view_->view->Rotation(pos.x(), pos.y());
+    if (view_->rotating) {
+        const int dx = pos.x() - view_->lastPos.x();
+        const int dy = pos.y() - view_->lastPos.y();
+        if (dx != 0 || dy != 0) {
+            const Handle(Graphic3d_Camera) cam = view_->view->Camera();
+            if (!cam.IsNull()) {
+                const gp_Pnt center = cam->Center();
+                const gp_Pnt eye = cam->Eye();
+                const gp_XYZ vEye = eye.XYZ() - center.XYZ();
+                const double r = vEye.Modulus();
+                if (r > 1e-4) {
+                    constexpr double kPi = 3.14159265358979323846;
+                    const double sinPhi = std::clamp(vEye.Z() / r, -1.0, 1.0);
+                    const double curPhi = std::asin(sinPhi);
+                    const double curTheta = std::atan2(vEye.Y(), vEye.X());
+
+                    const double w = std::max(200.0, static_cast<double>(width()));
+                    const double h = std::max(200.0, static_cast<double>(height()));
+                    const double deltaTheta = -static_cast<double>(dx) * (2.0 * kPi / w);
+                    const double deltaPhi = static_cast<double>(dy) * (kPi / h);
+
+                    constexpr double maxElevation = 88.0 * kPi / 180.0;
+                    const double newPhi = std::clamp(curPhi + deltaPhi, -maxElevation, maxElevation);
+                    const double newTheta = curTheta + deltaTheta;
+
+                    const double cosPhi = std::cos(newPhi);
+                    const gp_XYZ newVEye(
+                        r * cosPhi * std::cos(newTheta),
+                        r * cosPhi * std::sin(newTheta),
+                        r * std::sin(newPhi));
+                    const gp_Pnt newEye(center.XYZ() + newVEye);
+                    const gp_Dir newDir(newVEye.Reversed());
+
+                    gp_XYZ right = newDir.XYZ().Crossed(gp_XYZ(0.0, 0.0, 1.0));
+                    if (right.Modulus() < 1e-4) {
+                        right = gp_XYZ(-std::sin(newTheta), std::cos(newTheta), 0.0);
+                    } else {
+                        right.Normalize();
+                    }
+                    gp_XYZ up = right.Crossed(newDir.XYZ());
+                    up.Normalize();
+                    if (up.Z() < 0.0) {
+                        up.Reverse();
+                    }
+
+                    cam->SetCenter(center);
+                    cam->SetEye(newEye);
+                    cam->SetDirectionFromEye(newDir);
+                    cam->SetUp(gp_Dir(up));
+                    cam->OrthogonalizeUp();
+                    view_->view->Update();
+                    view_->view->Redraw();
+                }
+            }
         }
     } else if (view_->panning) {
         view_->view->Pan(pos.x() - view_->lastPos.x(), view_->lastPos.y() - pos.y());
+    } else if (event->buttons() & Qt::LeftButton) {
+        if (view_->isClick && (pos - view_->pressPos).manhattanLength() > 4) {
+            view_->isClick = false;
+        }
     } else {
         // Pre-selection hover dynamic highlighting
         if (!view_->context.IsNull()) {
             view_->context->MoveTo(pos.x(), pos.y(), view_->view, true);
+        }
+        if (cursor().shape() != Qt::ArrowCursor) {
+            setCursor(Qt::ArrowCursor);
         }
     }
     view_->lastPos = pos;
@@ -419,13 +481,13 @@ void OcctViewport::mouseReleaseEvent(QMouseEvent* event) {
                 }
                 return;
             }
-            if (view_->rotating) {
-                view_->rotating = false;
-            } else if (view_->isClick) {
+            if (view_->isClick) {
                 view_->isClick = false;
                 performPicking(view_->lastPos.x(), view_->lastPos.y());
             }
-        } else if (event->button() == Qt::MiddleButton || event->button() == Qt::RightButton) {
+        } else if (event->button() == Qt::RightButton) {
+            view_->rotating = false;
+        } else if (event->button() == Qt::MiddleButton) {
             view_->panning = false;
         }
     }

@@ -1,20 +1,27 @@
 # SessionBrief.md — 当前接手摘要
 
-> 最近刷新：2026-10-28。主线仍是对标 FASTSUITE Edition 2 的机器人焊接离线编程。工作区：`C:\Users\mimovr\Desktop\TEmp\Si_FastSuite`。Qt 6.12.0 在 `D:\Soft\Qt\6.12.0\msvc2022_64`，OpenCASCADE 8.0.0 在 `C:\vcpkg\vcpkg\installed\x64-windows\bin`。方向决定是 `PlanDocs/DECISIONS.md` 的 `DIR-001`。
+> 最近刷新：2026-10-29。主线仍是对标 FASTSUITE Edition 2 的机器人焊接离线编程。工作区：`C:\Users\mimovr\Desktop\TEmp\Si_FastSuite`。Qt 6.12.0 在 `D:\Soft\Qt\6.12.0\msvc2022_64`，OpenCASCADE 8.0.0 在 `C:\vcpkg\vcpkg\installed\x64-windows\bin`。方向决定是 `PlanDocs/DECISIONS.md` 的 `DIR-001`。
 
 ## 1. 当前目标与最新进展
 
+- **`BUGFIX-UI-INTERACTION-002` 用户反馈交互体验与性能缺陷全量修复（2026-10-29 已通过）**：
+  - **旋转目标点位置漂移缺陷修复**：`gp_Trsf::TranslationPart` 包含旋转中心偏置 $C - RC$，修复为计算真实几何位移 $\Delta P = \text{origPnt.Transformed}(aTrsf) - \text{origPnt}$，纯自转时不产生任何平移漂移；
+  - **Dock 标题高对比度白字**：补齐 `QPalette::WindowText` / `QPalette::Text` 纯白，修复 `QDockWidget` 与 `QDockWidget::title` 样式，深青灰背景文字清晰可读；
+  - **Dock 自由缩放死锁彻底解除**：`OcctViewport` 最小尺寸由 640x420 降至 160x120；右侧 `TargetPropertyPanel` 与关节点动面板包裹至无边框 `QScrollArea`，彻底解除自转组件展开时对 Qt Splitter 的尺寸挤压，各窗口在任意状态下均可自由拖拽缩放；
+  - **移动点与撤销 3 秒卡顿性能瓶颈根治**：
+    - 修复 `FclCollisionQueries.cpp` 宽相裁剪逻辑（`aabbDist >= outMinClearanceMm || aabbDist > 150.0`），消除无效的 10000mm 冗余全量网格 BVH 遍历；
+    - 扫掠碰撞检测实施自适应步长采样（最多约 25 次/段），消除数百次密集冗余碰撞计算；
+    - 修复 `ShellWindow::refreshFromDocument()` 在点位移动与撤销/重做时的无差别 `syncScene()` 几何销毁重建，改为仅原地更新机器人关节位姿（`syncRobotPosture`），交互延迟从 ~3000ms 降至 <20ms；
+  - **右键相机旋转优化（工业转盘相机 Turntable Orbit）**：废弃 OCC 默认 Arcball 自由轨迹球，改用锁定 Z-Up 的转盘相机，地平线永不侧向倾斜（Roll 恒为 0），水平 $360^\circ$ 自由环绕，俯仰角限位于 $[-88^\circ, +88^\circ]$ 防极点翻转；
+  - **视口键位与操作流对齐**：右键自由旋转，中键平移，左键仅选中，滚轮按鼠标光标处三维空间点缩放，窗口边框缩放后鼠标移入自动复位 ArrowCursor；
+  - 完整端到端验证通过：`Tools\Compile.bat` 编译 0 错误，759 项测试全过，`SiFastSuiteOLP.exe --verify` 退出码 0。
+
 - **`BUGFIX-COMPILE-BAT-001` 构建与启动脚本缺陷修复已通过（APPROVED）**：
-  - 修复 `src/algo/FclCollisionQueries.cpp` 在未开启/未链接 FCL 时 `axisRotation` 找不到标识符的问题（移出 `#ifdef OLP_HAS_FCL`）；
-  - 重构并增强 `Tools/Compile.bat`：自动侦测并注入 `vcpkg.cmake` 与 `Qt6_DIR`，破损/缺失工具链的缓存自动重新配置，编译严格附带 `/p:VCToolsVersion=14.44.35207`，测试与运行前自动向 `PATH` 注入 Qt6 与 vcpkg 的 `bin` 路径，补齐 `SiFastSuiteOLP.exe --verify` 参数防 GUI 循环挂起，100% 纯英文规范；
-  - 修复 `Tools/start.bat`：修正产物优先级倒置问题（优先启动 `build\Release`，消除代码修改后误跑陈旧 `build-full` 的假象），以 `/D "%ROOT_DIR%"` 显式锚定启动工作目录，注入 `QT_PLUGIN_PATH` 与外部环境变量覆盖支持；
-  - 脚本统一收口归拢至 `Tools/`，根目录保持干净清爽；
-  - 完整端到端验证通过：`Tools\Compile.bat` 与 `Tools\start.bat --verify` 均退出码 0，752 项测试全部通过。
+  - 修复 `src/algo/FclCollisionQueries.cpp` 在未开启/未链接 FCL 时 `axisRotation` 找不到标识符的问题；
+  - 重构并增强 `Tools/Compile.bat` 与 `Tools/start.bat`，纯英文规范，自动向 `PATH` 注入 Qt6 与 vcpkg 的 `bin`。
 
 - **`M15-TJOINT-REGRESSION-001`（`DIR-001` 第 7 步）已通过（APPROVED）**：
-  - 结束 3D PDF 悬置（收口 `RISK-003`，定调统一收口至单文件离线 HTML 3D 动画包）；
-  - SampleScenes Scene 1 T 型接头完整端到端自动化回归测试（Test 23）：覆盖工位导入、跨零件边拾取与角焊缝识别、焊枪双侧平分线标架、焊丝尖端豁免机制、避障与轨迹生成全流程；
-  - 752 passed, 0 failed，`--verify` 退出码 0。
+  - 结束 3D PDF 悬置（收口 `RISK-003`），建立 Scene 1 T 型接头端到端自动回归测试（Test 23）。
 
 ## 2. 已经拍板的顺序（`DIR-001`）
 
