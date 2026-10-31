@@ -18,7 +18,7 @@ MainWindow::~MainWindow() = default;
 void MainWindow::handleDocumentChanged() {
     if (inValidation_) return;
     inValidation_ = true;
-    exportSimEnsured_ = false;
+    exportSimEnsuredPrograms_.clear();
 
     // 1. Check if selected operation still exists
     if (!selectedOperationId_.empty()) {
@@ -370,6 +370,7 @@ algo::SimulationResult MainWindow::validateOperation(const std::string& operatio
         0.05);
 
     lastSimulationResult_ = result;
+    markProgramEnsured(*prog);
     return result;
 }
 
@@ -550,29 +551,45 @@ bool MainWindow::documentHasCollisionRelevantGeometry() const noexcept {
     return false;
 }
 
-bool MainWindow::exportSimulationMissingOrStale() const noexcept {
-    // Freshness rule (FIX-EXPORT-GATE-005 / OPEN-P1-2):
-    // When collision-relevant geometry exists, export must be backed by either:
-    //   (a) a non-empty lastSimulationResult_.frames from validateOperation / ensure, or
-    //   (b) exportSimEnsured_ after ensureProgramSimulatedForExport (covers empty-frame edge).
+static std::string programCanonicalKey(const core::Program& prog) {
+    if (!prog.id.empty()) {
+        return "id:" + prog.id;
+    }
+    if (!prog.name.empty()) {
+        return "name:" + prog.name;
+    }
+    return "addr:" + std::to_string(reinterpret_cast<uintptr_t>(&prog));
+}
+
+void MainWindow::markProgramEnsured(const core::Program& prog) {
+    exportSimEnsuredPrograms_.insert(programCanonicalKey(prog));
+}
+
+bool MainWindow::isProgramEnsured(const core::Program& prog) const noexcept {
+    return exportSimEnsuredPrograms_.count(programCanonicalKey(prog)) > 0;
+}
+
+bool MainWindow::exportSimulationMissingOrStale(const core::Program* prog) const noexcept {
+    // Freshness rule (FIX-EXPORT-GATE-005 / OPEN-P1-2 / FIX-EXPORT-P2):
+    // When collision-relevant geometry exists, export must be backed by a fresh simulation
+    // for this specific program.
     // Otherwise Valid caches are treated as untrusted/stale for const validate/preview.
     if (!documentHasCollisionRelevantGeometry()) {
         return false;
     }
-    if (exportSimEnsured_) {
-        return false;
+    if (!prog) {
+        prog = findProgramInDoc(doc_, "");
     }
-    return lastSimulationResult_.frames.empty();
+    if (!prog) {
+        return true;
+    }
+    return !isProgramEnsured(*prog);
 }
 
-bool MainWindow::ensureProgramSimulatedForExport(const std::string& programId) {
-    core::Program* prog = findProgramInDocMutable(doc_, programId);
-    if (!prog) {
-        return false;
-    }
-    // No collision geometry → nothing to re-sim for export safety (unit-test path).
+bool MainWindow::ensureProgramSimulated(core::Program& prog) {
+    // No collision geometry -> nothing to re-sim for export safety (unit-test path).
     if (!documentHasCollisionRelevantGeometry()) {
-        exportSimEnsured_ = true;
+        markProgramEnsured(prog);
         return true;
     }
 
@@ -583,7 +600,7 @@ bool MainWindow::ensureProgramSimulatedForExport(const std::string& programId) {
             break;
         }
     }
-    const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(prog->uframeNumber);
+    const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(prog.uframeNumber);
     core::Transform4d utoolOffset = core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
     for (const auto& node : doc_.sceneNodes) {
         if (node.type == core::SceneNodeType::Tool) {
@@ -595,9 +612,17 @@ bool MainWindow::ensureProgramSimulatedForExport(const std::string& programId) {
     algo::OpwKinematics kin(robotModel_);
     algo::CollisionAndSimEngine simEngine(kin, doc_.settings);
     lastSimulationResult_ = simEngine.validateAndSimulateProgram(
-        *prog, robotBaseInWorld, uframeInWorld, utoolOffset, doc_.sceneNodes, 0.05);
-    exportSimEnsured_ = true;
+        prog, robotBaseInWorld, uframeInWorld, utoolOffset, doc_.sceneNodes, 0.05);
+    markProgramEnsured(prog);
     return true;
+}
+
+bool MainWindow::ensureProgramSimulatedForExport(const std::string& programId) {
+    core::Program* prog = findProgramInDocMutable(doc_, programId);
+    if (!prog) {
+        return false;
+    }
+    return ensureProgramSimulated(*prog);
 }
 
 io::LsValidationResult MainWindow::validateProgramForExport(const std::string& programId) const {
@@ -609,7 +634,7 @@ io::LsValidationResult MainWindow::validateProgramForExport(const std::string& p
         return res;
     }
     // Const API cannot re-sim; refuse pure trust of Valid caches when sim is missing.
-    if (exportSimulationMissingOrStale()) {
+    if (exportSimulationMissingOrStale(prog)) {
         io::LsValidationResult res;
         res.ok = false;
         res.issues.push_back({
@@ -630,7 +655,7 @@ std::string MainWindow::previewFanucLs(const std::string& programId, std::string
         if (errorOut) *errorOut = "No program found for preview";
         return {};
     }
-    if (exportSimulationMissingOrStale()) {
+    if (exportSimulationMissingOrStale(prog)) {
         if (errorOut) {
             *errorOut =
                 "Refusing .ls preview: collision geometry present but no fresh simulation "
@@ -668,19 +693,18 @@ bool MainWindow::exportAllPrograms(
         return false;
     }
     bool allSuccess = true;
-    for (const auto& cu : doc_.controllers) {
-        // FIX-EXPORT-GATE-006 / OPEN-P2-GATE005-1: match exportFanucLs — with
-        // collision-relevant geometry, re-sim each program before bulk export;
-        // refuse this controller's export and collect errors if ensure fails.
+    for (auto& cu : doc_.controllers) {
+        // FIX-EXPORT-GATE-006 / FIX-EXPORT-P2-B: match exportFanucLs — with
+        // collision-relevant geometry, re-sim each program directly before bulk export,
+        // avoiding reverse-lookup discrepancies.
         bool controllerEnsureOk = true;
-        for (const auto& prog : cu.programs) {
-            const std::string key = !prog.id.empty() ? prog.id : prog.name;
-            if (!ensureProgramSimulatedForExport(key)) {
+        for (auto& prog : cu.programs) {
+            if (!ensureProgramSimulated(prog)) {
                 controllerEnsureOk = false;
                 allSuccess = false;
                 if (errors) {
                     const std::string label = !prog.name.empty() ? prog.name
-                        : (!key.empty() ? key : std::string("<unnamed>"));
+                        : (!prog.id.empty() ? prog.id : std::string("<unnamed>"));
                     errors->push_back(
                         "No program found for export (ensure failed): " + label);
                 }

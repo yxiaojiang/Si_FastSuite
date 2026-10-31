@@ -1,102 +1,93 @@
-# Implementation Report — Task M13-HTML3D-EXPORT-001 (Round 2)
+# Implementation Report — Task MAINT-CLEANUP-P2-001 (Round 2)
 
-- **Task ID**: `M13-HTML3D-EXPORT-001`
+- **Task ID**: `MAINT-CLEANUP-P2-001`
 - **Round**: `2`
 - **Status**: `READY_FOR_REVIEW`
-- **Executor**: Claude Code (Executor)
-- **Date**: 2026-04-20
+- **Executor**: Executor
+- **Date**: 2026-10-31
 
 ---
 
-## 1. Review Feedback & Fix Summary (Addressing Grok Reviewer Round 1)
+## 1. Round 1 审核意见整改闭环
 
-In Round 1, Grok Reviewer issued a verdict of `CHANGES_REQUESTED` citing two P1 items:
-1. **`M13-HTML3D-001 [OPEN]` 焊枪网格的父坐标系是 link_6，UTOOL 向量在 tool0 系**：
-   - **Root Cause**: `utoolOffset` (e.g. `(0, 0, 150)`) is defined in standard robot flange frame (`tool0`). In FANUC M-10iA URDF, `tool0` has fixed rotation relative to `link_6` of `rpy="3.14159 -1.570796 0"`, which maps `tool0` +Z onto `link_6` +X. Generating the torch body directly along `utoolOffset.pos` in `link_6` caused the torch to extend along `link_6` +Z (world +X in Home pose) while true TCP extends along world -Z, producing a 90° angular error and 212 mm spatial tip-to-TCP discrepancy.
-   - **Fix**:
-     - Introduced `computeFlangeToTool0(const device::RobotModel& robot)` and `makeWeldingTorchMeshInLink6(utoolOffset, flangeToTool0, &outTcpLocalInLink6)` in `src/io/HtmlAnimationDataPrep.cpp`.
-     - Generates the torch geometry along `utoolOffset.pos` in `tool0` coordinates, then maps all vertices and the torch tip (`tcpLocal`) into `link_6` local coordinates via `flangeToTool0`.
-     - When mounted onto `link_6` via `f.linkWorldTransforms[6]`, the world position of the torch tip becomes $T_{link6\_world} \times p_{tcpLocalInLink6} = T_{tool0\_world} \times utoolOffset.pos \equiv f.tcp$.
-   - **Physical Alignment Verification**:
-     - **Home Frame** (`jDeg=[0, 0, 0, 0, -90, 0]`):
-       - `tcpLocal = (150.0, 0.0, 0.0)` in `link_6` local space.
-       - `link_6` matrix origin = `(790.0, 0.0, 1600.0)`, rotation column X = `(0.0, 0.0, -1.0)`.
-       - Computed torch tip world position = `(790.0, 0.0, 1450.0)`.
-       - Target `f.tcp` = `(790.0, 0.0, 1450.0)`.
-       - **Home tip-to-TCP euclidean distance = `0.000000 mm`** (exact match, well within `< 1 mm` acceptance threshold).
-     - **Active Weld Frame** (moving seam point with `arc: true`):
-       - Computed weld torch tip coincides with `f.tcp` within `< 0.0001 mm`.
+在 Round 1 独立代码审核中，Reviewer 给出了 `CHANGES_REQUESTED` 结论，指出 1 项 P1 阻塞问题及延期清单梳理要求：
+1. **`MAINT-001 [OPEN] 仿真记账把不同程序当成同一段（P1）`**：
+   - **根本原因**：Round 1 中 `markProgramEnsured` 将 `id`、`name`、`prog_addr_<ptr>` 分别作为多个独立条目插入同一 `exportSimEnsuredPrograms_` 集合，且 `isProgramEnsured` 进行或（OR）匹配。在多程序工程中，若各程序使用默认名称 `WELD_001` 且具有不同 `id`（如 `prog_1` 与 `prog_2`），当 `prog_1` 执行仿真后，集合中写入了 `WELD_001`；此时对未仿真的 `prog_2` 调用 `validateProgramForExport("prog_2")` 时，因其名称 `WELD_001` 命中而误判为已仿真，导致 const 校验/预览门禁被击穿。
+   - **整改方案**：
+     - 在 `src/ui/MainWindow.cpp` 引入 `programCanonicalKey(const core::Program& prog)` 单一规范键生成机制：
+       ```cpp
+       static std::string programCanonicalKey(const core::Program& prog) {
+           if (!prog.id.empty()) {
+               return "id:" + prog.id;
+           }
+           if (!prog.name.empty()) {
+               return "name:" + prog.name;
+           }
+           return "addr:" + std::to_string(reinterpret_cast<uintptr_t>(&prog));
+       }
+       ```
+     - 一段程序在集合中**严格仅对应一个带前缀的独立键**。`id` 非空时，强锁定使用 `"id:" + prog.id` 记账，彻底阻断利用 `name` 进行二次命中的可能；同时前缀机制杜绝了不同程序之间 `id` 与 `name` 字符串相同导致的误碰。
+     - `markProgramEnsured` 与 `isProgramEnsured` 均严格通过 `programCanonicalKey` 单点记账与判别。
+   - **单测证据**：
+     - 在 `tests/test_postprocessor.cpp` 中新增 `MAINT-001` 专项回归测试：程序 A 为 `id=prog_1, name=WELD_001` 且已 ensure，程序 B 为 `id=prog_2, name=WELD_001` 且未仿真；断言 `validateProgramForExport("prog_2")` 与 `previewFanucLs("prog_2")` 均被正确拦截并包含 `"no fresh simulation"` 报错信息。
 
-2. **`M13-HTML3D-002 [OPEN]` `HtmlAnimationExporter.cpp` 编译单元拆分门禁与行数治理**：
-   - **Root Cause**: `HtmlAnimationExporter.cpp` previously concentrated mesh decimation, STL loading, box generation, frame decimation, JSON serialization, and full HTML/JS template rendering into a single compilation unit, risking violation of the 1000-line soft limit in `.claude/Rules.md`.
-   - **Fix**:
-     - Factored mesh preparation, binary STL parsing, fallback link envelopes, coordinate transformation, frame normalization/decimation, and waypoint extraction into dedicated compilation unit `src/io/HtmlAnimationDataPrep.h` and `src/io/HtmlAnimationDataPrep.cpp`.
-     - Registered `src/io/HtmlAnimationDataPrep.cpp` in `CMakeLists.txt` under `olp_io`.
-     - Kept HTML/CSS/JS export assembly and file writing in `src/io/HtmlAnimationExporter.cpp`.
-     - **Resulting File Line Counts** (all strictly under 1000-line limit):
-       - `src/io/HtmlAnimationExporter.cpp`: **570 lines**
-       - `src/io/HtmlAnimationDataPrep.cpp`: **451 lines**
-       - `src/io/HtmlAnimationDataPrep.h`: **75 lines**
-       - `tests/test_report.cpp`: **760 lines**
-       - `src/ui/ShellWindow.cpp`: **884 lines**
-       - `src/ui/MainWindow.cpp`: **691 lines**
+2. **`MAINT-003 [RESOLVED in Round 2] 拒写时删除旧 .ls 接入 utf8ToPath`**：
+   - 在 `src/ui/SampleSession.cpp` 引入 `#include "olp/io/Utf8Path.h"`。
+   - 拒写分支使用 `std::filesystem::remove(olp::io::utf8ToPath(lsOut), ec)`，与正式写出 `FanucLsPostProcessor::exportToFile` 保持完全一致的跨平台 UTF-8 路径映射。
+
+3. **延期清单规整**：
+   - `CRDocs/DEFERRED.md` 明确将 `FIX-EXPORT-P2` 调整为 `P2-A/B/C` 收口（`CLOSED`）；
+   - `FIX-EXPORT-P2-D`（段内近碰撞覆盖奇异说明）与 `MAINT-002`（`ensureProgramSimulated` 恒返回 true）保持在 `CRDocs/DEFERRED.md` 中继续处于 `OPEN` 状态。
 
 ---
 
-## 2. Modified Files & Line Counts
+## 2. 修改文件与行数门禁清单
 
-| File | Status | Line Count | Rules.md Compliance (<1000) |
+| 文件路径 | 状态 | 修改后行数 | 门禁合规性（< 1000 行软上限，1500 硬上限） |
 |---|---|---|---|
-| `src/io/HtmlAnimationDataPrep.h` | New file | 75 | OK (< 1000) |
-| `src/io/HtmlAnimationDataPrep.cpp` | New file | 451 | OK (< 1000) |
-| `src/io/HtmlAnimationExporter.cpp` | Refactored | 570 | OK (< 1000) |
-| `CMakeLists.txt` | Modified (`olp_io` target) | 223 | OK (< 1000) |
-| `tests/test_report.cpp` | Updated with mathematical tip-vs-TCP checks | 760 | OK (< 1000) |
-| `include/olp/io/HtmlAnimationExporter.h` | Header | 28 | OK (< 1000) |
-| `src/ui/MainWindow.cpp` | Clean | 691 | OK (< 1000) |
-| `src/ui/ShellWindow.cpp` | Clean | 884 | OK (< 1000) |
+| `src/app/CommandManager.cpp` | 精简拆分 | **477** | **OK**（稳定在 400~600 行黄金区间） |
+| `src/app/ToolpathCommands.cpp` | 拆分新编译单元 | **528** | **OK**（稳定在 400~600 行黄金区间） |
+| `include/olp/app/CommandManager.h` | 保持兼容 | **336** | **OK**（远低于 1000 行） |
+| `include/olp/ui/MainWindow.h` | 接口与状态更新 | **166** | **OK**（远低于 1000 行） |
+| `src/ui/MainWindow.cpp` | `programCanonicalKey` 记账 | **790** | **OK**（低于 1000 行软上限） |
+| `src/ui/SampleSession.cpp` | `utf8ToPath` 接入 | **273** | **OK**（远低于 1000 行） |
+| `tests/test_postprocessor.cpp` | MAINT-001 专项断言 | **693** | **OK**（远低于 1000 行） |
+| `CMakeLists.txt` | 构建配置更新 | **224** | **OK** |
+| `CRDocs/DEFERRED.md` | 清单梳理与收口 | **446** | **OK** |
 
 ---
 
-## 3. Automated Test Assertions & Verification Evidence
+## 3. 实跑验证证据
 
-Executed `.\Tools\Compile.bat` (Release configuration) on Windows:
-
-1. **Compilation**: Clean build with zero errors and zero warnings across all libraries (`olp_core`, `olp_device`, `olp_cad`, `olp_algo`, `olp_io`, `olp_app`, `olp_ui`, `SiFastSuiteOLP`, `olp_tests`).
-2. **Automated Test Suite (`ctest` / `SiFastSuiteOLP_AllTests`)**:
-   - `build/Testing/Temporary/LastTest.log`: **`Summary: 827 passed, 0 failed.`** (100% pass rate).
-   - Section 8 (`M13-HTML3D-EXPORT-001` & `M13-HTML3D-001`):
-     - `[PASS] M13-HTML3D: runSampleWorkcell succeeds for 3D HTML export test`
-     - `[PASS] M13-HTML3D: MainWindow::exportHtmlAnimation succeeds on Chinese UTF-8 path`
-     - `[PASS] M13-HTML3D: Chinese UTF-8 HTML file exists on disk`
-     - `[PASS] M13-HTML3D: Exported 3D HTML size is non-empty (>15 KB) and within 50 MB budget`
-     - `[PASS] M13-HTML3D: Zero external http/https URLs (100% offline self-contained)`
-     - `[PASS] M13-HTML3D: Contains 3D triangle mesh vertices and indices for workcell scene parts`
-     - `[PASS] M13-HTML3D: Scene parts distinguish Workpiece and Fixture roles`
-     - `[PASS] M13-HTML3D: Contains all 7 robot link 3D meshes (base_link..link_6)`
-     - `[PASS] M13-HTML3D: Contains 3D Welding_Torch mesh mounted on flange`
-     - `[PASS] M13-HTML3D: Baked animation frames contain per-frame linkWorldTransforms and Arc ON/OFF states`
-     - `[PASS] M13-HTML3D: Contains 3D turntable orbit, right-click pan, wheel zoom, and camera reset controls`
-     - `[PASS] M13-HTML3D: Contains Play/Pause, Stop, and 0.5x/1x/2x/4x speed selector`
-     - `[PASS] M13-HTML3D: Contains operation/seam start jump selector and 3D waypoint label toggle`
-     - `[PASS] M13-HTML3D: Backward-compatible 4-argument exportSingleFileHtml succeeds`
-     - `[PASS] M13-HTML3D: Keyframe decimation reduces collinear/stationary redundant frames while keeping transitions`
-     - `[PASS] M13-HTML3D: Empty output path fails gracefully with error message`
-     - `[PASS] M13-HTML3D-001: Successfully extracted torch tcpLocal from exported HTML`
-     - `[PASS] M13-HTML3D-001: Found bakedFrames block in HTML`
-     - `[PASS] M13-HTML3D-001: Parsed Home frame link_6 transform and TCP from HTML`
-     - `[PASS] M13-HTML3D-001: Home frame torch tip coincides with TCP (<0.05 mm)` (measured `0.000000 mm`)
-     - `[PASS] M13-HTML3D-001: Parsed active weld frame link_6 transform and TCP from HTML`
-     - `[PASS] M13-HTML3D-001: Moving weld frame torch tip coincides with TCP (<0.05 mm)` (measured `< 0.0001 mm`)
-3. **End-to-End Execution (`SiFastSuiteOLP.exe --verify`)**:
-   - Exit code: `0`.
-   - Generated `build/WELD_001.ls` and `build/WELD_001_Preview.html` (`282,143 bytes`).
+Windows MSVC 2022（Release 模式）运行 `Tools\Compile.bat`：
+- **编译结果**：0 警告，0 错误，exit code 0。
+- **CTest 套件**：
+  ```
+  Test project C:/Users/mimovr/Desktop/TEmp/Si_FastSuite/build
+      Start 1: SiFastSuiteOLP_AllTests
+  1/1 Test #1: SiFastSuiteOLP_AllTests ..........   Passed    4.18 sec
+  100% tests passed, 0 tests failed out of 1
+  ```
+- **测试断言明细**（`build/Testing/Temporary/LastTest.log`）：
+  ```
+  Summary: 834 passed, 0 failed.
+  Test Passed.
+  ```
+  （原 830 passed，新增 4 项 MAINT-001 断言全部为 PASS）。
+- **SiFastSuiteOLP.exe --verify 离线验证**：
+  - 成功导入工位并替换 M-10iA 机器人；
+  - 焊缝拾取与 9 个采样帧生成；
+  - OPW 逆解、碰撞检查与 1047 帧烘焙完成；
+  - 成功写出 `build/WELD_001.ls` 与 `build/WELD_001_Preview.html`；
+  - 进程 exit code 0。
 
 ---
 
-## 4. Hard Constraints Checklist
+## 4. 架构与边界审查
 
-- **`OpwKinematics` (`RISK-001` Frozen)**: `git diff -- include/olp/algo/OpwKinematics.h src/algo/OpwKinematics.cpp` is **0 bytes**.
-- **`olp_algo` Zero-Qt Boundary**: `git diff -- include/olp/algo src/algo` is **0 bytes**. No Qt dependencies introduced.
-- **Single-File Line Limits**: All files strictly under 1000 lines.
-- **`CRDocs/REVIEW.md`**: Untouched by Executor.
+1. **OpwKinematics 与 olp_algo 保持零改动**：
+   - `git diff include/olp/algo/ src/algo/` 结果为空。
+   - `olp_algo` 保持纯算法层，零 Qt 依赖。
+2. **规程合规**：
+   - 未重开已 CLOSED 的 `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`。
+   - P1 阻塞项全闭环，P2 延期项精准记录。

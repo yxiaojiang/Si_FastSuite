@@ -9,6 +9,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 namespace olp::ui {
 
@@ -131,7 +132,10 @@ private:
     // True when scene has non-Ignored collision geometry that can invalidate prior Valid caches.
     bool documentHasCollisionRelevantGeometry() const noexcept;
     // Const-path gate: collision geometry present but no cached sim frames → stale / missing sim.
-    bool exportSimulationMissingOrStale() const noexcept;
+    bool exportSimulationMissingOrStale(const core::Program* prog = nullptr) const noexcept;
+    bool ensureProgramSimulated(core::Program& prog);
+    void markProgramEnsured(const core::Program& prog);
+    bool isProgramEnsured(const core::Program& prog) const noexcept;
 
     bool inValidation_{false};
 
@@ -150,8 +154,9 @@ private:
     std::vector<SelectionListener> selectionListeners_{};
     int nextSelectionListenerId_{1};
     algo::SimulationResult lastSimulationResult_{};
-    // Set by ensureProgramSimulatedForExport; cleared on document change before re-validation.
-    bool exportSimEnsured_{false};
+
+    // Per-program freshness accounting (FIX-EXPORT-P2-A/B): cleared on document change before re-validation.
+    std::unordered_set<std::string> exportSimEnsuredPrograms_{};
     int lastSampleExitCode_{0};
     int lastFrameCount_{0};
     double lastCycleTimeSec_{0.0};

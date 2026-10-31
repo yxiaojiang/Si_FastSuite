@@ -363,18 +363,47 @@
 
 ---
 
-## FIX-EXPORT-P2 [OPEN] 导出安全门禁收口后的非阻断边界与测试加固项（P2）
+## FIX-EXPORT-P2 [RESOLVED in Round 2] 导出安全门禁 P2-A/B/C 收口（P2-D 另条）
 
-- **来源轮次**：`FIX-EXPORT-SAFETY` 全盘复审（协调方 / `Audit_X` / `FIX-EXPORT-GEMINI-FULL-REAUDIT`，2026-10-29 ~ 2026-10-31）。
-- **位置**：`include/olp/ui/MainWindow.h:148-150`、`src/ui/MainWindow.cpp:519-528, 551-564, 669-693`、`src/ui/SampleSession.cpp:225-240`、`src/algo/CollisionAndSim.cpp:37-65`、`tests/test_postprocessor.cpp:549-610`。
-- **现状**：
-  1. **P2-A（文档级 freshness）**：`exportSimEnsured_` 与 `lastSimulationResult_` 为 `MainWindow` 文档级状态，未按 `programId` 分别记账。虽然所有非 `const` 导出与预览入口（`exportFanucLs`、`exportAllPrograms`、`LsExportDialog::refreshPreview`）每次均无条件重跑 `validateAndSimulateProgram`，但在多程序文档下对 `PART_A` 执行 `ensure` 后，直接对未仿真的 `PART_B` 调用 `const` 方法 `validateProgramForExport("PART_B")` / `previewFanucLs("PART_B")` 时不会报 stale，且 `test_postprocessor.cpp:592-601` 对 `PART_B` 的断言无法独立证明 `PART_B` 已被单独仿真。
-  2. **P2-B（`exportAllPrograms` 查找与负路径测试）**：`exportAllPrograms` 遍历 `cu.programs` 时用 `key = !prog.id.empty() ? prog.id : prog.name` 再经 `findProgramInDocMutable(doc_, key)` 反查，导致正常遍历下 `ensure` 返回 `false` 的跳过分支不可达（缺负路径单测），且在跨控制器同名或 `id`/`name` 双空时会命中文档首个程序。
-  3. **P2-C（`SampleSession` 旧 `.ls` 残留）**：`SampleSession.cpp:228-237` 拒写时不主动删除历史运行可能遗留在磁盘上的 `build/WELD_001.ls`。
-  4. **P2-D（Soft 层状态覆盖）**：`shouldUpgradeCacheStatus` 将 `Singularity` / `NearJointLimit` 归入 Soft（Tier 0），段内 `NearCollision`（Tier 1）会覆盖端点 `Singularity` 的 `cache.status`（两者在后处理均为非阻断 `Warning`）。
-- **后果**：不影响默认单/多程序写出时的硬碰撞与构型跳变阻断，但多程序下 `const` 校验/预览接口及历史构建目录残留文件可能产生误导。
-- **触发阶段**：M12 多程序导出交互完善或清理 `FIX-EXPORT` 延期项时（注意：**禁止**因本条重开已 CLOSED 的 `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`）。
-- **验收条件**：`exportSimEnsured_` 按程序（或程序版本号）记账，使未仿真过的 `PART_B` 在 `PART_A` 已 `ensure` 后调用 `const` `validateProgramForExport("PART_B")` 仍拒止；`exportAllPrograms` 内部直接对当前 `core::Program&` 执行仿真；`SampleSession` 拒写时移除已存在的 `build/WELD_001.ls`。
+- **来源轮次**：`FIX-EXPORT-SAFETY` 全盘复审；`MAINT-CLEANUP-P2-001` Round 2 审核确认（2026-10-31）。
+- **位置**：`src/ui/MainWindow.cpp:554-570`、`:686-711`；`src/ui/SampleSession.cpp:231-232`；`tests/test_postprocessor.cpp:565-624`。
+- **现状**：Round 2 审核核对源码与 `LastTest.log:638-641` 后关闭 A/B/C。
+  1. **P2-A / MAINT-001**：`programCanonicalKey` 一段程序只记一个键。id 非空为 `id:`，不再用 name 做或匹配。同名 `WELD_001` 的 `prog_2` 在只 ensure `prog_1` 后仍被 const 校验和预览拒绝。
+  2. **P2-B**：`exportAllPrograms` 对当前 `core::Program&` 调用 `ensureProgramSimulated`（`:701-702`）。
+  3. **P2-C**：拒写时 `remove(olp::io::utf8ToPath(lsOut), ec)`，与 `exportToFile` 同一路径函数。见 `MAINT-003`。
+  4. **P2-D 未关**：见 `FIX-EXPORT-P2-D`。
+- **验收条件**：A/B/C 已满足。D 不在本条关闭范围内。
+
+---
+
+## FIX-EXPORT-P2-D [OPEN] 段内近碰撞盖掉端点奇异或近限位文案（P2）
+
+- **来源轮次**：`FIX-EXPORT-SAFETY` 交叉审计 `OPEN-P2-1` / `P2-D`。`MAINT-CLEANUP-P2-001` Round 1 交接把它写进已关闭的伞形条目后删除。审核方拆回。本项不在该任务的 A/B/C 验收里，本轮不升为 P1。
+- **位置**：`src/algo/CollisionAndSim.cpp:41-53`（`Singularity`、`NearJointLimit` 为 Soft，tier 0；`NearCollision` 为 tier 1）；`:37-65` `shouldUpgradeCacheStatus`；`:19-25` 段内写回 `cache.status`。
+- **现状**：端点已是奇异或近限位时，段内近碰撞会升级 `cache.status` 并换掉 `issueMessage`。后处理里这两类都是 Warning，不改变拒写。`git diff` 对 `src/algo` 为空，本轮没有修。
+- **后果**：点位上的奇异或近限位说明被近碰撞说明替换。导出门禁仍按 Warning 放行。
+- **触发阶段**：下一轮改 `shouldUpgradeCacheStatus` 的 Soft/Near 分层，或要点位文案同时保留奇异与近碰撞时。
+- **验收条件**：段内 `NearCollision` 不得擦掉端点 `Singularity` 或 `NearJointLimit` 的状态与说明；硬碰撞仍可覆盖它们。`OpwKinematics` 保持不改。
+
+---
+
+## MAINT-002 [OPEN] ensureProgramSimulated 恒为成功，批量导出的失败分支到不了（P2）
+
+- **来源轮次**：`MAINT-CLEANUP-P2-001` Round 1 审核（2026-10-31）。
+- **位置**：`src/ui/MainWindow.cpp:589-618` 与 `:702-711`。
+- **现状**：找到程序后 `ensureProgramSimulated` 一律 `return true`（`:593`、`:617`）。仿真抛异常会直接冒泡，不会走进 `exportAllPrograms` 里 `"ensure failed"` 那条错误。没有碰撞几何时也先记账再返回 true。Round 2 未改。
+- **后果**：批量导出不会因为“这一段仿真没做完”单独记一条错误。当前写路径仍会对每一段调用仿真。
+- **触发阶段**：下一轮改 `ensureProgramSimulated` 的返回值，或要让 `exportAllPrograms` 在单段仿真失败时跳过该段并继续其余程序时。
+- **验收条件**：仿真没有跑完时返回 false，`:702-711` 能记到该程序的名字或 id。仿真跑完仍返回 true。无碰撞几何的现有单测保持通过。
+
+---
+
+## MAINT-003 [RESOLVED in Round 2] 拒写时删除旧 .ls 接入 utf8ToPath（P2 -> CLOSED）
+
+- **来源轮次**：`MAINT-CLEANUP-P2-001` Round 1 提出；Round 2 审核确认（2026-10-31）。
+- **位置**：`src/ui/SampleSession.cpp:10`、`:231-232`；`include/olp/io/Utf8Path.h:11`；`src/io/FanucLsPostProcessor.cpp:400`。
+- **现状**：拒写分支调用 `std::filesystem::remove(olp::io::utf8ToPath(lsOut), ec)`，与 `exportToFile` 使用同一个 `olp::io::utf8ToPath`。`ec` 仍不检查。
+- **验收条件**：路径函数已对齐。本条关闭。
 
 ---
 
@@ -411,7 +440,7 @@
 ## M13-HTML3D-006 [OPEN] HTML 导出与界面仿真的工具/用户坐标系取值不完全相同（P2）
 
 - **来源轮次**：`M13-HTML3D-EXPORT-001` Round 1 审核（2026-10-31）。
-- **位置**：`src/ui/MainWindow.cpp:706-740`（导出按工具号，优先 `tcpOffset`）；`:354-358` 与 `src/ui/TimelinePanel.cpp:145-148`（第一个工具的 `localTransform`）；`src/ui/ShellWindow.cpp:202`（程序号传空串）；`src/io/HtmlAnimationExporter.cpp:422-423` 与 `src/app/CommandManager.cpp:129-135`（同号 UFRAME 一个取最后、一个取最前）。
+- **位置**：`src/ui/MainWindow.cpp:735-768`（导出按工具号，优先 `tcpOffset`，`:750-751`）；`:354-358` 与 `src/ui/TimelinePanel.cpp:145-148`（第一个工具的 `localTransform`）；`src/ui/ShellWindow.cpp:202`（程序号传空串）；`src/io/HtmlAnimationExporter.cpp` 与 `src/app/CommandManager.cpp:129-135`（同号 UFRAME 一个取最后、一个取最前）。行号在 `MAINT-CLEANUP-P2-001` 插入导出函数后下移，原 `:706-740` 现为 `exportAllPrograms`。
 - **现状**：未点仿真就导出时会重新 `plan`，不用过期的 `lastSimulationResult_`。示例里 `tcpOffset` 与 `localTransform` 都是 Z=150，只有一个工具、一个 UFRAME、一段程序，所以本轮 TCP 与界面一致。多工具、多程序或重复 UFRAME 编号时两边会分开。
 - **触发阶段**：工程里出现 2 号工具、两段程序，或两个节点共用同一个 `uframeNumber` 时。
 - **验收条件**：HTML 使用的基座、UFRAME、UTOOL 与时间轴播放同一段程序时用的是同一组变换。菜单导出当前选中程序；只有一段程序时行为与现在相同。

@@ -1,6 +1,6 @@
 # Plan.md — 当前活跃事项
 
-> 最近刷新：2026-10-29 Asia/Singapore（UTC+8）。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001`。`FIX-EXPORT-SAFETY` 已收口并移入 `Plan-archive.md`，不再列为本文件活跃实现项。
+> 最近刷新：2026-10-31 Asia/Shanghai（UTC+8）。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001`。`FIX-EXPORT-SAFETY` 与 `MAINT-CLEANUP-P2-001` 已收口并移入 `Plan-archive.md`，不再列为本文件活跃实现项。
 
 ## 里程碑达成度
 
@@ -13,7 +13,7 @@
 | 导入整工位 STEP，换成可动 M-10iA | 完成 | 方案 A 与 Test 4 |
 | TcpGizmo 示教，撤销和重做 | 完成 | 边拾取与手柄已落地，且旋转平移解耦与撤销性能瓶颈已闭环修复 |
 | 视口里播放轨迹 | 完成 | TCP 轨迹、TCP 预览球与连杆 0～6 烘焙位姿驱动均已落地（`M11-005`） |
-| 导出 `.ls` 并在 ROBOGUIDE 跑出一致轨迹 | 部分完成 | 默认门禁与草稿水印已落地（FIX-EXPORT CLOSED）；仍无上机/ROBOGUIDE 对拍（`RISK-001`） |
+| 导出 `.ls` 并在 ROBOGUIDE 跑出一致轨迹 | 部分完成 | 默认门禁、草稿水印与多程序 Freshness 记账已落地（FIX-EXPORT / MAINT-CLEANUP CLOSED）；仍无上机/ROBOGUIDE 对拍（`RISK-001`） |
 | 工程文件保存和打开 | 完成 | `M14-PROJECT-JSON-001` Round 3 APPROVED。`M14-012`、`M14-013` 仍延期 |
 
 ### M2 可演示闭环
@@ -31,7 +31,7 @@
 ## 正在做的事
 
 1. **[OPEN] `RISK-001`（主线首选）** — 无 ROBOGUIDE / 真机金样对拍前，J2/J3 耦合符号、圈数轴与法兰相对示教器位姿仍未核验。导出水印与红条只是草稿门禁，不关闭本风险。用户决定暂不安装 ROBOGUIDE 时，关节程序不能当已对过示教器的成品。
-2. **（可选备注，非新 PlanDocs 话题）** FIX-EXPORT 残留 P2（文档级 freshness P2-A、GATE-006 负路径测弱、SampleSession 旧 `.ls` 等）跟踪在 `CRDocs/REVIEW.md` FULL REAUDIT 与 `CRDocs/DEFERRED.md`；用户点名清理前不另开实现计划，**勿重开** `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`。
+2. **（可选备注，非新 PlanDocs 话题）** `MAINT-CLEANUP-P2-001` 已于 Round 2 APPROVED 收口（`CommandManager.cpp` 拆分为 477/528 行；P2-A/B/C 全部闭环）；`FIX-EXPORT-P2-D` 与 `MAINT-002` 仍在 `CRDocs/DEFERRED.md` 跟踪。
 3. **下一步等待用户** — 指定处理 `RISK-001`、清理上述 P2，或开启新主线。提问阶段只分析不改码；`olp_algo` 无 Qt；UI 经 CommandManager；禁止对本仓库使用 Cursor CloudAgent。
 
-已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix 叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。HTML 三维动画已于 `M13-HTML3D-EXPORT-001` Round 2 APPROVED 完成。
+已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix / MAINT-CLEANUP 叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。HTML 三维动画已于 `M13-HTML3D-EXPORT-001` Round 2 APPROVED 完成。

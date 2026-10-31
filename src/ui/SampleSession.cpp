@@ -7,7 +7,9 @@
 #include "olp/app/WorkcellLayoutService.h"
 #include "olp/io/FanucLsPostProcessor.h"
 #include "olp/io/HtmlAnimationExporter.h"
+#include "olp/io/Utf8Path.h"
 
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -226,6 +228,8 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
     const std::string htmlOut = wsRoot + "/build/WELD_001_Preview.html";
     bool lsOk = false;
     if (refuseProductionLs) {
+        std::error_code ec;
+        std::filesystem::remove(olp::io::utf8ToPath(lsOut), ec);
         std::cerr << "Refusing production WELD_001.ls write (FIX-EXPORT-GATE-001 prefer fail-return).\n";
         for (const auto& is : lsVal.issues) {
             if (is.severity == olp::io::LsValidationIssue::Severity::Error) {

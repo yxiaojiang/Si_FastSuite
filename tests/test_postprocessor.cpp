@@ -544,6 +544,84 @@ void testFanucLsPostProcessorValidationAndExport() {
         }
         check(!refusedForStale,
               "FIX-EXPORT-GATE-005: after ensureProgramSimulatedForExport, stale-sim refuse is cleared");
+
+        // FIX-EXPORT-P2-A reinforcement: ensureProgramSimulatedForExport("PART_A") only ensures PART_A;
+        // un-simulated PART_B under the same controller must still be refused with stale/missing error.
+        auto staleValB = winStale.validateProgramForExport("PART_B");
+        bool refusedForStaleBBefore = false;
+        for (const auto& is : staleValB.issues) {
+            if (is.message.find("no fresh simulation") != std::string::npos) {
+                refusedForStaleBBefore = true;
+            }
+        }
+        check(!staleValB.ok && refusedForStaleBBefore,
+              "FIX-EXPORT-P2: un-simulated PART_B is still refused after PART_A ensure");
+
+        std::string stalePreviewErrB;
+        std::string stalePreviewB = winStale.previewFanucLs("PART_B", &stalePreviewErrB);
+        check(stalePreviewB.empty() && stalePreviewErrB.find("no fresh simulation") != std::string::npos,
+              "FIX-EXPORT-P2: un-simulated PART_B preview refuses with stale-sim error");
+
+        // MAINT-001 regression: programs A and B have different IDs (prog_1, prog_2) but identical default name ("WELD_001").
+        // Ensuring prog_1 must NOT grant freshness to un-simulated prog_2.
+        {
+            ui::MainWindow winSharedName;
+            auto& doc = winSharedName.document();
+            doc.controllers.clear();
+
+            core::ControllerUnit cu;
+            cu.id = "ctrl_shared";
+            cu.name = "FANUC_R30iB_Shared";
+
+            core::Program sharedA = testProg;
+            sharedA.id = "prog_1";
+            sharedA.name = "WELD_001";
+
+            core::Program sharedB = testProg;
+            sharedB.id = "prog_2";
+            sharedB.name = "WELD_001";
+
+            cu.programs = {sharedA, sharedB};
+            doc.controllers.push_back(cu);
+
+            core::SceneNode fixtureShared;
+            fixtureShared.id = "shared_fixture";
+            fixtureShared.name = "SharedFixture";
+            fixtureShared.type = core::SceneNodeType::Part;
+            fixtureShared.collisionRole = core::CollisionRole::Fixture;
+            fixtureShared.collisionMesh.bboxMin = {-10.0, -10.0, -10.0};
+            fixtureShared.collisionMesh.bboxMax = {10.0, 10.0, 10.0};
+            doc.sceneNodes.push_back(fixtureShared);
+
+            check(winSharedName.ensureProgramSimulatedForExport("prog_1"),
+                  "MAINT-001: ensure succeeds for prog_1");
+
+            auto afterA = winSharedName.validateProgramForExport("prog_1");
+            bool refusedA = false;
+            for (const auto& is : afterA.issues) {
+                if (is.message.find("no fresh simulation") != std::string::npos) {
+                    refusedA = true;
+                }
+            }
+            check(!refusedA, "MAINT-001: prog_1 stale error is cleared after ensure");
+
+            // prog_2 shares name WELD_001 with prog_1, but has id prog_2 and was never simulated.
+            // const validateProgramForExport("prog_2") and previewFanucLs("prog_2") MUST refuse for stale sim.
+            auto staleValSharedB = winSharedName.validateProgramForExport("prog_2");
+            bool refusedB = false;
+            for (const auto& is : staleValSharedB.issues) {
+                if (is.message.find("no fresh simulation") != std::string::npos) {
+                    refusedB = true;
+                }
+            }
+            check(!staleValSharedB.ok && refusedB,
+                  "MAINT-001: un-simulated prog_2 with shared name WELD_001 is still refused by validate");
+
+            std::string previewErrSharedB;
+            std::string previewSharedB = winSharedName.previewFanucLs("prog_2", &previewErrSharedB);
+            check(previewSharedB.empty() && previewErrSharedB.find("no fresh simulation") != std::string::npos,
+                  "MAINT-001: un-simulated prog_2 with shared name WELD_001 is still refused by preview");
+        }
     }
 
     // FIX-EXPORT-GATE-006 / OPEN-P2-GATE005-1: exportAllPrograms must ensure each program
@@ -569,6 +647,10 @@ void testFanucLsPostProcessorValidationAndExport() {
         auto staleBefore = winAll.validateProgramForExport("PART_A");
         check(!staleBefore.ok && staleBefore.hasErrors(),
               "FIX-EXPORT-GATE-006: validate refuses pre-exportAllPrograms when sim missing");
+
+        auto staleBeforeB = winAll.validateProgramForExport("PART_B");
+        check(!staleBeforeB.ok && staleBeforeB.hasErrors(),
+              "FIX-EXPORT-P2: validate refuses PART_B pre-exportAllPrograms when sim missing");
 
         const std::string allDir =
             (std::filesystem::temp_directory_path() / "olp_ls_export_all_gate006").string();

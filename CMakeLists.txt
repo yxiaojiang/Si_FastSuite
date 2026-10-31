@@ -133,6 +133,7 @@ target_link_libraries(olp_io PUBLIC olp_core olp_device olp_algo)
 # ------------------------------------------------------------------------------
 add_library(olp_app STATIC
     src/app/CommandManager.cpp
+    src/app/ToolpathCommands.cpp
     src/app/WorkcellLayoutService.cpp
 )
 target_include_directories(olp_app PUBLIC

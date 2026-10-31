@@ -1,3 +1,109 @@
+# 审核结论 — MAINT-CLEANUP-P2-001 Round 2
+
+> **Task ID**：`MAINT-CLEANUP-P2-001`  
+> **Round**：2  
+> **Reviewer**：独立审核方（重读 Round 2 源码与本机产物；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-10-31  
+> **Verdict**：**APPROVED**  
+> **P0**：无  
+> **P1**：`MAINT-001` **RESOLVED**  
+> **P2**：`MAINT-003` **RESOLVED**。`MAINT-002`、`FIX-EXPORT-P2-D` 仍为 `DEFERRED`
+
+## 1. 结论
+
+`MAINT-001` 已关闭。一段程序只记一个带前缀的键。id 非空时键是 `id:` 加 id，不再把 `name` 放进同一个集合做或匹配。`prog_1` 与 `prog_2` 同名 `WELD_001` 时，只仿真第一段，第二段的 const 校验和预览仍报 `no fresh simulation`。
+
+## 2. MAINT-001 [RESOLVED]
+
+- `programCanonicalKey`（`src/ui/MainWindow.cpp:554-562`）：id 非空返回 `"id:" + id`；否则 name 非空返回 `"name:" + name`；两者都空才用 `"addr:"` 加对象地址。
+- `markProgramEnsured`（`:564-566`）只插入这一个键。`isProgramEnsured`（`:568-570`）只查这一个键。
+- 前缀把「一段的 id 等于另一段的 name」分开：`"id:prog_1"` 与 `"name:prog_1"` 不是同一个键。
+- 测试 `tests/test_postprocessor.cpp:565-624`：A 为 `prog_1` / `WELD_001`，B 为 `prog_2` / `WELD_001`，场景里有夹具包围盒。只 `ensureProgramSimulatedForExport("prog_1")`。`LastTest.log:638-641` 四条均为 PASS：ensure 成功、`prog_1` 不再报缺失仿真、`prog_2` 的 validate 与 preview 都含 `no fresh simulation`。
+- 空 id 且名字相同的两段仍共用 `name:` 键。const 接口按 `findProgramInDoc` 也只能命中第一段。这是 Round 1 验收里写明的回退，不另开问题。地址键在 vector 重新分配后对不上，结果是误判为未仿真，门禁更严。
+
+## 3. MAINT-003 [RESOLVED]
+
+`src/ui/SampleSession.cpp:10` 包含 `olp/io/Utf8Path.h`。拒写分支 `:231-232` 调用 `std::filesystem::remove(olp::io::utf8ToPath(lsOut), ec)`。`exportToFile` 使用同一函数（`include/olp/io/Utf8Path.h:11`，`src/io/FanucLsPostProcessor.cpp:400`）。`ec` 仍不检查；路径对象已经与写出一致。
+
+## 4. 本机实跑
+
+`Tools\Compile.bat` exit 0。`build/Testing/Temporary/LastTest.log:952` 为 `Summary: 834 passed, 0 failed.` `--verify` exit 0。
+
+编辑器行号（含空行）：`MainWindow.cpp` 790，`SampleSession.cpp` 273，`test_postprocessor.cpp` 693，`CommandManager.cpp` 477，`ToolpathCommands.cpp` 528。全部低于 1000。
+
+`git diff` 对 `include/olp/algo` 与 `src/algo` 为空。
+
+## 5. 仍延期
+
+`MAINT-002`：`ensureProgramSimulated`（`:589-618`）找到程序后仍恒返回 true，`exportAllPrograms:702-711` 的失败分支到不了。`FIX-EXPORT-P2-D` 未改。
+
+---
+
+# 审核结论 — MAINT-CLEANUP-P2-001 Round 1
+
+> **Task ID**：`MAINT-CLEANUP-P2-001`  
+> **Round**：1  
+> **Reviewer**：独立审核方（只读源码与本机产物；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-10-31  
+> **Verdict**：**CHANGES_REQUESTED**  
+> **P0**：无  
+> **P1**：`MAINT-001` **OPEN**  
+> **P2**：`MAINT-002`、`MAINT-003`、`FIX-EXPORT-P2-D` 已入 `DEFERRED`
+
+## 1. 结论
+
+`P2-A` 没有闭环。`markProgramEnsured` 把 `id` 和 `name` 写进同一个集合，`isProgramEnsured` 命中任意一个就返回真。`core::Program::name` 默认就是 `WELD_001`。第一段程序仿真过后，另一段 id 不同、名字仍是 `WELD_001` 的程序，`const validateProgramForExport` 和 `previewFanucLs` 不再报 `no fresh simulation`。
+
+本轮测试只覆盖了空 id、名字分别为 `PART_A` 和 `PART_B` 的情况。830 条全绿盖不住这条。
+
+## 2. MAINT-001 [OPEN] 仿真记账把不同程序当成同一段（P1）
+
+- **位置**：`src/ui/MainWindow.cpp:554-575`；默认名 `include/olp/core/ProjectModel.h:308`；示例程序 `src/ui/SampleSession.cpp:126-127`；测试 `tests/test_postprocessor.cpp:78-79`、`:466-470`、`:548-563`。
+- **现状**：`markProgramEnsured` 在 id 非空时插入 id，在 name 非空时再插入 name，最后再插入 `"prog_addr_"` 加对象地址。`isProgramEnsured` 对这三样做或判断。注释写的是“这一段程序”（`:578-580`），判断不是按这一段。
+- **反例**：程序 A 为 `id=prog_1`、`name=WELD_001`（与示例程序相同）。程序 B 为 `id=prog_2`、`name=WELD_001`（默认名，只改了 id）。对 A 调用 `ensureProgramSimulated` 后，集合里有 `prog_1` 和 `WELD_001`。`validateProgramForExport("prog_2")` 找到 B，B 的 name 已在集合里，`exportSimulationMissingOrStale` 返回 false，门禁放行。B 的 id 等于 A 的 name 时同样放行。
+- **测试为什么是绿的**：`testProg` 只改了 `name`，id 保持空。`PART_A` 与 `PART_B` 两个字符串不同，`:557` 和 `:562` 能拦住。没有“不同 id、相同 name”的断言。
+- **写路径**：`exportFanucLs`（`:679`）和 `exportAllPrograms`（`:706-707`）仍会重新仿真。漏洞在本任务要收口的 const 校验和预览。
+- **验收**：一段程序只记一个键。id 非空时不得再靠 name 命中，键要带前缀，避免一段的 id 等于另一段的 name。新增断言：A 为 `prog_1` / `WELD_001` 且已 ensure，B 为 `prog_2` / `WELD_001` 且未仿真，`validateProgramForExport("prog_2")` 与 `previewFanucLs("prog_2")` 仍含 `no fresh simulation`。
+
+## 3. 本轮核对通过的部分
+
+命令拆分按职责切开。`ModifyTargetPose`、`ReverseOperationPath`、`SmoothTargetOrientations`、`ModifyTargetProcessParams`、`RotateTargetAroundTcpZ` 只在 `src/app/ToolpathCommands.cpp` 实现，`CommandManager.cpp` 中无这些符号。声明仍在 `include/olp/app/CommandManager.h`。`CMakeLists.txt:136` 已把新编译单元加入 `olp_app`。`ToolpathCommands.cpp` 以完整的 `mergeWith` 结束，没有从函数中间截断。
+
+编辑器行号（含空行）：
+
+| 文件 | 行号 |
+| :--- | ---: |
+| `src/app/CommandManager.cpp` | 477 |
+| `src/app/ToolpathCommands.cpp` | 528 |
+| `include/olp/app/CommandManager.h` | 336 |
+| `include/olp/ui/MainWindow.h` | 166 |
+| `src/ui/MainWindow.cpp` | 795 |
+| `src/ui/SampleSession.cpp` | 272 |
+| `tests/test_postprocessor.cpp` | 632 |
+| `CMakeLists.txt` | 224 |
+
+全部低于 1000。1500 硬上限未触及。
+
+`exportAllPrograms` 对当前 `core::Program&` 调用 `ensureProgramSimulated`（`:706-707`），不再按字符串反查。这是 `P2-B` 的写路径，本轮接受。
+
+`SampleSession.cpp:229-231` 在拒写正式 `.ls` 时调用 `std::filesystem::remove`。本机路径为 ASCII，`--verify` exit 0。`P2-C` 的删除动作本轮接受。中文路径见 `MAINT-003`。
+
+`git diff` 对 `include/olp/algo` 与 `src/algo` 为空。`OpwKinematics` 未改。`olp_algo` 仍不链 Qt。
+
+## 4. 本机实跑
+
+`Tools\Compile.bat` exit 0。`build/Testing/Temporary/LastTest.log:948` 为 `Summary: 830 passed, 0 failed.` `SiFastSuiteOLP.exe --verify` exit 0，写出 `build/WELD_001.ls` 与 `build/WELD_001_Preview.html`。
+
+全绿不构成 `MAINT-001` 已关闭的证据。
+
+## 5. 交接里不成立的收口
+
+`DEFERRED.md` 把 `FIX-EXPORT-P2` 写成 A/B/C 全部关闭，并删掉了 `P2-D`。A 即 `MAINT-001`，仍开放。`P2-D` 代码未动：`src/algo/CollisionAndSim.cpp:41-53` 把 `Singularity` 和 `NearJointLimit` 放在 Soft，段内 `NearCollision` 仍可经 `shouldUpgradeCacheStatus`（`:37-65`，调用点 `:19-25`）盖掉端点奇异状态。两者在后处理里都是 Warning，不升为 P1。已放回 `DEFERRED`，编号 `FIX-EXPORT-P2-D`。
+
+`ensureProgramSimulated`（`:594-622`）找到程序后恒返回 true。`exportAllPrograms:707-716` 的 `ensure failed` 分支到不了。记为 `MAINT-002`。
+
+---
+
 # 审核结论 — M13-HTML3D-EXPORT-001 Round 2
 
 > **Task ID**：`M13-HTML3D-EXPORT-001`  
