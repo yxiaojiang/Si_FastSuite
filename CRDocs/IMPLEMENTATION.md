@@ -1,93 +1,123 @@
-# Implementation Report — Task MAINT-CLEANUP-P2-001 (Round 2)
+# Implementation Report — Task M14-PROJECT-REBIND-002 (Round 1)
 
-- **Task ID**: `MAINT-CLEANUP-P2-001`
-- **Round**: `2`
+- **Task ID**: `M14-PROJECT-REBIND-002`
+- **Round**: `1`
 - **Status**: `READY_FOR_REVIEW`
 - **Executor**: Executor
 - **Date**: 2026-10-31
 
 ---
 
-## 1. Round 1 审核意见整改闭环
+## 1. 任务背景与闭环目标
 
-在 Round 1 独立代码审核中，Reviewer 给出了 `CHANGES_REQUESTED` 结论，指出 1 项 P1 阻塞问题及延期清单梳理要求：
-1. **`MAINT-001 [OPEN] 仿真记账把不同程序当成同一段（P1）`**：
-   - **根本原因**：Round 1 中 `markProgramEnsured` 将 `id`、`name`、`prog_addr_<ptr>` 分别作为多个独立条目插入同一 `exportSimEnsuredPrograms_` 集合，且 `isProgramEnsured` 进行或（OR）匹配。在多程序工程中，若各程序使用默认名称 `WELD_001` 且具有不同 `id`（如 `prog_1` 与 `prog_2`），当 `prog_1` 执行仿真后，集合中写入了 `WELD_001`；此时对未仿真的 `prog_2` 调用 `validateProgramForExport("prog_2")` 时，因其名称 `WELD_001` 命中而误判为已仿真，导致 const 校验/预览门禁被击穿。
-   - **整改方案**：
-     - 在 `src/ui/MainWindow.cpp` 引入 `programCanonicalKey(const core::Program& prog)` 单一规范键生成机制：
-       ```cpp
-       static std::string programCanonicalKey(const core::Program& prog) {
-           if (!prog.id.empty()) {
-               return "id:" + prog.id;
-           }
-           if (!prog.name.empty()) {
-               return "name:" + prog.name;
-           }
-           return "addr:" + std::to_string(reinterpret_cast<uintptr_t>(&prog));
-       }
-       ```
-     - 一段程序在集合中**严格仅对应一个带前缀的独立键**。`id` 非空时，强锁定使用 `"id:" + prog.id` 记账，彻底阻断利用 `name` 进行二次命中的可能；同时前缀机制杜绝了不同程序之间 `id` 与 `name` 字符串相同导致的误碰。
-     - `markProgramEnsured` 与 `isProgramEnsured` 均严格通过 `programCanonicalKey` 单点记账与判别。
-   - **单测证据**：
-     - 在 `tests/test_postprocessor.cpp` 中新增 `MAINT-001` 专项回归测试：程序 A 为 `id=prog_1, name=WELD_001` 且已 ensure，程序 B 为 `id=prog_2, name=WELD_001` 且未仿真；断言 `validateProgramForExport("prog_2")` 与 `previewFanucLs("prog_2")` 均被正确拦截并包含 `"no fresh simulation"` 报错信息。
-
-2. **`MAINT-003 [RESOLVED in Round 2] 拒写时删除旧 .ls 接入 utf8ToPath`**：
-   - 在 `src/ui/SampleSession.cpp` 引入 `#include "olp/io/Utf8Path.h"`。
-   - 拒写分支使用 `std::filesystem::remove(olp::io::utf8ToPath(lsOut), ec)`，与正式写出 `FanucLsPostProcessor::exportToFile` 保持完全一致的跨平台 UTF-8 路径映射。
-
-3. **延期清单规整**：
-   - `CRDocs/DEFERRED.md` 明确将 `FIX-EXPORT-P2` 调整为 `P2-A/B/C` 收口（`CLOSED`）；
-   - `FIX-EXPORT-P2-D`（段内近碰撞覆盖奇异说明）与 `MAINT-002`（`ensureProgramSimulated` 恒返回 true）保持在 `CRDocs/DEFERRED.md` 中继续处于 `OPEN` 状态。
+本次任务彻底闭环 `CRDocs/DEFERRED.md` 中记录的两个工程打开与几何一致性延期项：
+1. **M14-012（打开工程前检查未保存修改）**：在文档存在未保存修改（`isDirty == true`）时拦截工程打开与窗口关闭，提供非阻塞测试注入钩子，防止 ctest 被原生弹窗挂起；
+2. **M14-013（工程打开重新绑定 CAD 形体与失效旧句柄）**：打开工程时彻底清空内核旧会话缓存，阻断旧 B-Rep 跨工程复用风险；重新根据 `sourceCadFile` 去重加载与重新绑定 `cadHandleId`；文件缺失或导入失败时干净置为 -1 并走持久化网格降级回退。
 
 ---
 
-## 2. 修改文件与行数门禁清单
+## 2. 核心改动实施细节
 
-| 文件路径 | 状态 | 修改后行数 | 门禁合规性（< 1000 行软上限，1500 硬上限） |
+### 2.1 闭环 M14-012（打开工程前检查未保存修改与 closeEvent 统一拦截）
+
+1. **`ShellWindow` 引入 `confirmDiscardIfDirty()` 统一检查逻辑**：
+   - 当 `controller_.document().isDirty == false` 时，直接返回 `true` 放行；
+   - 当 `controller_.document().isDirty == true` 时：
+     - 若设置了测试/无头注入钩子 `confirmDiscardCallback_`，优先调用该回调；
+     - 否则弹出模态确认对话框（`QMessageBox::question`），用户点击取消（`Cancel`）返回 `false`，确认放弃（`Discard`）返回 `true`。
+2. **`ShellWindow::openProjectFile` 拦截**：
+   - 增加显式重载 `openProjectFile(const QString& explicitPath)` 与无参 `openProjectFile()`；
+   - 若 `confirmDiscardIfDirty()` 返回 `false`，立即安全中止（早期 return），当前文档状态与脏标记保持完全不变；
+   - 用户确认放弃后才继续执行打开并清除脏标记。
+3. **`ShellWindow::closeEvent` 统一拦截**：
+   - 重写 `closeEvent(QCloseEvent* event)`，若 `confirmDiscardIfDirty()` 返回 `false`，调用 `event->ignore()` 安全拦截关闭；确认放弃后放行。
+4. **非阻塞测试注入钩子**：
+   - 提供 `ShellWindow::setConfirmDiscardCallback(ConfirmDiscardCallback callback)`，允许自动化回归测试在无头环境下精准注入用户响应（`true`/`false`），保证 ctest 永不被原生系统弹窗挂起。
+
+### 2.2 闭环 M14-013（工程打开重新绑定 CAD 形体与失效旧句柄）
+
+1. **`OcctCadKernel::clear()` 清空会话缓存**：
+   - 在 `include/olp/cad/OcctCadKernel.h` 与 `src/cad/OcctCadKernel.cpp` 中新增 `clear()` 方法；
+   - 彻底清空 `solids_`、`nextHandleId_ = 1`，以及 OCCT 的 `shapes_`、`edgeShapes_`、`faceShapes_` 映射，彻底阻断旧工程残留 B-Rep。
+2. **`MainWindow::openProject` 重新装入与句柄重绑定**：
+   - 载入新工程文档后，首先调用 `cadKernel_.clear()`；
+   - 引入规范路径缓存 `std::unordered_map<std::string, std::vector<core::SceneNode>> loadedCadFiles` 实现同文件去重加载；
+   - 遍历 `loadedDoc.sceneNodes`：
+     - 若 `sourceCadFile` 为空，明确将 `node.cadHandleId` 置为 `-1`；
+     - 尝试按绝对路径或相对于当前工程文件的相对路径解析（使用 `olp::io::utf8ToPath` 和 `std::filesystem::exists`）；
+     - 若文件不存在或导入失败，明确将 `node.cadHandleId` 置为 `-1`；
+     - 若文件存在且导入成功，从导入的 solids 中匹配同名节点或单实体，更新节点的 `node.cadHandleId`；
+   - 视口 `OcctViewport::syncScene` 在 `cadHandleId <= 0` 时干净降级回退至工程文件持久化的 `renderMesh` 与 `collisionMesh`，绝不引用上一工程残留几何句柄。
+
+---
+
+## 3. 修改文件与行数门禁清单
+
+| 文件路径 | 职责与变更说明 | 修改后行数 | 门禁判定（< 1000 行软门禁，1500 行硬上限） |
 |---|---|---|---|
-| `src/app/CommandManager.cpp` | 精简拆分 | **477** | **OK**（稳定在 400~600 行黄金区间） |
-| `src/app/ToolpathCommands.cpp` | 拆分新编译单元 | **528** | **OK**（稳定在 400~600 行黄金区间） |
-| `include/olp/app/CommandManager.h` | 保持兼容 | **336** | **OK**（远低于 1000 行） |
-| `include/olp/ui/MainWindow.h` | 接口与状态更新 | **166** | **OK**（远低于 1000 行） |
-| `src/ui/MainWindow.cpp` | `programCanonicalKey` 记账 | **790** | **OK**（低于 1000 行软上限） |
-| `src/ui/SampleSession.cpp` | `utf8ToPath` 接入 | **273** | **OK**（远低于 1000 行） |
-| `tests/test_postprocessor.cpp` | MAINT-001 专项断言 | **693** | **OK**（远低于 1000 行） |
-| `CMakeLists.txt` | 构建配置更新 | **224** | **OK** |
-| `CRDocs/DEFERRED.md` | 清单梳理与收口 | **446** | **OK** |
+| `include/olp/cad/OcctCadKernel.h` | 声明 `clear()` | **109** | **OK** |
+| `src/cad/OcctCadKernel.cpp` | 实现 `clear()` 清空 solids/shapes/handles | **884** | **OK** |
+| `include/olp/ui/MainWindow.h` | 保持接口兼容 | **166** | **OK** |
+| `src/ui/MainWindow.cpp` | `openProject` 增加 CAD 清理、相对路径解析与重绑定 | **854** | **OK** |
+| `include/olp/ui/ShellWindow.h` | 声明 `confirmDiscard`、`closeEvent` 与测试钩子 | **136** | **OK** |
+| `src/ui/ShellWindow.cpp` | 实现脏文档拦截、重载与弹窗注入 | **993** | **OK**（严格 < 1000 行） |
+| `tests/test_project_io.cpp` | 补充 M14-012 与 M14-013 自动化回归断言 | **804** | **OK** |
+| `CRDocs/DEFERRED.md` | 将 M14-012 与 M14-013 标记为 RESOLVED | **440** | **OK** |
+| `CRDocs/STATUS.md` | 更新状态为 `READY_FOR_REVIEW` | **15** | **OK** |
+
+所有修改文件行数均严格在 1000 行限制之下！
 
 ---
 
-## 3. 实跑验证证据
+## 4. 自动化测试与实跑验证证据
 
-Windows MSVC 2022（Release 模式）运行 `Tools\Compile.bat`：
-- **编译结果**：0 警告，0 错误，exit code 0。
-- **CTest 套件**：
-  ```
-  Test project C:/Users/mimovr/Desktop/TEmp/Si_FastSuite/build
-      Start 1: SiFastSuiteOLP_AllTests
-  1/1 Test #1: SiFastSuiteOLP_AllTests ..........   Passed    4.18 sec
-  100% tests passed, 0 tests failed out of 1
-  ```
-- **测试断言明细**（`build/Testing/Temporary/LastTest.log`）：
-  ```
-  Summary: 834 passed, 0 failed.
-  Test Passed.
-  ```
-  （原 830 passed，新增 4 项 MAINT-001 断言全部为 PASS）。
-- **SiFastSuiteOLP.exe --verify 离线验证**：
-  - 成功导入工位并替换 M-10iA 机器人；
-  - 焊缝拾取与 9 个采样帧生成；
-  - OPW 逆解、碰撞检查与 1047 帧烘焙完成；
-  - 成功写出 `build/WELD_001.ls` 与 `build/WELD_001_Preview.html`；
-  - 进程 exit code 0。
+在 Windows MSVC 2022（Release 模式）下本机实跑 `Tools\Compile.bat`：
+
+1. **编译构建**：
+   - 0 警告，0 错误，exit code 0。
+2. **CTest 自动化回归**：
+   - `SiFastSuiteOLP_AllTests`：**100% tests passed, 0 tests failed**（运行耗时 3.84 s）；
+   - 测试断言总数从 **834 passed 增加至 862 passed，0 failed**（新增 28 项断言全部 PASS）；
+   - 新增锁测断言覆盖：
+     - **M14-012 锁测**：
+       - `M14-012: Project A loaded into MainWindow` [PASS]
+       - `M14-012: Initial document is not dirty` [PASS]
+       - `M14-012: Dirty prompt hook triggered on open attempt` [PASS]
+       - `M14-012: Cancel keeps current document untouched (nodeA intact)` [PASS]
+       - `M14-012: Cancel keeps document dirty flag` [PASS]
+       - `M14-012: Discard prompt hook triggered on open attempt` [PASS]
+       - `M14-012: Confirm discard overwrites and opens Project B (nodeB)` [PASS]
+       - `M14-012: Fresh opened project clears dirty flag` [PASS]
+       - `M14-012: Clean document (isDirty == false) opens without prompting` [PASS]
+       - `M14-012: Clean document opened successfully` [PASS]
+       - `M14-012: closeEvent triggers discard prompt hook when dirty` [PASS]
+       - `M14-012: closeEvent ignored when user cancels` [PASS]
+       - `M14-012: closeEvent triggers discard prompt hook on confirm` [PASS]
+       - `M14-012: closeEvent accepted when user confirms discard` [PASS]
+     - **M14-013 锁测**：
+       - `M14-013: Step imported for baseline test` [PASS]
+       - `M14-013: Baseline kernel has loaded handle with valid edges` [PASS]
+       - `M14-013: Open project with missing STEP succeeded` [PASS]
+       - `M14-013: Prior kernel handles cleared on project open (baseline handle empty)` [PASS]
+       - `M14-013: Scene node restored` [PASS]
+       - `M14-013: Missing STEP cleanly resets cadHandleId to -1` [PASS]
+       - `M14-013: Render mesh preserved for fallback display` [PASS]
+       - `M14-013: Collision mesh preserved for fallback collision detection` [PASS]
+       - `M14-013: Open project with valid STEP relative path succeeded` [PASS]
+       - `M14-013: Both nodes restored` [PASS]
+       - `M14-013: Node 1 re-bound to fresh cadHandleId > 0` [PASS]
+       - `M14-013: Node 2 re-bound to fresh cadHandleId > 0` [PASS]
+       - `M14-013: De-duplicated loading assigns same handleId for same STEP solid` [PASS]
+       - `M14-013: Re-bound cadHandleId has valid topological edges in kernel` [PASS]
+3. **SiFastSuiteOLP.exe --verify 验证运行**：
+   - 工位导入、焊缝拾取、轨迹规划、OPW 运动学与碰撞检查、FANUC .ls 与离线 HTML 生成全链路畅通，exit code 0。
 
 ---
 
-## 4. 架构与边界审查
+## 5. 架构与硬约束核查
 
-1. **OpwKinematics 与 olp_algo 保持零改动**：
-   - `git diff include/olp/algo/ src/algo/` 结果为空。
-   - `olp_algo` 保持纯算法层，零 Qt 依赖。
-2. **规程合规**：
-   - 未重开已 CLOSED 的 `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`。
-   - P1 阻塞项全闭环，P2 延期项精准记录。
+1. **OpwKinematics（RISK-001）与 olp_algo 零改动**：
+   - `git diff include/olp/algo/ src/algo/` 结果完全为空；
+   - `olp_algo` 保持纯算法层，绝对无 Qt 依赖。
+2. **单文件行数限制（Rules.md）**：
+   - 所有触碰的文件行数均严格小于 1000 行限制。

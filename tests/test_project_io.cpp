@@ -1,8 +1,16 @@
 #include "test_support.h"
 
 #include "olp/io/ProjectSerializer.h"
+#include "olp/io/Utf8Path.h"
 #include "olp/core/MathTypes.h"
 #include "olp/core/ProjectModel.h"
+#include "olp/ui/MainWindow.h"
+
+#ifdef OLP_HAS_QT6
+#include "olp/ui/ShellWindow.h"
+#include <QApplication>
+#include <QCloseEvent>
+#endif
 
 #include <iostream>
 #include <fstream>
@@ -578,5 +586,226 @@ void testProjectJsonSerialization() {
         err.clear();
         check(!io::ProjectSerializer::fromJsonString(R"({"fileFormat": "SiFastSuite_Project", "schemaVersion": "v1"})", canaryDoc, &err),
               "M14-008: String schemaVersion rejected without throwing exception");
+    }
+
+    // 8. M14-012: Dirty document check before opening new project & closeEvent interception
+#ifdef OLP_HAS_QT6
+    {
+        const std::string tempDir = (std::filesystem::temp_directory_path() / "olp_m14_012_test").string();
+        std::error_code ec;
+        std::filesystem::create_directories(tempDir, ec);
+
+        const std::string projAPath = tempDir + "/projA.json";
+        const std::string projBPath = tempDir + "/projB.json";
+
+        app::ProjectDocument docA;
+        core::SceneNode nodeA;
+        nodeA.id = "nodeA";
+        nodeA.name = "ProjectA_Node";
+        docA.sceneNodes.push_back(nodeA);
+        io::ProjectSerializer::saveToFile(docA, projAPath);
+
+        app::ProjectDocument docB;
+        core::SceneNode nodeB;
+        nodeB.id = "nodeB";
+        nodeB.name = "ProjectB_Node";
+        docB.sceneNodes.push_back(nodeB);
+        io::ProjectSerializer::saveToFile(docB, projBPath);
+
+        olp::ui::MainWindow mainWin;
+        olp::ui::ShellWindow shell(mainWin);
+
+        // 打开工程 A
+        bool openAOk = mainWin.openProject(projAPath);
+        check(openAOk, "M14-012: Project A loaded into MainWindow");
+        check(!mainWin.document().isDirty, "M14-012: Initial document is not dirty");
+
+        // 标记脏文档
+        mainWin.document().isDirty = true;
+
+        // 8.1 脏文档未保存下，用户点击取消 -> 安全中止，保持原状
+        bool hookTriggered = false;
+        shell.setConfirmDiscardCallback([&]() {
+            hookTriggered = true;
+            return false; // 取消
+        });
+
+        shell.openProjectFile(QString::fromStdString(projBPath));
+        check(hookTriggered, "M14-012: Dirty prompt hook triggered on open attempt");
+        check(mainWin.document().sceneNodes.size() == 1 &&
+              mainWin.document().sceneNodes[0].id == "nodeA",
+              "M14-012: Cancel keeps current document untouched (nodeA intact)");
+        check(mainWin.document().isDirty, "M14-012: Cancel keeps document dirty flag");
+
+        // 8.2 脏文档未保存下，用户确认放弃 -> 成功覆盖打开工程 B
+        hookTriggered = false;
+        shell.setConfirmDiscardCallback([&]() {
+            hookTriggered = true;
+            return true; // 确认放弃
+        });
+
+        shell.openProjectFile(QString::fromStdString(projBPath));
+        check(hookTriggered, "M14-012: Discard prompt hook triggered on open attempt");
+        check(mainWin.document().sceneNodes.size() == 1 &&
+              mainWin.document().sceneNodes[0].id == "nodeB",
+              "M14-012: Confirm discard overwrites and opens Project B (nodeB)");
+        check(!mainWin.document().isDirty, "M14-012: Fresh opened project clears dirty flag");
+
+        // 8.3 保存或 isDirty == false 打开不触发阻拦
+        hookTriggered = false;
+        shell.setConfirmDiscardCallback([&]() {
+            hookTriggered = true;
+            return false; // 即使 hook 设为 false，也不应该被调用
+        });
+
+        shell.openProjectFile(QString::fromStdString(projAPath));
+        check(!hookTriggered, "M14-012: Clean document (isDirty == false) opens without prompting");
+        check(mainWin.document().sceneNodes.size() == 1 &&
+              mainWin.document().sceneNodes[0].id == "nodeA",
+              "M14-012: Clean document opened successfully");
+
+        // 8.4 closeEvent 脏标记拦截
+        mainWin.document().isDirty = true;
+        hookTriggered = false;
+        shell.setConfirmDiscardCallback([&]() {
+            hookTriggered = true;
+            return false; // 取消关闭
+        });
+
+        QCloseEvent closeEvtCancel;
+        QApplication::sendEvent(&shell, &closeEvtCancel);
+        check(hookTriggered, "M14-012: closeEvent triggers discard prompt hook when dirty");
+        check(!closeEvtCancel.isAccepted(), "M14-012: closeEvent ignored when user cancels");
+
+        hookTriggered = false;
+        shell.setConfirmDiscardCallback([&]() {
+            hookTriggered = true;
+            return true; // 确认关闭
+        });
+
+        QCloseEvent closeEvtConfirm;
+        QApplication::sendEvent(&shell, &closeEvtConfirm);
+        check(hookTriggered, "M14-012: closeEvent triggers discard prompt hook on confirm");
+        check(closeEvtConfirm.isAccepted(), "M14-012: closeEvent accepted when user confirms discard");
+
+        std::filesystem::remove_all(tempDir, ec);
+    }
+#endif
+
+    // 9. M14-013: CAD shape re-binding and stale cadHandleId isolation
+    {
+        const std::string tempDir = (std::filesystem::temp_directory_path() / "olp_m14_013_test").string();
+        std::error_code ec;
+        std::filesystem::create_directories(tempDir, ec);
+
+        const std::string stepSource =
+            std::string(OLP_SOURCE_DIR) + "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_TJoint_With_Clamps.step";
+        const std::string localStepPath = tempDir + "/TestPart.step";
+
+        // 拷贝测试 STEP 文件到临时目录以测试相对路径和存在性
+        std::filesystem::copy_file(stepSource, localStepPath, std::filesystem::copy_options::overwrite_existing, ec);
+
+        olp::ui::MainWindow mainWin;
+
+        // 9.1 先在当前内核装入一个旧实体，占用 cadHandleId (如 handle 1)
+        std::vector<core::SceneNode> dummyNodes;
+        mainWin.cadKernel().importStep(stepSource, dummyNodes);
+        check(!dummyNodes.empty(), "M14-013: Step imported for baseline test");
+        const int baselineHandle = dummyNodes.empty() ? 1 : dummyNodes[0].cadHandleId;
+        const std::string solidName = dummyNodes.empty() ? "Workpiece_TJoint_With_Clamps" : dummyNodes[0].name;
+        check(!mainWin.cadKernel().getEdges(baselineHandle).empty(),
+              "M14-013: Baseline kernel has loaded handle with valid edges");
+
+        // 9.2 丢失 STEP 或 sourceCadFile 为空：跨工程打开时隔离旧 handle，干净置 -1 并走网格回退
+        {
+            const std::string missingStepProjPath = tempDir + "/proj_missing_step.json";
+            app::ProjectDocument docMissing;
+            core::SceneNode nodeMissing;
+            nodeMissing.id = "part_missing";
+            nodeMissing.name = "PartMissingCad";
+            nodeMissing.type = core::SceneNodeType::Part;
+            nodeMissing.sourceCadFile = "non_existent_cad_file.step";
+            nodeMissing.cadHandleId = baselineHandle; // 假装上一工程残留了 baseline handle
+
+            // 构造持久化网格
+            nodeMissing.renderMesh.vertices = {
+                {0.0, 0.0, 0.0}, {100.0, 0.0, 0.0}, {100.0, 100.0, 0.0}, {0.0, 100.0, 0.0}
+            };
+            nodeMissing.renderMesh.triangles = {{0, 1, 2}, {0, 2, 3}};
+            nodeMissing.collisionMesh = nodeMissing.renderMesh;
+            docMissing.sceneNodes.push_back(nodeMissing);
+
+            io::ProjectSerializer::saveToFile(docMissing, missingStepProjPath);
+
+            std::string openErr;
+            const bool ok = mainWin.openProject(missingStepProjPath, &openErr);
+            check(ok, "M14-013: Open project with missing STEP succeeded", openErr);
+
+            // 验证旧 handle 彻底被 clear 清空
+            check(mainWin.cadKernel().getEdges(baselineHandle).empty(),
+                  "M14-013: Prior kernel handles cleared on project open (baseline handle empty)");
+
+            // 验证节点 cadHandleId 干净置为 -1
+            check(mainWin.document().sceneNodes.size() == 1, "M14-013: Scene node restored");
+            if (mainWin.document().sceneNodes.size() == 1) {
+                const auto& loadedNode = mainWin.document().sceneNodes[0];
+                check(loadedNode.cadHandleId == -1,
+                      "M14-013: Missing STEP cleanly resets cadHandleId to -1");
+                check(loadedNode.renderMesh.vertices.size() == 4,
+                      "M14-013: Render mesh preserved for fallback display");
+                check(loadedNode.collisionMesh.triangles.size() == 2,
+                      "M14-013: Collision mesh preserved for fallback collision detection");
+            }
+        }
+
+        // 9.3 存在有效 STEP（相对路径 + 同文件去重加载）：重新装入内核并更新 cadHandleId
+        {
+            const std::string validStepProjPath = tempDir + "/proj_valid_step.json";
+            app::ProjectDocument docValid;
+
+            // 节点 1: 使用相对路径 "TestPart.step"
+            core::SceneNode nodePart1;
+            nodePart1.id = "part_valid_1";
+            nodePart1.name = solidName;
+            nodePart1.type = core::SceneNodeType::Part;
+            nodePart1.sourceCadFile = "TestPart.step"; // 相对路径
+            nodePart1.cadHandleId = 888; // 故意赋予旧失效 handle
+
+            // 节点 2: 引用同一个 STEP 文件（测试去重加载）
+            core::SceneNode nodePart2;
+            nodePart2.id = "part_valid_2";
+            nodePart2.name = solidName;
+            nodePart2.type = core::SceneNodeType::Part;
+            nodePart2.sourceCadFile = "TestPart.step"; // 同文件
+            nodePart2.cadHandleId = 999;
+
+            docValid.sceneNodes.push_back(nodePart1);
+            docValid.sceneNodes.push_back(nodePart2);
+
+            io::ProjectSerializer::saveToFile(docValid, validStepProjPath);
+
+            std::string openErr;
+            const bool ok = mainWin.openProject(validStepProjPath, &openErr);
+            check(ok, "M14-013: Open project with valid STEP relative path succeeded", openErr);
+
+            check(mainWin.document().sceneNodes.size() == 2, "M14-013: Both nodes restored");
+            if (mainWin.document().sceneNodes.size() == 2) {
+                const auto& n1 = mainWin.document().sceneNodes[0];
+                const auto& n2 = mainWin.document().sceneNodes[1];
+
+                check(n1.cadHandleId > 0 && n1.cadHandleId != 888,
+                      "M14-013: Node 1 re-bound to fresh cadHandleId > 0");
+                check(n2.cadHandleId > 0 && n2.cadHandleId != 999,
+                      "M14-013: Node 2 re-bound to fresh cadHandleId > 0");
+                check(n1.cadHandleId == n2.cadHandleId,
+                      "M14-013: De-duplicated loading assigns same handleId for same STEP solid");
+
+                // 验证在当前内核中可以获取其 CAD 拓扑边
+                const auto edges = mainWin.cadKernel().getEdges(n1.cadHandleId);
+                check(!edges.empty(), "M14-013: Re-bound cadHandleId has valid topological edges in kernel");
+            }
+        }
+
+        std::filesystem::remove_all(tempDir, ec);
     }
 }

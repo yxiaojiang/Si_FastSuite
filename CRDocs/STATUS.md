@@ -1,15 +1,14 @@
 # 当前协作状态
 
-- **Task ID**：`MAINT-CLEANUP-P2-001`
-- **Task**：CommandManager 行数门禁治理与 FIX-EXPORT-P2 延期项彻底闭环
-- **Round**：`2`
+- **Task ID**：`M14-PROJECT-REBIND-002`
+- **Task**：闭环 M14-012（打开工程前检查未保存修改）与 M14-013（工程打开重新绑定 CAD 形体与失效旧句柄）
+- **Round**：`1`
 - **Status**：`APPROVED`
 - **Last Updated By**：`Reviewer`
 - **Blocking Issues**：`0`
 - **Summary**：
-  1. **P1 `MAINT-001` RESOLVED**：`programCanonicalKey`（`src/ui/MainWindow.cpp:554-562`）一段程序只记一个键。id 非空为 `id:`，否则才用 `name:`，两者都空才用 `addr:`。`mark` / `is` 不再把 id 和 name 放进同一集合做或匹配。
-  2. **测试**：`tests/test_postprocessor.cpp:565-624`。A 为 `prog_1` / `WELD_001` 且已 ensure，B 为 `prog_2` / `WELD_001` 且未仿真。`LastTest.log:638-641` 四条 PASS，validate 与 preview 都含 `no fresh simulation`。
-  3. **P2 `MAINT-003` RESOLVED**：拒写删除走 `olp::io::utf8ToPath`（`SampleSession.cpp:231-232`），与 `exportToFile` 同一函数。
-  4. **本机实跑**：`Tools\Compile.bat` exit 0。`LastTest.log:952` 为 834 passed, 0 failed。`--verify` exit 0。抽核文件均低于 1000 行。`include/olp/algo` 与 `src/algo` 的 `git diff` 为空。
-  5. **仍延期**：`MAINT-002`（`ensureProgramSimulated` 恒返回 true）、`FIX-EXPORT-P2-D`（段内近碰撞盖掉奇异文案）。
+  1. **`M14-012` RESOLVED**：`ShellWindow::confirmDiscardIfDirty` 同时用于 `openProjectFile` 与 `closeEvent`。取消时不打开、不关窗，文档和脏标记保持原样。测试钩子优先于 `QMessageBox`。`LastTest.log:921-934` 十四条 PASS。
+  2. **`M14-013` RESOLVED**：JSON 装入成功后 `OcctCadKernel::clear()`，再按 `sourceCadFile` 去重导入并重写 `cadHandleId`。空路径、文件不存在或导入失败写成 -1，网格保留。`LastTest.log:935-948` 十四条 PASS。
+  3. **本机实跑**：`Tools\Compile.bat` exit 0。`LastTest.log:980` 为 862 passed, 0 failed。`--verify` exit 0。抽核文件均低于 1000 行；`ShellWindow.cpp` 为 993 行。`include/olp/algo` 与 `src/algo` 的 `git diff` 为空。
+  4. **新延期**：`M14-014`（加载示例工位不询问）、`M14-015`（重绑定把窄字符路径交给 `importStep`）。
 - **详细审核**：见 `CRDocs/REVIEW.md` 文首。

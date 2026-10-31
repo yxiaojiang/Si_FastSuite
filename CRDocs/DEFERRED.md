@@ -329,27 +329,43 @@
 
 ---
 
-## M14-012 [OPEN] 打开工程前不询问未保存修改（P2）
+## M14-012 [RESOLVED in M14-PROJECT-REBIND-002] 打开工程前不询问未保存修改（P2 -> CLOSED）
 
-- **来源轮次**：`M14-PROJECT-JSON-001` Round 1 审核（2026-10-28）。
-- **位置**：`ShellWindow::openProjectFile`。
-- **现状**：Round 2 已把保存成功后的 `isDirty` 写成 false，保存失败时不动它。打开另一份工程时仍然直接替换，没有询问。
-- **后果**：当前文档还有未写盘的修改时，打开会把它换掉。
-- **触发阶段**：关闭窗口或打开工程要按脏标记询问时。
-- **验收条件**：`isDirty` 为 true 时，打开另一份工程前先询问；用户取消则当前文档保持不变。保存成功后 `isDirty` 为 false 这一条已经满足。
+- **来源轮次**：`M14-PROJECT-JSON-001` Round 1 提出；`M14-PROJECT-REBIND-002` Round 1 审核确认（2026-10-31）。
+- **位置**：`src/ui/ShellWindow.cpp:620-669`、`:636-642`。
+- **现状**：脏文档打开或关闭时先 `confirmDiscardIfDirty`。取消不改变文档。确认后才打开。测试钩子存在时不弹窗。`LastTest.log:921-934` 为 PASS。
+- **验收条件**：已满足。加载示例工位不在本条内，见 `M14-014`。
 
 ---
 
-## M14-013 [OPEN] 打开工程不重建 CAD 形体，旧的 cadHandleId 可能指到别的形状（P2）
+## M14-013 [RESOLVED in M14-PROJECT-REBIND-002] 打开工程不重建 CAD 形体，旧的 cadHandleId 可能指到别的形状（P2 -> CLOSED）
 
-- **来源轮次**：`M14-PROJECT-JSON-001` Round 1 审核（2026-10-28）。
-- **位置**：`MainWindow::openProject`；`OcctViewport::syncScene`。
-- **现状**：`cadHandleId` 是本次进程里 OCCT 内核的编号。文件记下了这个编号和 `sourceCadFile`，打开时不重新导入 STEP，也不在编号无效时把它清掉。视口只要还能按编号拿到形状，就画这份内存里的 B-rep，保存的网格不参与。程序启动后会先加载示例工位。编号若按同样顺序重新分配，看到的是这次导入的实体，网格只在编号落空时才用上。
-- **后果**：内核里这个编号已经换成另一块实体时，打开的工程会画出那块实体。编号落空时，边拾取没有 B-rep。
-- **触发阶段**：同一进程里换过 STEP 再打开工程，或打开后要重新拾取边。
-- **验收条件**：打开后按 `sourceCadFile` 重新装入 B-rep，并写上新的 `cadHandleId`；或者编号在当前内核无效时清掉编号，视口和碰撞都只用文件里的网格。工件几何来自这份文件，不沿用上一次导入留下的形状。
+- **来源轮次**：`M14-PROJECT-JSON-001` Round 1 提出；`M14-PROJECT-REBIND-002` Round 1 审核确认（2026-10-31）。
+- **位置**：`src/cad/OcctCadKernel.cpp:76-84`；`src/ui/MainWindow.cpp:784-844`；`src/ui/OcctViewport.cpp:394-403`。
+- **现状**：打开成功后清空内核并重绑句柄。丢失或导入失败的节点句柄为 -1，网格保留。相对路径同文件只导入一次。`LastTest.log:935-948` 为 PASS。
+- **验收条件**：已满足。非 ASCII 的 `sourceCadFile` 见 `M14-015`。
 
 ---
+
+## M14-014 [OPEN] 加载示例工位不询问未保存修改（P2）
+
+- **来源轮次**：`M14-PROJECT-REBIND-002` Round 1 审核（2026-10-31）。
+- **位置**：`src/ui/ShellWindow.cpp:151-157`、`:586-614`；`src/ui/SampleSession.cpp:46-48`。
+- **现状**：文件菜单「加载示例工位」直接调用 `loadSample`。`runSampleWorkcell` 在当前文档上执行 `ImportSceneAndReplaceRobotCommand`，不经 `confirmDiscardIfDirty`。导入成功会往现有场景上追加实体，并把文档标脏。
+- **后果**：已有未保存修改时，这条菜单仍会改动当前工程，没有取消机会。
+- **触发阶段**：下一轮改文件菜单或示例工位入口时。
+- **验收条件**：文档为脏时，加载示例与打开、关闭使用同一条确认。取消后场景节点、程序和 `isDirty` 与点击前一致。不脏时不弹窗，示例仍能加载。无头测试用现有回调，不弹出 `QMessageBox`。
+
+---
+
+## M14-015 [OPEN] 重绑定 STEP 时把窄字符路径交给 importStep（P2）
+
+- **来源轮次**：`M14-PROJECT-REBIND-002` Round 1 审核（2026-10-31）。
+- **位置**：`src/ui/MainWindow.cpp:804-824`；`src/cad/OcctCadKernel.cpp:123-136`、`:730`。
+- **现状**：存在性判断用 `utf8ToPath` 之后的 `filesystem::path`。真正导入调用 `importStep(resolvedPath.string())`。`importStep` 里的 `ifstream` 和 `ReadFile` 直接使用这串窄字符，不再走 `utf8ToPath`。本机示例路径是 ASCII，`LastTest.log` 的重绑定断言通过。`clear()` 在 `doc_` 替换之前执行；导入若抛异常，当前文档还在，内核已经空了。
+- **后果**：`sourceCadFile` 含非 ASCII 且文件确实存在时，导入可能失败，句柄被写成 -1，视口退回网格。不会画上一个工程的形体。
+- **触发阶段**：工程里的 `sourceCadFile` 含中文或其他非当前代码页字符时，或要让导入失败仍保持打开前的内核时。
+- **验收条件**：存在的 `sourceCadFile` 用与 `utf8ToPath` 相同的路径对象完成导入，并写上新的 `cadHandleId`。导入失败或抛异常时，若新文档尚未替换，打开前的内核与句柄保持可用。ASCII 相对路径的现有重绑定断言仍通过。
 
 ## M15-001 [OPEN] T 型接头回归有几处断言盖不住交接里的几何和碰撞（P2）
 
@@ -390,11 +406,11 @@
 ## MAINT-002 [OPEN] ensureProgramSimulated 恒为成功，批量导出的失败分支到不了（P2）
 
 - **来源轮次**：`MAINT-CLEANUP-P2-001` Round 1 审核（2026-10-31）。
-- **位置**：`src/ui/MainWindow.cpp:589-618` 与 `:702-711`。
-- **现状**：找到程序后 `ensureProgramSimulated` 一律 `return true`（`:593`、`:617`）。仿真抛异常会直接冒泡，不会走进 `exportAllPrograms` 里 `"ensure failed"` 那条错误。没有碰撞几何时也先记账再返回 true。Round 2 未改。
+- **位置**：`src/ui/MainWindow.cpp:592-621` 与 `:705-715`。
+- **现状**：找到程序后 `ensureProgramSimulated` 一律 `return true`（`:596`、`:620`）。仿真抛异常会直接冒泡，不会走进 `exportAllPrograms` 里 `"ensure failed"` 那条错误。没有碰撞几何时也先记账再返回 true。`M14-PROJECT-REBIND-002` 未改这条。
 - **后果**：批量导出不会因为“这一段仿真没做完”单独记一条错误。当前写路径仍会对每一段调用仿真。
 - **触发阶段**：下一轮改 `ensureProgramSimulated` 的返回值，或要让 `exportAllPrograms` 在单段仿真失败时跳过该段并继续其余程序时。
-- **验收条件**：仿真没有跑完时返回 false，`:702-711` 能记到该程序的名字或 id。仿真跑完仍返回 true。无碰撞几何的现有单测保持通过。
+- **验收条件**：仿真没有跑完时返回 false，`:705-715` 能记到该程序的名字或 id。仿真跑完仍返回 true。无碰撞几何的现有单测保持通过。
 
 ---
 

@@ -2,8 +2,11 @@
 #include "olp/algo/TrajectorySimulator.h"
 #include "olp/io/HtmlAnimationExporter.h"
 #include "olp/io/ProjectSerializer.h"
+#include "olp/io/Utf8Path.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <unordered_map>
 
 namespace olp::ui {
 
@@ -777,6 +780,69 @@ bool MainWindow::openProject(const std::string& filePath, std::string* errorOut)
     if (!io::ProjectSerializer::loadFromFile(filePath, loadedDoc, errorOut)) {
         return false;
     }
+
+    // M14-013: 彻底清理旧会话内部缓存，阻断旧工程残留 B-Rep 跨工程复用风险
+    cadKernel_.clear();
+
+    const std::filesystem::path projPath = io::utf8ToPath(filePath);
+    const std::filesystem::path projDir = projPath.parent_path();
+
+    // 同文件去重加载缓存: 规范化文件路径 -> 导入的节点列表
+    std::unordered_map<std::string, std::vector<core::SceneNode>> loadedCadFiles;
+
+    for (auto& node : loadedDoc.sceneNodes) {
+        if (node.type == core::SceneNodeType::Robot) {
+            continue;
+        }
+
+        if (node.sourceCadFile.empty()) {
+            node.cadHandleId = -1;
+            continue;
+        }
+
+        std::error_code ec;
+        const std::filesystem::path rawCadPath = io::utf8ToPath(node.sourceCadFile);
+        std::filesystem::path resolvedPath;
+
+        if (rawCadPath.is_absolute() && std::filesystem::exists(rawCadPath, ec)) {
+            resolvedPath = rawCadPath;
+        } else if (!projDir.empty() && std::filesystem::exists(projDir / rawCadPath, ec)) {
+            resolvedPath = projDir / rawCadPath;
+        } else if (std::filesystem::exists(rawCadPath, ec)) {
+            resolvedPath = rawCadPath;
+        }
+
+        if (resolvedPath.empty()) {
+            node.cadHandleId = -1;
+            continue;
+        }
+
+        const std::string normKey = resolvedPath.lexically_normal().string();
+        auto it = loadedCadFiles.find(normKey);
+        if (it == loadedCadFiles.end()) {
+            std::vector<core::SceneNode> importedNodes;
+            const bool imported = cadKernel_.importStep(resolvedPath.string(), importedNodes);
+            if (!imported || importedNodes.empty()) {
+                node.cadHandleId = -1;
+                continue;
+            }
+            it = loadedCadFiles.emplace(normKey, std::move(importedNodes)).first;
+        }
+
+        int newHandleId = -1;
+        const auto& candidates = it->second;
+        for (const auto& cand : candidates) {
+            if (cand.name == node.name) {
+                newHandleId = cand.cadHandleId;
+                break;
+            }
+        }
+        if (newHandleId < 0 && candidates.size() == 1) {
+            newHandleId = candidates.front().cadHandleId;
+        }
+        node.cadHandleId = newHandleId;
+    }
+
     doc_ = std::move(loadedDoc);
     cmdMgr_.clear();
     selectedSceneNodeId_.clear();

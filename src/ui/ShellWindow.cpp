@@ -14,6 +14,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QCloseEvent>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFrame>
@@ -140,7 +141,7 @@ void ShellWindow::buildChrome() {
     auto* newAction = disabledAction(this, QString::fromUtf8("新建"), later, IconKind::New, fileInk);
     auto* openAction = fileMenu->addAction(commandIcon(IconKind::Open, fileInk), QString::fromUtf8("打开..."));
     openAction->setToolTip(QString::fromUtf8("打开 JSON 工程文件。"));
-    connect(openAction, &QAction::triggered, this, &ShellWindow::openProjectFile);
+    connect(openAction, &QAction::triggered, this, [this] { openProjectFile(); });
 
     auto* saveAction = fileMenu->addAction(commandIcon(IconKind::Save, fileInk), QString::fromUtf8("保存..."));
     saveAction->setToolTip(QString::fromUtf8("保存当前工程为 JSON 文件。"));
@@ -612,11 +613,49 @@ void ShellWindow::loadSample() {
     statusBar()->showMessage(QString::fromStdString(summary.str()));
 }
 
+void ShellWindow::setConfirmDiscardCallback(ConfirmDiscardCallback callback) {
+    confirmDiscardCallback_ = std::move(callback);
+}
+
+bool ShellWindow::confirmDiscardIfDirty() {
+    if (!controller_.document().isDirty) {
+        return true;
+    }
+    if (confirmDiscardCallback_) {
+        return confirmDiscardCallback_();
+    }
+    const auto btn = QMessageBox::question(
+        this,
+        QString::fromUtf8("未保存的修改"),
+        QString::fromUtf8("当前工程有未保存的修改。如果继续，这些修改将会丢失。\n是否放弃未保存的修改？"),
+        QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Cancel);
+    return btn == QMessageBox::Discard;
+}
+
+void ShellWindow::closeEvent(QCloseEvent* event) {
+    if (!confirmDiscardIfDirty()) {
+        event->ignore();
+        return;
+    }
+    event->accept();
+    QMainWindow::closeEvent(event);
+}
+
 void ShellWindow::openProjectFile() {
-    const QString path = QFileDialog::getOpenFileName(
-        this, QString::fromUtf8("打开工程文件"),
-        QString(),
-        QStringLiteral("JSON 工程文件 (*.json);;所有文件 (*.*)"));
+    openProjectFile(QString());
+}
+
+void ShellWindow::openProjectFile(const QString& explicitPath) {
+    if (!confirmDiscardIfDirty()) {
+        return;
+    }
+    const QString path = explicitPath.isEmpty()
+        ? QFileDialog::getOpenFileName(
+              this, QString::fromUtf8("打开工程文件"),
+              QString(),
+              QStringLiteral("JSON 工程文件 (*.json);;所有文件 (*.*)"))
+        : explicitPath;
     if (path.isEmpty()) return;
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
@@ -782,7 +821,6 @@ void ShellWindow::showPropertiesForTarget(const QString& targetId) {
     propertyPanel_->showTarget(targetId);
 }
 
-
 void ShellWindow::updateUndoActions() {
     if (undoAction_ == nullptr) {
         return;
@@ -839,7 +877,6 @@ void ShellWindow::updateActionStates() {
 void ShellWindow::fillIssues() {
     issueList_->refill(controller_);
 }
-
 
 void ShellWindow::applySelection() {
     if (!controller_.selectedTargetId().empty()) {
@@ -951,7 +988,6 @@ std::vector<std::string> ShellWindow::selectedTargetIdsFromTable() const {
     }
     return targetTable_->selectedTargetIds();
 }
-
 
 } // namespace olp::ui
 

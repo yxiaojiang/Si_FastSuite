@@ -73,6 +73,16 @@ namespace olp::cad {
 OcctCadKernel::OcctCadKernel() = default;
 OcctCadKernel::~OcctCadKernel() = default;
 
+void OcctCadKernel::clear() {
+    solids_.clear();
+    nextHandleId_ = 1;
+#ifdef OLP_HAS_OCCT
+    shapes_.clear();
+    edgeShapes_.clear();
+    faceShapes_.clear();
+#endif
+}
+
 namespace {
 
 

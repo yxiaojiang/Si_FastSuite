@@ -12,6 +12,7 @@
 #include <vector>
 
 class QAction;
+class QCloseEvent;
 class QDockWidget;
 class QLabel;
 class QSlider;
@@ -49,13 +50,22 @@ public:
     QStringList dockTitles() const;
     bool zoneChecked(const QString& title) const;
 
+    // M14-012: Non-blocking test hook for dirty document confirmation.
+    // Return true to discard unsaved changes and proceed; return false to cancel.
+    using ConfirmDiscardCallback = std::function<bool()>;
+    void setConfirmDiscardCallback(ConfirmDiscardCallback callback);
+
 public slots:
     void showLayoutWorkbench();
     void showOlpWorkbench();
     void loadSample();
     void refreshFromDocument();
     void openProjectFile();
+    void openProjectFile(const QString& explicitPath);
     void saveProjectFile();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private:
     void buildChrome();
@@ -118,6 +128,9 @@ private:
     int refreshDepth_{0};
     bool isRefreshing() const noexcept { return refreshDepth_ > 0; }
     bool inItemChanged_{false};
+
+    bool confirmDiscardIfDirty();
+    ConfirmDiscardCallback confirmDiscardCallback_{};
 };
 
 } // namespace olp::ui

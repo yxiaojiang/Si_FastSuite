@@ -18,6 +18,9 @@ public:
     OcctCadKernel();
     ~OcctCadKernel() override;
 
+    // Clears all internal solid, shape, and topological caches and resets handle generation
+    void clear();
+
     bool importStep(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) override;
     bool importStl(const std::string& filePath, core::TriMesh& outMesh) override;
 

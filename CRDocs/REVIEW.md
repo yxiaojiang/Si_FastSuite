@@ -1,3 +1,46 @@
+# 审核结论 — M14-PROJECT-REBIND-002 Round 1
+
+> **Task ID**：`M14-PROJECT-REBIND-002`  
+> **Round**：1  
+> **Reviewer**：独立审核方（只读源码与本机产物；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-10-31  
+> **Verdict**：**APPROVED**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：`M14-014`、`M14-015` 已入 `DEFERRED`。`M14-012`、`M14-013` **RESOLVED**
+
+## 1. 结论
+
+两条延期项可以关闭。脏文档取消打开时，当前工程和 `isDirty` 都保持原样。确认放弃后才换成新工程。关闭窗口走同一条确认。打开工程会先清空 CAD 内核，再按 `sourceCadFile` 重绑句柄；文件不在或导入失败时句柄写成 -1，网格还在。
+
+## 2. M14-012 [RESOLVED]
+
+- `confirmDiscardIfDirty`（`src/ui/ShellWindow.cpp:620-634`）：文档不脏直接放行。脏文档优先走 `setConfirmDiscardCallback`；没钩子才弹出 `QMessageBox`，默认按钮是取消。
+- `openProjectFile`（`:649-652`）在选文件和 `openProject` 之前返回。取消时不调用打开。
+- `closeEvent`（`:636-642`）取消时 `ignore()`。
+- 测试在 `OLP_HAS_QT6` 内。`LastTest.log:921-934` 十四条 PASS：取消保持 `nodeA` 且仍为脏；确认后换成 `nodeB` 且脏标记清除；不脏时钩子不被调用；关闭取消与确认各一条。
+
+## 3. M14-013 [RESOLVED]
+
+- `OcctCadKernel::clear`（`src/cad/OcctCadKernel.cpp:76-84`）清掉 `solids_`、`shapes_`、`edgeShapes_`、`faceShapes_`，并把 `nextHandleId_` 置回 1。头文件里的缓存成员都在这里。
+- `MainWindow::openProject`（`src/ui/MainWindow.cpp:778-854`）：JSON 装入失败时直接返回，内核不动。装入成功后先 `clear()`。机器人节点跳过，构造时 `cadHandleId` 默认 -1，视口也不用它取 B-rep。其余节点：`sourceCadFile` 为空、路径不存在或导入失败，写成 -1。路径用 `utf8ToPath`，先绝对路径，再工程目录相对路径。同一规范化路径只 `importStep` 一次。同名实体取该文件里的句柄；文件里只有一个实体时用那一个。
+- 视口（`src/ui/OcctViewport.cpp:394-403`）在句柄取不到形状时画 `renderMesh`。
+- `LastTest.log:935-948`：旧句柄在打开后 `getEdges` 为空；丢失 STEP 的句柄为 -1，渲染网格 4 个顶点、碰撞网格 2 个三角形都还在；相对路径 `TestPart.step` 的两个节点重绑到大于 0 且相等的新句柄，边非空。两个节点用的是同名，相等句柄同时证明了按名匹配和同文件只导入一次。
+
+## 4. 本机实跑
+
+`Tools\Compile.bat` exit 0。`build/Testing/Temporary/LastTest.log:980` 为 `Summary: 862 passed, 0 failed.` `--verify` exit 0。
+
+编辑器行号（含空行）：`ShellWindow.cpp` 993，`MainWindow.cpp` 856，`OcctCadKernel.cpp` 884，`test_project_io.cpp` 811。交接写的 854 与 804 偏低，都没到 1000。`ShellWindow.cpp` 再加功能前要先按职责拆开。
+
+`git diff` 对 `include/olp/algo` 与 `src/algo` 为空。
+
+## 5. 未纳入本条关闭范围
+
+`加载示例工位` 不走 `confirmDiscardIfDirty`。重绑定把 `std::filesystem::path::string()` 交给 `importStep`，而 `importStep` 内部不用 `utf8ToPath`。见 `M14-014`、`M14-015`。
+
+---
+
 # 审核结论 — MAINT-CLEANUP-P2-001 Round 2
 
 > **Task ID**：`MAINT-CLEANUP-P2-001`  

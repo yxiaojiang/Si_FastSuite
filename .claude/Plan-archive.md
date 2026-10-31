@@ -1,5 +1,22 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-10-31：M14-PROJECT-REBIND-002 Round 1 APPROVED（M14-012 与 M14-013 闭环）
+
+1. **[DONE] 工程打开未保存检查与 CAD 形体重绑定。** 任务号 `M14-PROJECT-REBIND-002`，Round 1 **APPROVED**。延期项 `M14-012`、`M14-013` 彻底闭环：
+   - **M14-012 闭环**：`ShellWindow` 引入 `confirmDiscardIfDirty()` 统一检查逻辑；在 `openProjectFile` 与 `closeEvent` 中拦截脏标记，用户取消安全中止保持当前文档与脏标记不变，确认放弃后覆盖打开；提供 `setConfirmDiscardCallback` 测试注入钩子，ctest 无头自动化回归不挂起；
+   - **M14-013 闭环**：`OcctCadKernel` 补充 `clear()` 清空会话 solids/shapes/edgeShapes 缓存与 handle 计数；`MainWindow::openProject` 载入工程后清空内核，遍历几何节点按绝对路径与工程文件相对路径解析 `sourceCadFile`，去重导入并重新绑定 `cadHandleId`；文件丢失或导入失败明确置为 -1，使视口与碰撞检测干净降级回退至持久化 `renderMesh` 与 `collisionMesh`，绝不引用上一工程残留句柄；
+   - **自动化测试**：`tests/test_project_io.cpp` 补充两项延期项的完整回归测试（14 条 M14-012 + 14 条 M14-013 断言），全量测试增至 862 passed, 0 failed；`Tools\Compile.bat` exit 0；`--verify` exit 0；所有文件均严格控制在 1000 行限制之下；`OpwKinematics` 与 `olp_algo` 保持零改动。
+   - **新延期登记**：`M14-014`（加载示例工位不询问）、`M14-015`（重绑定 STEP 时把窄字符路径交给 importStep）。
+
+## 2026-10-31：MAINT-CLEANUP-P2-001 Round 2 APPROVED（行数治理与 FIX-EXPORT-P2 收口）
+
+1. **[DONE] CommandManager 行数拆分治理与 FIX-EXPORT-P2-A/B/C 收口。** 任务号 `MAINT-CLEANUP-P2-001`，Round 2 **APPROVED**。
+   - `CommandManager.cpp` 拆分为 `CommandManager.cpp`（477 行）与 `ToolpathCommands.cpp`（528 行），严格受控于 1000 行限制；
+   - `MainWindow` 引入 `programCanonicalKey(prog)` 单一规范键，彻底根除跨程序同名伪新鲜放行漏洞；
+   - `exportAllPrograms` 直接对遍历到的当前程序实例执行仿真；
+   - `SampleSession` 拒写分支使用 `utf8ToPath` 主动清理构建目录残留 `.ls`；
+   - 全量测试 834 passed, 0 failed，`--verify` exit 0。
+
 ## 2026-10-29：FIX-EXPORT-SAFETY GATE-001..006 CLOSED（全盘复审 PASS_WITH_RISKS / APPROVED）
 
 1. **[DONE] 导出安全门禁修复计划收口。** 任务轨 `FIX-EXPORT-GATE-001`..`006` + `FIX-EXPORT-FULL-REAUDIT`。`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` **CLOSED**。协调方 `CRDocs/FULL_REAUDIT_COORDINATOR_2026-10-29.md` 结论 **PASS_WITH_RISKS**；Audit_X `CRDocs/REVIEW.md` FULL REAUDIT 交叉验证后 **APPROVED**；`CRDocs/STATUS.md` 记 APPROVED。计划范围内无新 P0/P1。Windows 声称全量测试 **805 passed / 0 failed**（box 未复跑）。
