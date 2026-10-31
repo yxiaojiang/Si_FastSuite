@@ -360,3 +360,58 @@
 - **触发阶段**：下次改 Test 23，或改焊缝标架、零件碰撞角色、点位状态时。
 - **验收条件**：平分线与 `(0, -1, 1)` 的有符号夹角小于 0.01°。两个外法向分别贴近 `(0, -1, 0)` 和 `(0, 0, 1)`，误差小于 0.01°。左右夹具的 `collisionRole` 为 `Fixture`。采样弧长严格递增。每个目标点的状态为 `Valid`；碰撞、近碰撞、奇异和近限位都使该断言失败。
 
+
+---
+
+## FIX-EXPORT-P2 [OPEN] 导出安全门禁收口后的非阻断边界与测试加固项（P2）
+
+- **来源轮次**：`FIX-EXPORT-SAFETY` 全盘复审（协调方 / `Audit_X` / `FIX-EXPORT-GEMINI-FULL-REAUDIT`，2026-10-29 ~ 2026-10-31）。
+- **位置**：`include/olp/ui/MainWindow.h:148-150`、`src/ui/MainWindow.cpp:519-528, 551-564, 669-693`、`src/ui/SampleSession.cpp:225-240`、`src/algo/CollisionAndSim.cpp:37-65`、`tests/test_postprocessor.cpp:549-610`。
+- **现状**：
+  1. **P2-A（文档级 freshness）**：`exportSimEnsured_` 与 `lastSimulationResult_` 为 `MainWindow` 文档级状态，未按 `programId` 分别记账。虽然所有非 `const` 导出与预览入口（`exportFanucLs`、`exportAllPrograms`、`LsExportDialog::refreshPreview`）每次均无条件重跑 `validateAndSimulateProgram`，但在多程序文档下对 `PART_A` 执行 `ensure` 后，直接对未仿真的 `PART_B` 调用 `const` 方法 `validateProgramForExport("PART_B")` / `previewFanucLs("PART_B")` 时不会报 stale，且 `test_postprocessor.cpp:592-601` 对 `PART_B` 的断言无法独立证明 `PART_B` 已被单独仿真。
+  2. **P2-B（`exportAllPrograms` 查找与负路径测试）**：`exportAllPrograms` 遍历 `cu.programs` 时用 `key = !prog.id.empty() ? prog.id : prog.name` 再经 `findProgramInDocMutable(doc_, key)` 反查，导致正常遍历下 `ensure` 返回 `false` 的跳过分支不可达（缺负路径单测），且在跨控制器同名或 `id`/`name` 双空时会命中文档首个程序。
+  3. **P2-C（`SampleSession` 旧 `.ls` 残留）**：`SampleSession.cpp:228-237` 拒写时不主动删除历史运行可能遗留在磁盘上的 `build/WELD_001.ls`。
+  4. **P2-D（Soft 层状态覆盖）**：`shouldUpgradeCacheStatus` 将 `Singularity` / `NearJointLimit` 归入 Soft（Tier 0），段内 `NearCollision`（Tier 1）会覆盖端点 `Singularity` 的 `cache.status`（两者在后处理均为非阻断 `Warning`）。
+- **后果**：不影响默认单/多程序写出时的硬碰撞与构型跳变阻断，但多程序下 `const` 校验/预览接口及历史构建目录残留文件可能产生误导。
+- **触发阶段**：M12 多程序导出交互完善或清理 `FIX-EXPORT` 延期项时（注意：**禁止**因本条重开已 CLOSED 的 `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`）。
+- **验收条件**：`exportSimEnsured_` 按程序（或程序版本号）记账，使未仿真过的 `PART_B` 在 `PART_A` 已 `ensure` 后调用 `const` `validateProgramForExport("PART_B")` 仍拒止；`exportAllPrograms` 内部直接对当前 `core::Program&` 执行仿真；`SampleSession` 拒写时移除已存在的 `build/WELD_001.ls`。
+
+---
+
+## M13-HTML3D-003 [OPEN] 抽稀后的播放器保持上一关键帧，不插值（P2）
+
+- **来源轮次**：`M13-HTML3D-EXPORT-001` Round 1 审核（2026-10-31）。
+- **位置**：`src/io/HtmlAnimationExporter.cpp:319-330`（仅当相对弦的偏离小于容差才删帧），`:1007-1009` 与 `:1021-1031`（时钟和姿态用 `bakedFrames[curIdx]`，不在两帧之间插值）。
+- **现状**：删除帧的前提是这段运动能由线性插值还原。播放端没有插值，姿态停在上一关键帧，到点再跳。本机 `WELD_001_Preview.html` 1047 帧抽成 184 帧；间隔 ≥ 0.2 s 的有 142 段，其中最大 TCP 跳动 2.43 mm、关节 0.14°。更快的共线空走可以整段跳过去。起弧/熄弧翻转仍保留了 2 次，不把本条升为 P1。
+- **触发阶段**：下一轮改 HTML 播放器插值，或空走速度高到 0.25 s 内的直线跳变量不能接受时。
+- **验收条件**：两个关键帧之间按时间对 TCP、六个关节和 7 个连杆矩阵插值。弦偏离仍受 `keyframePosTolMm` / `keyframeJointTolDeg` 约束。0 帧和 1 帧不除零。
+
+---
+
+## M13-HTML3D-004 [OPEN] 顶点哈希回绕、脚本结束符、旋转矩阵两位小数（P2）
+
+- **来源轮次**：`M13-HTML3D-EXPORT-001` Round 1 审核（2026-10-31）。
+- **位置**：`src/io/HtmlAnimationExporter.cpp:209-215`（`quantizeKey`），`:19-34`（`escapeJson`），`:433`（`std::setprecision(2)`）。
+- **现状**：量化键只保留 21 位。大约 `[-100000, +109715]` mm 以内不碰撞；更远的坐标与负到超出偏置的坐标会并到同一顶点。`escapeJson` 处理了引号、反斜杠和换行，中文原样通过；零件名里的 `</script>` 会截断页面脚本。旋转矩阵元素打印成 0.01，小角度被收成 0。当前 T 型接头工位碰不到这三条。
+- **触发阶段**：工位坐标超出约 ±100 m，或零件名/程序名要进入脚本字符串且含 `<`，或预览要保持亚度姿态时。
+- **验收条件**：哈希在 ±1 km 内不回绕。脚本字符串里的 `<` 不会提前结束 `<script>`。连杆矩阵在 1° 转角下仍能看出非单位阵，或改为足够的小数位。
+
+---
+
+## M13-HTML3D-005 [OPEN] 第 8 节用子串代替几何断言（P2）
+
+- **来源轮次**：`M13-HTML3D-EXPORT-001` Round 1 审核（2026-10-31）。
+- **位置**：`tests/test_report.cpp:709-776`。
+- **现状**：离线、网格、七节连杆、焊枪、相机和倍速都靠查找子串。`keyframeCount` 不是 21 即算抽稀成功，不要求起弧帧还在。枪尖偏离 TCP 约 212 mm 时，这 16 条仍然通过（本轮 821/0）。`M13-HTML3D-001` 要求的枪尖距离断言不依赖本条的其余子串检查。
+- **触发阶段**：下一轮改 `tests/test_report.cpp` 的 HTML 段，或改抽稀/焊枪网格时。
+- **验收条件**：Home 与一帧非零姿态下，枪尖到 `tcp` 的距离小于 1 mm。合成轨迹里弧状态切换的那一帧仍在导出的 `bakedFrames` 中。0 帧导出不抛异常，播放脚本不索引空数组。
+
+---
+
+## M13-HTML3D-006 [OPEN] HTML 导出与界面仿真的工具/用户坐标系取值不完全相同（P2）
+
+- **来源轮次**：`M13-HTML3D-EXPORT-001` Round 1 审核（2026-10-31）。
+- **位置**：`src/ui/MainWindow.cpp:706-740`（导出按工具号，优先 `tcpOffset`）；`:354-358` 与 `src/ui/TimelinePanel.cpp:145-148`（第一个工具的 `localTransform`）；`src/ui/ShellWindow.cpp:202`（程序号传空串）；`src/io/HtmlAnimationExporter.cpp:422-423` 与 `src/app/CommandManager.cpp:129-135`（同号 UFRAME 一个取最后、一个取最前）。
+- **现状**：未点仿真就导出时会重新 `plan`，不用过期的 `lastSimulationResult_`。示例里 `tcpOffset` 与 `localTransform` 都是 Z=150，只有一个工具、一个 UFRAME、一段程序，所以本轮 TCP 与界面一致。多工具、多程序或重复 UFRAME 编号时两边会分开。
+- **触发阶段**：工程里出现 2 号工具、两段程序，或两个节点共用同一个 `uframeNumber` 时。
+- **验收条件**：HTML 使用的基座、UFRAME、UTOOL 与时间轴播放同一段程序时用的是同一组变换。菜单导出当前选中程序；只有一段程序时行为与现在相同。

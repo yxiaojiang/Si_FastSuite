@@ -118,6 +118,7 @@ endif()
 # ------------------------------------------------------------------------------
 add_library(olp_io STATIC
     src/io/FanucLsPostProcessor.cpp
+    src/io/HtmlAnimationDataPrep.cpp
     src/io/HtmlAnimationExporter.cpp
     src/io/ProjectSerializer.cpp
     src/io/Utf8Path.cpp

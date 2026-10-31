@@ -190,6 +190,21 @@ void ShellWindow::buildChrome() {
             QMessageBox::warning(this, QString::fromUtf8("导出失败"), QString::fromStdString(err));
         }
     });
+    exportHtmlAction_ = fileMenu->addAction(commandIcon(IconKind::Export, fileInk), QString::fromUtf8("导出 3D HTML 仿真动画..."));
+    exportHtmlAction_->setToolTip(QString::fromUtf8("导出单文件离线可交互 3D HTML 仿真动画包。"));
+    connect(exportHtmlAction_, &QAction::triggered, this, [this] {
+        const QString path = QFileDialog::getSaveFileName(
+            this, QString::fromUtf8("导出 3D HTML 仿真动画"),
+            QStringLiteral("WELD_001_3D_Animation.html"),
+            QStringLiteral("HTML 3D 动画文件 (*.html)"));
+        if (path.isEmpty()) return;
+        std::string err;
+        if (controller_.exportHtmlAnimation(path.toStdString(), "", &err)) {
+            statusBar()->showMessage(QString::fromUtf8("已成功导出 3D HTML 仿真动画: %1").arg(path), 5000);
+        } else {
+            QMessageBox::warning(this, QString::fromUtf8("导出失败"), QString::fromStdString(err));
+        }
+    });
     fileMenu->addSeparator();
     fileMenu->addAction(QString::fromUtf8("退出"), this, &QWidget::close);
 
@@ -803,6 +818,9 @@ void ShellWindow::updateActionStates() {
     }
     if (exportPdfAction_ != nullptr) {
         exportPdfAction_->setEnabled(hasScene || hasSeams);
+    }
+    if (exportHtmlAction_ != nullptr) {
+        exportHtmlAction_->setEnabled(hasProgramWithTargets);
     }
     if (pathAction_ != nullptr) {
         pathAction_->setEnabled(hasSeams);

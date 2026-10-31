@@ -1,3 +1,261 @@
+# 审核结论 — M13-HTML3D-EXPORT-001 Round 2
+
+> **Task ID**：`M13-HTML3D-EXPORT-001`  
+> **Round**：2  
+> **Reviewer**：独立审核方（重读 Round 2 源码与本机产物；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-10-31  
+> **Verdict**：**APPROVED**  
+> **P0**：无  
+> **P1**：`M13-HTML3D-001`、`M13-HTML3D-002` 均 **RESOLVED**  
+> **P2**：仍为 `DEFERRED`，本轮未要求修改
+
+## 1. 结论
+
+两条 P1 已关闭。Home 帧枪尖与 TCP 重合，距离 0 mm。焊接帧距离 0.0105 mm，来自四位小数打印，低于 0.05 mm 断言，也低于 Round 1 的 1 mm 验收。
+
+## 2. 本机实跑
+
+`Tools\Compile.bat` exit 0。`build/Testing/Temporary/LastTest.log:945` 为 `Summary: 827 passed, 0 failed.` `--verify` exit 0。
+
+`build/WELD_001_Preview.html` 338,107 字节。无 `http://`、`https://`。交接写的 282,143 字节是旧产物。
+
+## 3. M13-HTML3D-001 [RESOLVED]
+
+- `computeFlangeToTool0`（`src/io/HtmlAnimationDataPrep.cpp:193-204`）在 `urdfLoaded == false` 时写入 `RotY(-π/2)·RotX(π)`，与 `fanuc_m10ia_standalone.urdf:69-70` 的 tool0 固定旋转一致。`createFanucM10iA` 的 `urdfLoaded` 为 false，导出走这条矩阵。
+- `makeWeldingTorchMeshInLink6`（`:207-268`）先在 tool0 里沿 `utoolOffset.pos` 挤出，再对每个顶点做 `flangeToTool0.transformPoint`。`tcpLocal` 是同一点。
+- 播放仍乘 `linkWorldTransforms[6]`（`src/io/HtmlAnimationExporter.cpp:521`）。
+- 产物：`tcpLocal=150,0,0`。焊枪顶点包围盒 `[0,-24,-24]..[150,24,24]` mm，枪身沿 link_6 的 +X，半径约 24 mm，末端在 X=150。
+- Home：`jDeg` 的 J5 为 -90°，`tcp=(790,0,1450)`，link6 原点 `(790,0,1600)`，列 0 为 `(0,0,-1)`。`150·列0` 落到 `(790,0,1450)`。距离 **0.000000 mm**。
+- 焊接帧 `tcp=(812,-150,765)`，同一 `tcpLocal` 变换后距离 **0.010496 mm**。
+- 测试 `tests/test_report.cpp:786-876` 从 HTML 解析矩阵再算距离，阈值 0.05 mm。`LastTest.log:835` 与 `:837` 为 PASS。它核的是 `tcpLocal`，不是网格顶点；顶点轴向由上面的包围盒单独核对。
+
+## 4. M13-HTML3D-002 [RESOLVED]
+
+编辑器行号（含空行），不是交接里的去空行数字：
+
+| 文件 | 行号 |
+| :--- | ---: |
+| `src/io/HtmlAnimationExporter.cpp` | 611 |
+| `src/io/HtmlAnimationDataPrep.cpp` | 501 |
+| `src/io/HtmlAnimationDataPrep.h` | 88 |
+| `tests/test_report.cpp` | 882 |
+| `src/ui/ShellWindow.cpp` | 957 |
+
+全部低于 1000。1500 硬上限未触及。新编译单元已进 `CMakeLists.txt:121`。拆分按网格/帧准备与页面拼装切开，没有从函数中间截断。抽稀与操作搜索仍在 `HtmlAnimationDataPrep.cpp:349-498`，逻辑与 Round 1 通过的部分一致。
+
+## 5. 硬约束
+
+`git diff` 对 `OpwKinematics` 与 `src/algo`、`include/olp/algo` 为空。`olp_algo` 仍不链 Qt。
+
+## 6. P2
+
+`M13-HTML3D-003` 至 `006` 保持 `DEFERRED`。播放器仍不在关键帧之间插值。本轮不打开。
+
+---
+
+# 审核结论 — M13-HTML3D-EXPORT-001 Round 1
+
+> **Task ID**：`M13-HTML3D-EXPORT-001`  
+> **Round**：1  
+> **Reviewer**：独立审核方（只读源码、diff 与本机产物；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-10-31  
+> **Verdict**：**CHANGES_REQUESTED**  
+> **P0**：无  
+> **P1**：2（`OPEN`）  
+> **P2**：4（已转入 `CRDocs/DEFERRED.md`，本轮不要求修）
+
+## 1. 结论
+
+导出链能编译、能写出离线 HTML，测试套件是绿的。绿测试没有挡住焊枪轴向错误。
+
+`build/WELD_001_Preview.html`（281,811 字节）第一帧是 Home（`J5 = -90°`）。法兰原点在 `(790, 0, 1600)` mm，TCP 在 `(790, 0, 1450)` mm，连线沿世界 `-Z`。焊枪网格挂在 `link_6` 上，沿该连杆的 `+Z` 伸出，世界方向是 `+X`。两方向点积为 0，夹角 90°。枪尖落在 `(940, 0, 1600)`，离 TCP 约 212 mm。
+
+这是功能错误，阻断本轮通过。
+
+## 2. 本机实跑
+
+`Tools\Compile.bat`（Release）exit 0。
+
+- `ctest`：`SiFastSuiteOLP_AllTests` Passed（4.59 s）。`build/Testing/Temporary/LastTest.log:939` 为 `Summary: 821 passed, 0 failed.`
+- `SiFastSuiteOLP.exe --verify` exit 0。产物 `build/WELD_001_Preview.html`，281,811 字节。全文无 `http://`、`https://`，无 `<script src>`，无 `<link href>`。
+- `rawFrameCount: 1047`，`keyframeCount: 184`。起弧/熄弧在保留帧之间翻转 2 次。
+
+821 条通过只说明字符串断言没有失败。第 8 节没有比较枪尖和 TCP。
+
+## 3. 取证表
+
+| # | 审核项 | 证据 | 判定 |
+| :--- | :--- | :--- | :--- |
+| K1 | OPW 腕部重合帧会重算成 URDF 连杆系 | `src/io/HtmlAnimationExporter.cpp:250-265,279-280`。OPW 的 link4/link5 同在腕心（`src/algo/OpwKinematics.cpp:113-126`），`d45 < 1e-3` 且 `d23 = c2 = 600`。`TrajectorySimulator` 已经写入 `forwardRobotLinkWorldFrames`（`src/algo/simulation/TrajectorySimulator.cpp:444`），`d45 ≈ 640`，不会误重算。`1e-0` 就是 `1.0`，对角元阈值仍是 `1e-6` | **PASS** |
+| K2 | 7 节连杆矩阵与 STL 同在 URDF 连杆系 | `src/algo/FclCollisionQueries.cpp:225-248` 的原点/轴与 `fanuc_m10ia_standalone.urdf:36-63` 一致。网格用单位阵导出，再乘 `linkWorldTransforms[k]`（`HtmlAnimationExporter.cpp:616-617,950-952`）。Home 帧 link6 原点 `(790,0,1600)` 与手算一致 | **PASS**（连杆） |
+| K3 | 焊枪挂在 link6 且沿 UTOOL 指向 TCP | 网格沿 `utoolOffset.pos` 挤出（`HtmlAnimationExporter.cpp:149-156,626-631`），播放时乘 `linkWorldTransforms[6]`（`:954`）。OPW 法兰对的是 tool0，不是 link6（`tests/test_kinematics.cpp:151-154`；URDF `link_6-tool0` 的 `rpy="3.14159 -1.570796 0"`，`urdf:69-70`）。tool0 的 +Z 落到 link6 的 +X。产物 `tcpLocal=[0,0,150]`，枪沿 link6 +Z | **FAIL → P1 `M13-HTML3D-001`** |
+| K4 | 二进制 STL：小端、`84+n*50`、米→毫米、坏文件回退 | `HtmlAnimationExporter.cpp:84-132,135-147`。本机 `link_6.stl`：376 三角形，18884 = 84+376*50。包围盒约 `[-0.0125,-0.031,-0.031]..[0,0.031,0.031]` 米，`×1000` 正确。文件打不开或长度不符则 `makeFallbackRobotLinkMesh` | **PASS** |
+| K5 | 焊枪正交基：平行 X、零长度 | `HtmlAnimationExporter.cpp:149-156`。`norm() ≤ 1` 换成 `(0,0,150)`。`|dir·X| > 0.9` 改用 Y，叉乘模长 ≥ sin(arccos 0.9) ≈ 0.44，不会除零 | **PASS**（构造本身）。父坐标系仍然是 K3 |
+| K6 | 相机、近裁剪、背面剔除、深度排序 | `HtmlAnimationExporter.cpp:863-903,957`。yaw=0、pitch=0 时 forward=`(-1,0,0)`、right=`(0,1,0)`、up=`(0,0,1)`，Z-up 右手系。`zCam ≤ 20` 丢弃该顶点。Y 向下屏幕里 `area2 ≥ 0` 剔除，与外向 CCW 一致。`b.z - a.z` 远的先画 | **PASS** |
+| K7 | 0.1 mm 量化、退化三角形、越界索引 | `HtmlAnimationExporter.cpp:209-245`。工位尺度内（约 ±100 m）键唯一。退化点 `i0==i1` 丢弃。索引越界 `continue`。超出约 `[-100000, +109715]` mm 时 21-bit 掩码回绕 | **PASS**（工位内）/ **P2**（回绕） |
+| K8 | 0/1/2 帧、全静止、起熄弧 | `HtmlAnimationExporter.cpp:288,297-334`。`size ≤ 2` 原样返回。首尾帧保留。`arcActive` 与相邻保留帧或下一原始帧不同则保留。产物 1047→184，弧状态翻转仍为 2 次 | **PASS** |
+| K9 | 操作搜索越界、禁用操作、空帧 | `HtmlAnimationExporter.cpp:651-715`。`!op.enabled` 直接 `continue`。空 `decimatedFrames` 不按下标读时间。`fi < size` | **PASS** |
+| K10 | 未仿真就导出是否吃到旧的 `lastSimulationResult_` | `src/ui/MainWindow.cpp:706-740` 每次调用 `TrajectorySimulator::plan`，不读 `lastSimulationResult_`。基座、UFRAME、工具都从当前文档取 | **PASS**（见 P2：工具字段与时间轴不一致） |
+| K11 | 引号、反斜杠、换行、中文 | `escapeJson` `HtmlAnimationExporter.cpp:19-34`；`escapeHtmlText` `:37-49`。`"` `\` `\n` `\r` `\t` 有处理。UTF-8 中文原样写入，`<title>` 已转义 | **PASS**（这四类）/ **P2**（`</script>`） |
+| K12 | 播放器 0 帧、1 帧、拖动、倍速、跳转 | `HtmlAnimationExporter.cpp:757-758,832-849,1021-1031`。0 帧不索引 `bakedFrames`。1 帧不推进。滑条按索引取值，`-1` 跳转被拒绝。倍速 `parseFloat \|\| 1`。抽稀后两关键帧之间保持上一帧，不插值 | **PASS**（不越界）/ **P2**（不插值） |
+| H1 | `OpwKinematics` 零 diff | `git diff -- include/olp/algo/OpwKinematics.h src/algo/OpwKinematics.cpp` 为空 | **PASS** |
+| H2 | `olp_algo` 无 Qt | `include/olp/algo`、`src/algo` 无 Qt 头。`CMakeLists.txt:100-113` 只链 `olp_core` / `olp_cad` / `olp_device` / `fcl`。本轮 diff 不含 `src/algo` | **PASS** |
+| H3 | 单文件行数 | 编辑器行号：`HtmlAnimationExporter.cpp` **1044**。交接写的是 947。其余改动文件：头 33、`MainWindow.h` 161、`MainWindow.cpp` 766、`ShellWindow.h` 123、`ShellWindow.cpp` 957、`SampleSession.cpp` 269、`test_report.cpp` 789。均低于 1000。1500 硬上限没有文件触及 | **FAIL → P1 `M13-HTML3D-002`** |
+| H4 | 离线、中文路径、体积 | 产物无 URL。路径走 `utf8ToPath`（`HtmlAnimationExporter.cpp:86,398`）。281,811 字节 `< 50 MB`。中文路径断言在 `tests/test_report.cpp:690-699`，含在 821 通过里 | **PASS** |
+
+## 4. P0
+
+无。编译通过。空帧、坏 STL、空路径有回退或返回 `false`。`OpwKinematics` 未改。1500 行硬上限未破。
+
+## 5. P1（OPEN，本轮必须修）
+
+### M13-HTML3D-001 [RESOLVED in Round 2] 焊枪网格的父坐标系是 link_6，UTOOL 向量在 tool0 系
+
+- **位置**：`src/io/HtmlAnimationExporter.cpp:149-181`（沿 `utoolOffset.pos` 挤出），`:626-631`（单位阵烘焙），`:954`（乘 `linkWorldTransforms[6]`）。对照 `src/algo/FclCollisionQueries.cpp:241-247`、`src/algo/OpwKinematics.cpp:128-135`、`SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Robot_FANUC_M10iA/urdf/fanuc_m10ia_standalone.urdf:61-70`。
+- **事实**：`forwardRobotLinkWorldFrames` 的第 7 个姿态是 URDF `link_6`。金样把 OPW 法兰对到 `forwardUrdfTool0`（`tests/test_kinematics.cpp:151-154`）。`tool0` 相对 `link_6` 的固定旋转把工具 +Z 映到 link_6 的 +X。`link_6.stl` 是一块沿 X 只有约 12.5 mm 厚、YZ 约 ±31 mm 的法兰片，薄向就是工具轴。
+- **产物**：`build/WELD_001_Preview.html` 第一帧 `jDeg=[0,0,0,0,-90,0]`，`tcp=[790,0,1450]`，link6 齐次矩阵末 12 个数为 `[0,0,1, 790, 0,1,0, 0, -1,0,0, 1600]`。列向量 Z = `(1,0,0)`，原点 `(790,0,1600)`。`tcpLocal=[0,0,150]` 因此枪尖在 `(940,0,1600)`。TCP 相对原点是 `(0,0,-150)`。夹角 90°，距离约 212 mm。这个固定旋转每一帧都在，不限于 Home。
+- **验收**：Home 与至少一帧非零关节下，枪尖（网格沿工具轴的末端）与该帧 `tcp` 距离 `< 1 mm`。连杆 STL 仍乘 link_6，不要把整条手臂改乘 tool0。测试必须算这个距离，禁止只搜索 `Welding_Torch` 字符串。
+
+### M13-HTML3D-002 [RESOLVED in Round 2] `HtmlAnimationExporter.cpp` 已过 1000 行拆分门禁，交接行数是错的
+
+- **位置**：`src/io/HtmlAnimationExporter.cpp:1044`。`.claude/Rules.md` 单文件行数：到 1000 行后，下一次加行之前必须按职责拆编译单元。1500 是硬上限。
+- **事实**：编辑器行号 1044（含空行）。`CRDocs/IMPLEMENTATION.md` 写成 947，并写「全部低于 1000」。差 97 行。
+- **验收**：按职责切开（页面拼装与网格/关键帧准备分开即可）。禁止把一个函数从中间截断。新 `.cpp` 写入 `CMakeLists.txt` 的 `olp_io`（现为 `CMakeLists.txt:119-124`）。拆完后每个文件编辑器行号 `< 1000`。行为与 `M13-HTML3D-001` 的枪尖断言保持一致。
+
+## 6. P2（DEFERRED，不挡本轮修复清单）
+
+已写入 `CRDocs/DEFERRED.md`。执行者本轮不要顺手改这些。
+
+- **M13-HTML3D-003**：播放器在两个关键帧之间保持上一帧（`HtmlAnimationExporter.cpp:1021-1031,1007-1009`）。抽稀只在「线性偏离 ≤ 容差」时删帧（`:319-330`），播放端没有插值。本机长间隔（≥ 0.2 s，142 段）最大 TCP 跳动 2.43 mm / 0.14°。快的直线空走可以更大。
+- **M13-HTML3D-004**：`quantizeKey`（`:209-215`）低 21 位回绕，安全区大约 `[-100000, +109715]` mm。`escapeJson`（`:19-34`）不处理 `</script>`。`std::setprecision(2)`（`:433`）把旋转矩阵元素收成 0.01。
+- **M13-HTML3D-005**：`tests/test_report.cpp:709-776` 以子串存在当作几何正确。`keyframeCount != 21` 盖不住「起弧帧被删」。枪尖错误在 821 通过时仍然存在。
+- **M13-HTML3D-006**：`exportHtmlAnimation`（`src/ui/MainWindow.cpp:717-725`）按工具号读 `tcpOffset`，时间轴和校验读的是第一个工具的 `localTransform`（`:354-358`，`src/ui/TimelinePanel.cpp:145-148`）。示例里两者同为 Z=150，所以本轮对得上。菜单传入的程序号是空串（`src/ui/ShellWindow.cpp:202`），多程序时导出第一段。导出器里的 UFRAME 取最后一个同号节点（`HtmlAnimationExporter.cpp:422-423`），`computeUFrameInWorld` 取第一个（`src/app/CommandManager.cpp:129-135`）。
+
+## 7. 交给执行者
+
+只修 `M13-HTML3D-001` 与 `M13-HTML3D-002`。P2 保持 `DEFERRED`。修完后重新跑 `Tools\Compile.bat`，并在 `IMPLEMENTATION.md` 里给出 Home 帧枪尖与 TCP 的毫米差。
+
+---
+
+# 审核结论 — FULL REAUDIT Gemini
+
+> **Task ID**：`FIX-EXPORT-GEMINI-FULL-REAUDIT`  
+> **Task**：`3b977e9`（相对父提交 `19cb1ac`）`FIX-EXPORT-SAFETY` `GATE-001..006` 累计改动独立全盘复审  
+> **Round**：FULL REAUDIT Gemini（Round 1）  
+> **Reviewer**：Gemini（Si_FastSuite 独立审核方；逐文件重读源码与 diff 取证，不复用旧结论当证据）  
+> **Reviewed at**：2026-10-31 19:13 Asia/Shanghai (UTC+8)  
+> **Repo & Scope**：`C:\Users\mimovr\Desktop\TEmp\Si_FastSuite` | `git diff 19cb1ac..3b977e9`（26 files changed）  
+> **设计权威**：`Docs/OLP_System_Design_Claude.md` v1.1（M10/M12、算法层禁 Qt、ROBOGUIDE 验收约束）  
+> **计划依据**：`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`（状态 **CLOSED**）  
+> **工程约束**：本轮未修改任何产品/测试源码（`src/`、`include/`、`tests/`、`OpwKinematics` 零改动），仅更新 `CRDocs/`  
+> **Compile/test（本机实跑）**：**已在本机 Windows 复跑 `Tools\Compile.bat` 通过**（MSVC 17.14 / Qt 6.12.0 / OCCT 8.0.0 / FCL Release 构建 exit 0；`SiFastSuiteOLP_AllTests` **805 passed, 0 failed**，`build/Testing/Temporary/LastTest.log:901`；`SiFastSuiteOLP.exe --verify` exit 0）。不再仅依赖口头采信。
+
+---
+
+## 1. Verdict
+
+- **正式 Verdict**：**APPROVED**（`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` 计划范围内无新发现 P0/P1，既有 `OPEN-P1-1..4` 与 `OPEN-P2-GATE005-1` 均已核实闭环）。
+- **风险口径**：**同意协调方 `PASS_WITH_RISKS` 的风险分层判断**——默认门禁与写出前强制重仿真主链闭合无击穿，但主线运动学对拍 `RISK-001` 仍为 `OPEN`（水印与红条仅作草稿警示，不等于修正运动学），且存在少量不阻断安全主链的 P2 边界项。
+- **主计划状态**：`PlanDocs/FIX-EXPORT-SAFETY-PLAN.md` **仍应保持 CLOSED**（严禁因 P2 重开计划）。
+
+---
+
+## 2. 独立取证表（Claim → File:Line → PASS/FAIL）
+
+| # | 审核项（Claim） | 源码与测试独立取证（`file:line`） | 判定 |
+| :--- | :--- | :--- | :--- |
+| **G1** | 默认开启 `blockOnCollision` / `blockOnConfigJump` | `include/olp/io/FanucLsPostProcessor.h:15-16`（两者默认初始值均为 `true`）；`include/olp/ui/LsExportDialog.h:29`（`config_{}` 默认构造）；`src/ui/LsExportDialog.cpp:61-62`（`chkBlockCollision_->setChecked(true)`） | **PASS（CLOSED）** |
+| **G2** | 默认配置下 `Collision` / `ConfigJump` 报 `Error` 并拒写 `.ls` | `src/io/FanucLsPostProcessor.cpp:112-121`（`Collision` → `blockOnCollision ? Error : Warning`）、`:123-132`（`ConfigJump` → `blockOnConfigJump ? Error : Warning`）、`:207`（`result.ok = !result.hasErrors()`）、`:215-226`（`!valResult.ok` 时 `generateLsString` 返回 `{}`）、`:393-397`（`body.empty()` 时 `exportToFile` 在创建目录/打开文件前返回 `false`） | **PASS（CLOSED）** |
+| **G3** | `NearCollision` 不短路同段后续硬碰撞采样；`sweepCollided` 写回 `cache.status = Collision` 且不改 `cache.valid` | `src/algo/CollisionAndSim.cpp:283-284`（拆分 `postedHardSweepCollision` 与 `postedNearSweepIssue` 双布尔旗）、`:357`（扫掠循环仅由 `!postedHardSweepCollision` 短路，`postedNearSweepIssue` 不短路后续 step）、`:364-373`（`sweepCollided` 时置硬撞旗并调用 `upgradeTargetCacheFromSegmentIssue(..., Collision, msg)`）、`:19-28`（仅更新 `status`/`issueMessage`，第 26 行明确保留 `cache.valid` 不变） | **PASS（CLOSED）** |
+| **G4** | Hard 同级内 `Collision` 优先升级（`shouldUpgradeCacheStatus`） | `include/olp/algo/CollisionAndSim.h:135-137`（公开静态方法声明）；`src/algo/CollisionAndSim.cpp:37-65`（Soft=0 < Near=1 < Hard=2；第 60-63 行：当 `inTier == curTier == 2` 且 `incoming == Collision && current != Collision` 时返回 `true`，确保段内后发的 `Collision` 可覆盖先发的 `ConfigJump`/`Unreachable`/`JointLimitExceeded`，反之不降级） | **PASS（CLOSED）** |
+| **G5** | Gate-off（`blockOnCollision=false`）时 `Collision` 降为 `Warning`，UI 禁止纯绿掩盖 | `src/io/FanucLsPostProcessor.cpp:112-121`（`blockOnCollision=false` 时仍推入 `Severity::Warning` 而非静默丢弃）；`src/ui/LsExportDialog.cpp:143-165`（`valResult.ok` 时若 `!valResult.issues.empty()` 走 `#e5c07b` 黄色 `⚠ 校验通过（含警告，可导出）` 分支并逐条列出 `issuesHtml`；仅 `issues.empty()` 时显示 `#98c379` 绿色通过）；`tests/test_postprocessor.cpp:214-232` | **PASS（CLOSED）** |
+| **G6** | 导出/预览刷新前强制 `ensure`；`const` validate/preview 缺仿真时拒止；`exportAllPrograms` 逐程序 `ensure` | `src/ui/MainWindow.cpp:530-549`（`documentHasCollisionRelevantGeometry`）、`:551-564`（`exportSimulationMissingOrStale`）、`:566-599`（`ensureProgramSimulatedForExport`：有碰撞几何时无条件重跑 `validateAndSimulateProgram` 并置 `exportSimEnsured_=true`）、`:19`（`handleDocumentChanged` 重置 `exportSimEnsured_=false`）、`:609-621` & `:631-638`（`const` 校验/预览在 stale 时拒止）、`:647`（`exportFanucLs` 先 `ensure`）、`:669-693`（`exportAllPrograms` 逐程序 `ensure`，失败则记错并 `continue` 跳过该控制器）；`src/ui/LsExportDialog.cpp:122,215` | **PASS（CLOSED）** |
+| **G7** | 共享 `utf8ToPath` 支持 Windows 中文路径导出 | `include/olp/io/Utf8Path.h:11`；`src/io/Utf8Path.cpp:19-31`（`_WIN32` 下用 `MultiByteToWideChar(CP_UTF8, ...)` 转 `std::wstring` 构造 `filesystem::path`）；`CMakeLists.txt:123`；`src/io/FanucLsPostProcessor.cpp:2,400,431,437-444`（保持 UTF-8 字符串拼接后交 `exportToFile`）；`src/io/ProjectSerializer.cpp:6,803,872`；`tests/test_postprocessor.cpp:378-400`（本机 Windows 实跑通过） | **PASS（CLOSED）** |
+| **G8** | `RISK-001` `/MN` 水印 + 对话框常驻红条；`OpwKinematics` 零 diff；`olp_algo` 无 Qt | `src/io/FanucLsPostProcessor.cpp:241`（`addMnLine("  ! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)")` 作为 `/MN` 第 1 行，`:328` `LINE_COUNT` 同步计入；本机产物 `build/WELD_001.ls:10,20` 已核验）；`src/ui/LsExportDialog.cpp:32-42`（独立 `riskBanner` 置顶，`refreshPreview` `:114-179` 零触碰）；`git diff 19cb1ac..3b977e9 -- include/olp/algo/OpwKinematics.h src/algo/OpwKinematics.cpp` 输出为空；`git grep -E "Qt\|QObject\|QString\|Q_" -- include/olp/algo src/algo` 无匹配 | **PASS（CLOSED）** |
+| **G9** | `SampleSession` 校验或阻断级仿真问题失败时不写新 `.ls` | `src/ui/SampleSession.cpp:206-216`（汇总 `blockingIssue`）、`:222-223`（`refuseProductionLs = !lsVal.ok \|\| blockingIssue`）、`:228-240`（`refuseProductionLs` 为真时不调用 `exportToFile`，`lsOk=false`）、`:243-251`（返回 `exitCode = 2`） | **PASS（CLOSED）** |
+| **G10** | 单测锁覆盖（Test 9 / 9b / 9c / Test 19 GATE-001..006） | `tests/test_collision.cpp:100-195`（Test 9）、`:198-284`（Test 9b 含 `:274` `check(sawNear, ...)`）、`:287-309`（Test 9c Hard 升级矩阵）；`tests/test_main.cpp:46-48`；`tests/test_postprocessor.cpp:207-418,504-610` | **PASS（805/0 本机实跑全绿）** |
+
+---
+
+## 3. 怀疑式端到端推演痕迹（End-to-End Traces）
+
+### Trace 1：端点无碰、段中穿障 → 写回 `target.cache` → 默认导出拒止
+1. `CollisionAndSimEngine::validateAndSimulateProgram`（`src/algo/CollisionAndSim.cpp:234-260`）：目标端点先做 IK 与碰撞检测，端点无碰时 `target.cache.valid = true`、`target.cache.status = Valid`。
+2. 进入段内插补循环（`:286-399`）：当 `step < numSteps && !postedHardSweepCollision && doSweepCheck`（`:357`）时执行 `checkRobotAndTorchCollision`。
+3. 若第 $k_1$ 步先进入安全距离内（`sweepClearance < collisionSafeClearanceMm`），触发 `:374-387`：`postedNearSweepIssue = true`，`upgradeTargetCacheFromSegmentIssue` 将 `target.cache.status` 从 `Valid`（Tier 0）升为 `NearCollision`（Tier 1）。**注意 `postedHardSweepCollision` 仍为 `false`**。
+4. 后续第 $k_2$ 步发生硬碰撞（`sweepCollided == true`），仍能进入 `:357` 分支并触发 `:364-373`：`postedHardSweepCollision = true`，`shouldUpgradeCacheStatus(NearCollision, Collision)` 返回 `true`（`2 > 1`），`target.cache.status` 升为 `Collision`，`target.cache.valid` 保持 `true`。
+5. 若同段在硬碰撞之前先在 `:327-340` 触发了 `>15°` 的 `ConfigJump`（Tier 2），第 $k_2$ 步硬碰撞时 `shouldUpgradeCacheStatus(ConfigJump, Collision)` 因 `:60-63` 同级 `Collision` 优先规则返回 `true`，状态仍升为 `Collision`。
+6. 调用 `FanucLsPostProcessor::exportToFile(prog, path)`（默认 `LsPostConfig{}`）：内部 `generateLsString` → `validateProgram` 在 `:112-121` 命中 `t.cache.status == Collision && config.blockOnCollision` → 产生 `Severity::Error` → `valResult.ok = false` → `generateLsString` 返回空串 → `exportToFile` 在 `:394-396` 立即返回 `false`，磁盘零写入。**链路完全闭合。**
+
+### Trace 2：场景/障碍物变更或加载未仿真文档后直接请求导出
+1. 若经过 `CommandManager` 修改文档，`MainWindow::handleDocumentChanged()`（`src/ui/MainWindow.cpp:19`）立即将 `exportSimEnsured_ = false`。
+2. **关键深层核查**：即便外部代码直接修改 `mainWin.document().sceneNodes`（绕过 `CommandManager`，未触发 `handleDocumentChanged`），当调用非 `const` 写出入口 `MainWindow::exportFanucLs`（`:647`）、`MainWindow::exportAllPrograms`（`:676`）或打开/刷新 `LsExportDialog::refreshPreview`（`src/ui/LsExportDialog.cpp:122`）时，它们都会调用 `ensureProgramSimulatedForExport(programId)`。
+3. 查看 `MainWindow::ensureProgramSimulatedForExport`（`src/ui/MainWindow.cpp:566-599`）：只要 `documentHasCollisionRelevantGeometry()` 为真，**该函数不会因为 `exportSimEnsured_ == true` 或 `lastSimulationResult_.frames` 非空而跳过重算**，而是每次都对目标 `prog` 重新执行 `simEngine.validateAndSimulateProgram(*prog, ...)` 刷新 `target.cache`！
+4. 因此，无论用户通过命令栈还是直接改文档、无论单程序还是多程序，**所有非 `const` 导出与对话框预览入口都天然具备 per-program 实时重仿真保护，不存在陈旧 `Valid` cache 漏放硬碰撞的击穿路径**。
+
+### Trace 3：用户在 UI 主动取消勾选「阻断碰撞点导出」
+1. `LsExportDialog::refreshPreview`（`src/ui/LsExportDialog.cpp:118`）将 `config_.blockOnCollision = false`（但 `config_.blockOnConfigJump` 仍保持默认 `true`）。
+2. `validateProgram`（`src/io/FanucLsPostProcessor.cpp:112-121`）将 `Collision` 记为 `Severity::Warning`，`valResult.ok == true` 且 `!valResult.issues.empty()`。
+3. 对话框进入 `src/ui/LsExportDialog.cpp:150-157`：状态栏显示黄色 `⚠ 校验通过（含警告，可导出）` 并逐条列出黄色碰撞警告；顶部 `riskBanner`（`:32-42`）继续常驻红条警告；导出的 `.ls` 正文 `/MN` 第 1 行（`src/io/FanucLsPostProcessor.cpp:241`）仍带 `! DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)`。**无纯绿静默掩盖。**
+
+---
+
+## 4. 点名抽核三项（独立裁决）
+
+### 抽核 1：文档级 freshness（非 per-program）是否仍是 P2 / 是否应升 P1？
+- **结论**：**仍是 P2，不应升为 P1。**
+- **理由与行号**：
+  1. `exportSimEnsured_`（`include/olp/ui/MainWindow.h:150`）与 `lastSimulationResult_`（`:148`）确为 `MainWindow` 文档级状态，`exportSimulationMissingOrStale()`（`src/ui/MainWindow.cpp:551-564`）不区分 `programId`。在多程序控制器下，先对 `PART_A` 执行 `ensure` 后，再对未仿真的 `PART_B` 调用 `const` 方法 `validateProgramForExport("PART_B")`（`:601`）或 `previewFanucLs("PART_B")`（`:625`），不会触发 `"no fresh simulation"` 拒止，同时令 `tests/test_postprocessor.cpp:592-601` 对 `PART_B` 的断言无法单独证明 `PART_B` 跑过 `ensure`。
+  2. **但为什么绝不构成 P1**：如上文 Trace 2 所证，`ensureProgramSimulatedForExport`（`src/ui/MainWindow.cpp:566-599`）在存在碰撞几何时**不读取 `exportSimEnsured_` 作短路**，而是每次实跑 `validateAndSimulateProgram`。所有真实导出入口（`exportFanucLs` `:647`、`exportAllPrograms` `:674-686`、`LsExportDialog::refreshPreview` `LsExportDialog.cpp:122`、`LsExportDialog::exportToFile` `:215`）均无条件调用 `ensureProgramSimulatedForExport`。故真实写出链与 UI 预览链已是 per-program 重算，不存在安全门禁击穿。
+
+### 抽核 2：GATE-006 `ensure-fail → skip` 负路径
+- **结论**：**维持 P2（防御性近似死分支 + 负路径测弱，非功能缺陷）。**
+- **理由与行号**：
+  1. `MainWindow::exportAllPrograms`（`src/ui/MainWindow.cpp:674-689`）遍历 `cu.programs` 并传入 `key = !prog.id.empty() ? prog.id : prog.name` 调用 `ensureProgramSimulatedForExport(key)`。
+  2. 而 `ensureProgramSimulatedForExport`（`:567-570`）仅在 `findProgramInDocMutable(doc_, key) == nullptr` 时返回 `false`。由于被遍历的 `prog` 就在 `doc_.controllers` 内，正常状态下必能命中（甚至当 `prog.id` 和 `prog.name` 均为空串时，`key == ""` 也会在 `:522` 因 `programId.empty()` 命中首个程序并返回 `true`，随后在 `exportControllerPrograms` → `validateProgramName` `FanucLsPostProcessor.cpp:13` 因空程序名被拒写）。
+  3. **补充细微发现（同归入 P2-B）**：若跨控制器存在同名且无 `id` 的两个程序，或某程序 `id`/`name` 双空，`findProgramInDocMutable(doc_, key)`（`:519-528`）会按顺序命中文档中第一个匹配项而非当前 `cu` 下的 `prog` 引用。若后续直接传 `core::Program&` 重载给内部 helper 可彻底消除该查找分歧并简化代码。当前因程序名校验与单控制器结构不构成 P1。
+
+### 抽核 3：`SampleSession` 不删磁盘旧 `WELD_001.ls`
+- **结论**：**维持 P2。**
+- **理由与行号**：
+  1. `src/ui/SampleSession.cpp:228-251` 在 `refuseProductionLs == true` 时不调用 `exportToFile` 并以 `exitCode = 2` 失败退出（`Tools/Compile.bat:185-190` 会随之报错返回非零），严格兑现了 `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md:29`「失败返回或隔离文件名，二选一，优先失败返回」的验收要求。
+  2. 拒写分支未调用 `std::filesystem::remove(lsOut)` 清理历史构建遗留的 `build/WELD_001.ls`，仅在「先前构建曾成功生成过 `.ls`、后续修改造成阻断且调用方忽略 `exitCode = 2` 直接去 `build/` 目录拷文件」时才可能误用旧文件。属构建产物清理卫生项，定为 P2。
+
+---
+
+## 5. Findings 汇总（P0 / P1 / P2）
+
+### P0（阻断级）
+- **无**。
+
+### P1（当前计划必修级）
+- **无**。原交叉审计提出的 `OPEN-P1-1..4` 均已在 `GATE-005` 中闭环。
+
+### P2（可延期项 — 已同步登记至 `CRDocs/DEFERRED.md` `FIX-EXPORT-P2`）
+- **P2-A（文档级 freshness）**：`MainWindow.h:150` / `MainWindow.cpp:551-564` `exportSimEnsured_` 与 `lastSimulationResult_` 未按 `programId` 记账，多程序下 `const` `validateProgramForExport`/`previewFanucLs` 可能对未仿真的第二程序免除 stale 提示（且 `test_postprocessor.cpp:592-601` 断言对 `PART_B` 独立证明力偏弱）。
+- **P2-B（GATE-006 查找与负路径测试）**：`MainWindow.cpp:674-689` 通过字符串 `key` 反查 `findProgramInDocMutable`，导致 `ensure-fail -> skip` 分支在正常遍历下不可达且缺负路径单测；若存在跨控制器重名或 `id`/`name` 双空程序，`findProgramInDocMutable` 会命中首个程序（建议未来增加直接接受 `core::Program&` 的内部 `ensure` 重载）。
+- **P2-C（SampleSession 旧文件清理）**：`SampleSession.cpp:228-237` 拒写时不主动删除磁盘上可能已存在的旧 `build/WELD_001.ls`。
+- **P2-D（Soft 层状态覆盖）**：`CollisionAndSim.cpp:41-53` 将 `Singularity` / `NearJointLimit` 归为 Soft（Tier 0），段内 `NearCollision`（Tier 1）会覆盖端点 `Singularity` 的 `cache.status`（两者在后处理中均为 `Warning`，不影响阻断门禁）。
+- **主线 `RISK-001`（保持 OPEN，非本计划 P0/P1）**：`OpwKinematics` 的 J2/J3 耦合、圈数轴与法兰位姿尚未经过 ROBOGUIDE / 真机金样对拍；本计划落地的 `/MN` 水印与对话框红条仅完成草稿门禁，不关闭运动学风险本身。
+
+---
+
+## 6. 与既有协调方 / `Audit_X` 报告的同意与分歧
+
+| 议题 | 协调方（`FULL_REAUDIT_COORDINATOR`） | `Audit_X`（`FULL REAUDIT Audit_X`） | Gemini 本轮裁决与理由（含 `file:line`） |
+| :--- | :--- | :--- | :--- |
+| **总体结论与风险口径** | `PASS_WITH_RISKS`（无新 P0/P1，有 P2 与 `RISK-001`） | `APPROVED`（同意 `PASS_WITH_RISKS` 风险分层） | **同意双方**。按 `CRDocs/README.md` 状态机，当前范围无 OPEN P0/P1 应记 `APPROVED`；风险实质同意 `PASS_WITH_RISKS`。 |
+| **主链 1..8 闭合性** | 全部 PASS | 全部 CLOSED/OK | **同意**。已独立核对 `FanucLsPostProcessor.{h,cpp}`、`CollisionAndSim.{h,cpp}`、`MainWindow.{h,cpp}`、`LsExportDialog.{h,cpp}`、`SampleSession.cpp`、`Utf8Path.{h,cpp}`。 |
+| **点名抽核 1（P2-A 文档级 freshness）** | 定为 P2（写出路径有 per-program ensure） | 同意 P2，并指出 `PART_B` 断言偏弱 | **同意定为 P2**，并补充了关键代码机制证明：`ensureProgramSimulatedForExport`（`MainWindow.cpp:566-599`）不看 `exportSimEnsured_` 短路，每次必重跑 `validateAndSimulateProgram`，彻底排除写出链漏仿真的可能。 |
+| **点名抽核 2（GATE-006 负路径）** | 定为 P2（死代码/测弱） | 同意 P2 | **同意定为 P2**，并额外指出 `MainWindow.cpp:519-528,675` 按 `key` 反查在跨控制器同名或 `id`/`name` 双空时会命中首程序的设计瑕疵（可通过直接传 `Program&` 根治）。 |
+| **点名抽核 3（SampleSession 旧 `.ls`）** | 定为 P2 | 同意 P2 | **同意定为 P2**（`SampleSession.cpp:228-251` 已返回 `exitCode = 2` 满足计划项 1）。 |
+| **编译与 805/0 测试证据** | Linux box 未复跑，仅采信 Windows 805/0 声称 | Linux box 未复跑，仅采信声称 | **本轮升级为实跑验证（消除先前两份报告的未复验短板）**：本机 Windows 直接运行 `Tools\Compile.bat` 编译通过，`SiFastSuiteOLP_AllTests` 实测 **805 passed, 0 failed**（`build/Testing/Temporary/LastTest.log:901`），`SiFastSuiteOLP.exe --verify` exit 0。 |
+| **DEFERRED.md 同步性** | 称残留 P2 跟踪在 REVIEW 与 DEFERRED | 同左 | **指出并补齐文档缺口**：此前 `SessionBrief.md:26` 与 `.claude/Plan.md:34` 均声称 FIX-EXPORT 残留 P2 见 `CRDocs/DEFERRED.md`，但 `DEFERRED.md` 实际未写入对应条目；本轮已在 `CRDocs/DEFERRED.md` 正式补入 `FIX-EXPORT-P2 [OPEN]`。 |
+
+*End of FULL REAUDIT Gemini.*
+
+---
+
 # 审核结论 — FULL REAUDIT Audit_X
 
 > **Task ID**：`FIX-EXPORT-FULL-REAUDIT`  

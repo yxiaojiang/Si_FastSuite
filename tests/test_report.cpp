@@ -1,5 +1,7 @@
 #include "test_support.h"
 #include "olp/app/CommandManager.h"
+#include "olp/io/HtmlAnimationExporter.h"
+#include "olp/io/Utf8Path.h"
 #include "olp/ui/MainWindow.h"
 #include "olp/ui/SampleSession.h"
 #include "olp/ui/WorkcellPdfReportExporter.h"
@@ -673,6 +675,206 @@ void testWorkcellPdfReportExport() {
         const bool okBadDir = ui::WorkcellPdfReportExporter::exportToPdf(doc, "Z:/non_existent_drive_dir/report.pdf", opts, &err2);
         check(!okBadDir, "Unwritable directory path fails gracefully");
         check(!err2.empty(), "Error message returned for unwritable directory path");
+    }
+
+    // =========================================================================
+    // 8. M13-HTML3D-EXPORT-001: Single-File Offline 3D HTML Animation Package
+    // =========================================================================
+    {
+        std::cout << "  [Check M13-HTML3D-EXPORT-001] Validating offline 3D HTML animation package & UTF-8 Chinese path\n";
+
+        ui::MainWindow win;
+        const auto sessionRes = ui::runSampleWorkcell(win);
+        check(sessionRes.exitCode == 0, "M13-HTML3D: runSampleWorkcell succeeds for 3D HTML export test");
+
+        // Chinese UTF-8 path verification via utf8ToPath
+        const std::string zhHtmlRel = "离线三维仿真_测试目录/单文件3D动画_WELD_001.html";
+        const std::string zhHtmlUtf8 = tempDir.string() + "/" + zhHtmlRel;
+        const std::filesystem::path zhHtmlFsPath = io::utf8ToPath(zhHtmlUtf8);
+        std::filesystem::remove(zhHtmlFsPath);
+
+        std::string htmlErr;
+        const bool htmlOk = win.exportHtmlAnimation(zhHtmlUtf8, "WELD_001", &htmlErr);
+        check(htmlOk, "M13-HTML3D: MainWindow::exportHtmlAnimation succeeds on Chinese UTF-8 path", htmlErr);
+        check(std::filesystem::exists(zhHtmlFsPath), "M13-HTML3D: Chinese UTF-8 HTML file exists on disk");
+
+        const auto fileSize = std::filesystem::file_size(zhHtmlFsPath);
+        check(fileSize > 15000 && fileSize < 50ULL * 1024ULL * 1024ULL,
+              "M13-HTML3D: Exported 3D HTML size is non-empty (>15 KB) and within 50 MB budget",
+              "bytes=" + std::to_string(fileSize));
+
+        std::ifstream hifs(zhHtmlFsPath, std::ios::binary);
+        const std::string htmlContent((std::istreambuf_iterator<char>(hifs)), std::istreambuf_iterator<char>());
+
+        // 1) Completely offline: zero external http/https references
+        check(htmlContent.find("http://") == std::string::npos &&
+                  htmlContent.find("https://") == std::string::npos,
+              "M13-HTML3D: Zero external http/https URLs (100% offline self-contained)");
+
+        // 2) 3D workcell geometry meshes & role classification
+        check(htmlContent.find("const sceneParts = [") != std::string::npos &&
+                  htmlContent.find("vertices:[") != std::string::npos &&
+                  htmlContent.find("indices:[") != std::string::npos,
+              "M13-HTML3D: Contains 3D triangle mesh vertices and indices for workcell scene parts");
+        check(htmlContent.find("role:\"Workpiece\"") != std::string::npos &&
+                  htmlContent.find("role:\"Fixture\"") != std::string::npos,
+              "M13-HTML3D: Scene parts distinguish Workpiece and Fixture roles");
+
+        // 3) 7 Robot link 3D meshes + Welding Torch mesh + linkWorldTransforms frames
+        check(htmlContent.find("const robotLinkMeshes = [") != std::string::npos &&
+                  htmlContent.find("name:\"base_link\"") != std::string::npos &&
+                  htmlContent.find("name:\"link_1\"") != std::string::npos &&
+                  htmlContent.find("name:\"link_6\"") != std::string::npos,
+              "M13-HTML3D: Contains all 7 robot link 3D meshes (base_link..link_6)");
+        check(htmlContent.find("const torchMesh =") != std::string::npos &&
+                  htmlContent.find("name:\"Welding_Torch\"") != std::string::npos,
+              "M13-HTML3D: Contains 3D Welding_Torch mesh mounted on flange");
+        check(htmlContent.find("const bakedFrames = [") != std::string::npos &&
+                  htmlContent.find("linkWorldTransforms: [") != std::string::npos &&
+                  htmlContent.find("arc: true") != std::string::npos &&
+                  htmlContent.find("arc: false") != std::string::npos,
+              "M13-HTML3D: Baked animation frames contain per-frame linkWorldTransforms and Arc ON/OFF states");
+
+        // 4) Camera interaction (Orbit, Pan, Zoom, Reset) & Playback controls (0.5x/1x/2x/4x, Stop, Jump, Waypoint labels)
+        check(htmlContent.find("dragMode = 'orbit'") != std::string::npos &&
+                  htmlContent.find("dragMode = 'pan'") != std::string::npos &&
+                  htmlContent.find("addEventListener('wheel'") != std::string::npos &&
+                  htmlContent.find("id=\"btnResetCam\"") != std::string::npos,
+              "M13-HTML3D: Contains 3D turntable orbit, right-click pan, wheel zoom, and camera reset controls");
+        check(htmlContent.find("id=\"btnPlay\"") != std::string::npos &&
+                  htmlContent.find("id=\"btnStop\"") != std::string::npos &&
+                  htmlContent.find("id=\"speedSelect\"") != std::string::npos &&
+                  htmlContent.find("value=\"0.5\"") != std::string::npos &&
+                  htmlContent.find("value=\"1.0\"") != std::string::npos &&
+                  htmlContent.find("value=\"2.0\"") != std::string::npos &&
+                  htmlContent.find("value=\"4.0\"") != std::string::npos,
+              "M13-HTML3D: Contains Play/Pause, Stop, and 0.5x/1x/2x/4x speed selector");
+        check(htmlContent.find("id=\"opJumpSelect\"") != std::string::npos &&
+                  htmlContent.find("Fillet_BoxWall_Front") != std::string::npos &&
+                  htmlContent.find("id=\"chkWaypoints\"") != std::string::npos &&
+                  htmlContent.find("const waypoints = [") != std::string::npos,
+              "M13-HTML3D: Contains operation/seam start jump selector and 3D waypoint label toggle");
+
+        // 5) Keyframe decimation test on redundant stationary/linear sequence & backward-compatible 4-arg signature
+        algo::SimulationResult redSim;
+        redSim.totalCycleTimeSec = 1.0;
+        for (int i = 0; i <= 20; ++i) {
+            algo::BakedFrame bf;
+            bf.timeSec = i * 0.05;
+            bf.tcpWorldPos = {500.0 + i * 2.0, -200.0, 650.0};
+            bf.jointsRad = {0.1, 0.2, -0.1, 0.0, -1.2, 0.0};
+            bf.arcActive = (i >= 5 && i <= 15);
+            redSim.frames.push_back(bf);
+        }
+        const std::string decHtml = (tempDir / "decimation_test.html").string();
+        const bool ok4Arg = io::HtmlAnimationExporter::exportSingleFileHtml(
+            decHtml, win.document().controllers[0].programs[0], win.document().sceneNodes, redSim);
+        check(ok4Arg, "M13-HTML3D: Backward-compatible 4-argument exportSingleFileHtml succeeds");
+        std::ifstream difs(decHtml, std::ios::binary);
+        const std::string decContent((std::istreambuf_iterator<char>(difs)), std::istreambuf_iterator<char>());
+        check(decContent.find("rawFrameCount: 21") != std::string::npos &&
+                  decContent.find("keyframeCount: 21") == std::string::npos,
+              "M13-HTML3D: Keyframe decimation reduces collinear/stationary redundant frames while keeping transitions");
+
+        // 6) Empty path negative check
+        std::string emptyHtmlErr;
+        check(!io::HtmlAnimationExporter::exportSingleFileHtml(
+                  "", core::Program{}, {}, algo::SimulationResult{}, nullptr, {}, &emptyHtmlErr) &&
+                  !emptyHtmlErr.empty(),
+              "M13-HTML3D: Empty output path fails gracefully with error message");
+
+        // 7) M13-HTML3D-001: Verification that welding torch tip aligns with TCP across frames
+        const auto parseVec3 = [](const std::string& str, const std::string& prefix) -> std::optional<core::Vec3> {
+            auto pos = str.find(prefix);
+            if (pos == std::string::npos) return std::nullopt;
+            pos += prefix.size();
+            auto endPos = str.find(']', pos);
+            if (endPos == std::string::npos) return std::nullopt;
+            std::stringstream ss(str.substr(pos, endPos - pos));
+            char comma;
+            double x, y, z;
+            if (ss >> x >> comma >> y >> comma >> z) {
+                return core::Vec3{x, y, z};
+            }
+            return std::nullopt;
+        };
+
+        const auto torchTipLocal = parseVec3(htmlContent, "tcpLocal:[");
+        check(torchTipLocal.has_value(), "M13-HTML3D-001: Successfully extracted torch tcpLocal from exported HTML");
+
+        const auto framesPos = htmlContent.find("const bakedFrames = [");
+        check(framesPos != std::string::npos, "M13-HTML3D-001: Found bakedFrames block in HTML");
+
+        auto parseFrameLink6AndTcp = [&](std::size_t startSearchPos) -> std::tuple<bool, core::Transform4d, core::Vec3, std::size_t> {
+            auto frameStart = htmlContent.find("{ t:", startSearchPos);
+            if (frameStart == std::string::npos) return {false, {}, {}, std::string::npos};
+            auto frameEnd = htmlContent.find("}", frameStart);
+            if (frameEnd == std::string::npos) return {false, {}, {}, std::string::npos};
+            std::string fStr = htmlContent.substr(frameStart, frameEnd - frameStart + 1);
+
+            auto tcpOpt = parseVec3(fStr, "tcp: [");
+            if (!tcpOpt) return {false, {}, {}, frameEnd};
+
+            auto lwtPos = fStr.find("linkWorldTransforms: [");
+            if (lwtPos == std::string::npos) return {false, {}, {}, frameEnd};
+            auto outerBracket = fStr.find('[', lwtPos);
+            if (outerBracket == std::string::npos) return {false, {}, {}, frameEnd};
+            std::size_t searchK = outerBracket;
+            std::size_t link6ArrayPos = std::string::npos;
+            for (int k = 0; k < 7; ++k) {
+                searchK = fStr.find('[', searchK + 1);
+                if (searchK == std::string::npos) break;
+                if (k == 6) link6ArrayPos = searchK;
+            }
+            if (link6ArrayPos == std::string::npos) return {false, {}, {}, frameEnd};
+            auto arrEnd = fStr.find(']', link6ArrayPos);
+            if (arrEnd == std::string::npos) return {false, {}, {}, frameEnd};
+
+            std::stringstream ss(fStr.substr(link6ArrayPos + 1, arrEnd - link6ArrayPos - 1));
+            double m[12]{};
+            char comma;
+            for (int i = 0; i < 12; ++i) {
+                if (i > 0) ss >> comma;
+                ss >> m[i];
+            }
+
+            core::Transform4d link6Tf;
+            link6Tf.rot.m[0][0] = m[0]; link6Tf.rot.m[0][1] = m[1]; link6Tf.rot.m[0][2] = m[2]; link6Tf.pos.x = m[3];
+            link6Tf.rot.m[1][0] = m[4]; link6Tf.rot.m[1][1] = m[5]; link6Tf.rot.m[1][2] = m[6]; link6Tf.pos.y = m[7];
+            link6Tf.rot.m[2][0] = m[8]; link6Tf.rot.m[2][1] = m[9]; link6Tf.rot.m[2][2] = m[10]; link6Tf.pos.z = m[11];
+
+            return {true, link6Tf, *tcpOpt, frameEnd};
+        };
+
+        // Check Home frame torch tip vs TCP
+        auto [homeOk, homeLink6Tf, homeTcp, nextPos] = parseFrameLink6AndTcp(framesPos);
+        check(homeOk, "M13-HTML3D-001: Parsed Home frame link_6 transform and TCP from HTML");
+        if (homeOk && torchTipLocal.has_value()) {
+            const core::Vec3 homeTipWorld = homeLink6Tf.transformPoint(*torchTipLocal);
+            const double homeDistMm = (homeTipWorld - homeTcp).norm();
+            check(homeDistMm < 0.05,
+                  "M13-HTML3D-001: Home frame torch tip coincides with TCP (<0.05 mm)",
+                  "tip=(" + std::to_string(homeTipWorld.x) + "," + std::to_string(homeTipWorld.y) + "," + std::to_string(homeTipWorld.z) +
+                  ") tcp=(" + std::to_string(homeTcp.x) + "," + std::to_string(homeTcp.y) + "," + std::to_string(homeTcp.z) +
+                  ") dist=" + std::to_string(homeDistMm) + " mm");
+        }
+
+        // Check active moving weld frame torch tip vs TCP
+        auto weldFrameSearch = htmlContent.find("arc: true", framesPos);
+        if (weldFrameSearch != std::string::npos) {
+            auto frameStart = htmlContent.rfind("{ t:", weldFrameSearch);
+            if (frameStart != std::string::npos) {
+                auto [weldOk, weldLink6Tf, weldTcp, _] = parseFrameLink6AndTcp(frameStart);
+                check(weldOk, "M13-HTML3D-001: Parsed active weld frame link_6 transform and TCP from HTML");
+                if (weldOk && torchTipLocal.has_value()) {
+                    const core::Vec3 weldTipWorld = weldLink6Tf.transformPoint(*torchTipLocal);
+                    const double weldDistMm = (weldTipWorld - weldTcp).norm();
+                    check(weldDistMm < 0.05,
+                          "M13-HTML3D-001: Moving weld frame torch tip coincides with TCP (<0.05 mm)",
+                          "dist=" + std::to_string(weldDistMm) + " mm");
+                }
+            }
+        }
     }
 
     std::error_code ec;

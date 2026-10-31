@@ -1,4 +1,6 @@
 #include "olp/ui/MainWindow.h"
+#include "olp/algo/TrajectorySimulator.h"
+#include "olp/io/HtmlAnimationExporter.h"
 #include "olp/io/ProjectSerializer.h"
 
 #include <algorithm>
@@ -699,6 +701,43 @@ bool MainWindow::exportWorkcellPdfReport(
     const PdfReportOptions& options,
     std::string* errorOut) {
     return WorkcellPdfReportExporter::exportToPdf(doc_, outputFilePath, options, errorOut);
+}
+
+bool MainWindow::exportHtmlAnimation(
+    const std::string& outputFilePath,
+    const std::string& programId,
+    std::string* errorOut) {
+    const core::Program* prog = findProgramInDoc(doc_, programId);
+    if (!prog) {
+        if (errorOut) *errorOut = "No program found for 3D HTML animation export";
+        return false;
+    }
+
+    core::Transform4d robotBaseInWorld = core::Transform4d::fromTranslation(0.0, 0.0, 500.0);
+    core::Transform4d utoolOffset = core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
+    for (const auto& node : doc_.sceneNodes) {
+        if (node.type == core::SceneNodeType::Robot) {
+            robotBaseInWorld = node.localTransform;
+        } else if (node.type == core::SceneNodeType::Tool && node.utoolNumber == prog->utoolNumber) {
+            utoolOffset = (node.tcpOffset.pos.norm() > 1e-3) ? node.tcpOffset : node.localTransform;
+        }
+    }
+    const core::Transform4d uframeInWorld = doc_.computeUFrameInWorld(prog->uframeNumber);
+
+    algo::OpwKinematics kin(robotModel_);
+    algo::TrajectorySimulator simulator(kin, robotModel_);
+    const auto plan = simulator.plan(*prog, robotBaseInWorld, uframeInWorld, utoolOffset, 30.0);
+
+    algo::SimulationResult simRes;
+    simRes.totalCycleTimeSec = plan.totalCycleTimeSec;
+    simRes.arcWeldTimeSec = plan.arcWeldTimeSec;
+    simRes.airCutTimeSec = plan.airCutTimeSec;
+    simRes.hasConfigJumpInLinear = plan.hasConfigJumpInLinear;
+    simRes.frames = plan.frames;
+    simRes.issues = plan.issues;
+
+    return io::HtmlAnimationExporter::exportSingleFileHtml(
+        outputFilePath, *prog, doc_.sceneNodes, simRes, &robotModel_, {}, errorOut);
 }
 
 bool MainWindow::saveProject(const std::string& filePath, std::string* errorOut) const {

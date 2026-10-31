@@ -103,6 +103,7 @@ private:
     QAction* redoAction_{nullptr};
     QAction* exportMenuAction_{nullptr};
     QAction* exportPdfAction_{nullptr};
+    QAction* exportHtmlAction_{nullptr};
     QAction* exportAction_{nullptr};
     QAction* pathAction_{nullptr};
     QAction* slerpAction_{nullptr};

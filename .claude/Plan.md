@@ -24,7 +24,7 @@
 | T 型接头走同一条闭环 | 完成 | `Workpiece_TJoint_With_Clamps.step` 端到端闭环自动化回归测试（Test 23）已通过（`M15-TJOINT-REGRESSION-001`） |
 | 播放时能看出手臂姿态 | 完成 | 视口已加载 7 节连杆几何外形并由各帧 URDF 链烘焙变换驱动（`M11-005`） |
 | 2D PDF 工艺报告 | 部分完成 | `M13-REPORT-PDF-001` 已通过；焊缝清单、问题清单、离屏多视角在 `M13-006` |
-| 单文件 HTML 三维动画 | 未做 | 现导出是二维 TCP 折线 |
+| 单文件 HTML 三维动画 | 完成 | `M13-HTML3D-EXPORT-001` Round 2 已 APPROVED；100% 离线自包含 3D 渲染，含工位零件、7 节连杆+焊枪（枪尖与 TCP 物理重合 0 mm）、TCP 轨迹/电弧光晕、转盘相机与倍速播放 |
 | 3D PDF 五天熔断 | 完成 | 执行熔断收口（`RISK-003` CLOSED），三维可交互仿真交付统一收口至基于 Web 标准的单文件离线 HTML 3D 动画包，2D 报告由 QPdfWriter 承载 |
 | 交互与视口操作体验 | 完成 | 工业级转盘相机（Turntable Orbit）、键位功能映射、Dock 分割条无死锁弹性布局均已落地 |
 
@@ -34,4 +34,4 @@
 2. **（可选备注，非新 PlanDocs 话题）** FIX-EXPORT 残留 P2（文档级 freshness P2-A、GATE-006 负路径测弱、SampleSession 旧 `.ls` 等）跟踪在 `CRDocs/REVIEW.md` FULL REAUDIT 与 `CRDocs/DEFERRED.md`；用户点名清理前不另开实现计划，**勿重开** `PlanDocs/FIX-EXPORT-SAFETY-PLAN.md`。
 3. **下一步等待用户** — 指定处理 `RISK-001`、清理上述 P2，或开启新主线。提问阶段只分析不改码；`olp_algo` 无 Qt；UI 经 CommandManager；禁止对本仓库使用 Cursor CloudAgent。
 
-已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix 叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。HTML 三维动画仍是「未做」。
+已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix 叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。HTML 三维动画已于 `M13-HTML3D-EXPORT-001` Round 2 APPROVED 完成。

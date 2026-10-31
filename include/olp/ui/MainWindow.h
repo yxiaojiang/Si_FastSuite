@@ -104,10 +104,14 @@ public:
         std::vector<std::string>* exportedFiles = nullptr,
         std::vector<std::string>* errors = nullptr);
 
-    // M13: 2D PDF Workcell SOP Report Export
+    // M13: 2D PDF Workcell SOP Report & Single-File 3D HTML Animation Export
     bool exportWorkcellPdfReport(
         const std::string& outputFilePath,
         const PdfReportOptions& options = {},
+        std::string* errorOut = nullptr);
+    bool exportHtmlAnimation(
+        const std::string& outputFilePath,
+        const std::string& programId = "",
         std::string* errorOut = nullptr);
 
     // M14: Project Document JSON Save / Open

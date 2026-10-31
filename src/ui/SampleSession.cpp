@@ -239,7 +239,7 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
         lsOk = olp::io::FanucLsPostProcessor::exportToFile(sampleProg, lsOut);
     }
     const bool htmlOk = olp::io::HtmlAnimationExporter::exportSingleFileHtml(
-        htmlOut, sampleProg, doc.sceneNodes, simRes);
+        htmlOut, sampleProg, doc.sceneNodes, simRes, &robotModel);
     if (!lsOk || !htmlOk) {
         std::cerr << "Export failed. .ls=" << (lsOk ? "ok" : "failed")
                   << " html=" << (htmlOk ? "ok" : "failed") << "\n";
