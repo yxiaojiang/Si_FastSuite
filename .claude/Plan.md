@@ -1,6 +1,6 @@
 # Plan.md — 当前活跃事项
 
-> 最近刷新：2026-10-31 Asia/Shanghai（UTC+8）。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001`。`FIX-EXPORT-SAFETY`、`MAINT-CLEANUP-P2-001` 与 `M14-PROJECT-REBIND-002` 已收口并移入 `Plan-archive.md`，不再列为本文件活跃实现项。
+> 最近刷新：2026-11-01 Asia/Shanghai（UTC+8）。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001` 与 `DIR-002`。`FIX-EXPORT-SAFETY`、`MAINT-CLEANUP-P2-001` 与 `M14-PROJECT-REBIND-002` 已收口并移入 `Plan-archive.md`，不再列为本文件活跃实现项。
 
 ## 里程碑达成度
 
@@ -30,8 +30,13 @@
 
 ## 正在做的事
 
-1. **[OPEN] `RISK-001`（主线首选）** — 无 ROBOGUIDE / 真机金样对拍前，J2/J3 耦合符号、圈数轴与法兰相对示教器位姿仍未核验。导出水印与红条只是草稿门禁，不关闭本风险。用户决定暂不安装 ROBOGUIDE 时，关节程序不能当已对过示教器的成品。
-2. **（可选备注，非新 PlanDocs 话题）** `M14-PROJECT-REBIND-002`（M14-012 未保存拦截与 M14-013 CAD 句柄重绑定）已于 Round 1 APPROVED 收口（全量测试 862 passed）；新延期 `M14-014`（示例工位脏拦截）、`M14-015`（重绑定 UTF-8 窄路径）、`FIX-EXPORT-P2-D` 与 `MAINT-002` 仍在 `CRDocs/DEFERRED.md` 跟踪。
-3. **下一步等待用户** — 指定处理 `RISK-001`、清理上述 P2，或开启新主线。提问阶段只分析不改码；`olp_algo` 无 Qt；UI 经 CommandManager；禁止对本仓库使用 Cursor CloudAgent。
+1. **[OPEN] `DIR-002` 第 1 步（P0-A，当前首选活跃项）** — 动态导入外部 STEP 整工位与视口选边建缝闭环：
+   - 前置拆分 `ShellWindow.cpp`（993 行）为 `ShellWindowChrome.cpp`，消除行数超限风险；
+   - 修正整工位替换命令（`ImportSceneAndReplaceRobotCommand`）：非空文档下清空旧工位 `sceneNodes/seams/controllers` 与选中状态，命令完整快照与还原四项状态，命令内不清空 CAD 内核以保留旧句柄；修正 `ShellWindow::refreshFromDocument()` 的 `sceneChanged` 判定；
+   - `OcctCadKernel::importStep` 接入 `olp::io::utf8ToPath`（闭环 `M14-015`），激活主界面「导入...」动作，并在新导入动作与 `loadSample` 补齐 `confirmDiscardIfDirty()`（闭环 `M14-014`）；
+   - 在 `ShellWindow` 中将 `OcctViewport::edgePicked` 信号接通 `CreateSeamFromPickedEdgeCommand`，并在 `rebuildProgramTree` 补齐 `seam.id`，打通动态 STEP 导入后的点边建缝与路径生成闭环；
+   - 补充自动化回归单测，全量测试保持全绿。
+2. **[OPEN] `RISK-001`** — 无 ROBOGUIDE / 真机金样对拍前，J2/J3 耦合符号、圈数轴与法兰相对示教器位姿仍未核验。导出水印与红条只是草稿门禁，不关闭本风险。
+3. **[QUEUED] `DIR-002` 后续阶段** — 第 2 步（P0-B，工件/夹具追加导入命令与角色区分）与第 3 步（P1，FANUC 家族多机型参数扩展与 3 处 M-10iA 硬编码解耦）。
 
 已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix / MAINT-CLEANUP / M14-PROJECT-REBIND-002 叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。HTML 三维动画已于 `M13-HTML3D-EXPORT-001` Round 2 APPROVED 完成。
