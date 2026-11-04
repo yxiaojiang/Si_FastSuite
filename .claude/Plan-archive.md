@@ -1,5 +1,16 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-11-04：DIR-003-STEP2-STAGING-001 Round 1 APPROVED（31 个 vcpkg DLL + CRT 沙盒装配）
+
+1. **[DONE] 纯英文沙盒装配脚本、31 个 vcpkg DLL + VC143 CRT 装配与全隔离离线验证。** 任务号 `DIR-003-STEP2-STAGING-001`，Round 1 **APPROVED**：
+   - **纯英文沙盒装配脚本**：编写 `Tools/package_stage.bat`（219 行，100% 纯英文，非 ASCII 字符为 0），支持 `--skip-build` 与 `--no-verify`，自动化调度构建、依赖收集与脱机验证；
+   - **Qt 平台与插件装配**：调用 `windeployqt` 抽取 Qt 运行时（`plugins/platforms/qwindows.dll`、`styles/`、`iconengines/`、`imageformats/` 等），剔除未引用的 `Qt6PrintSupport.dll`，落地 `qt.conf`（`[Paths] Plugins = plugins`）阻断全局干扰；
+   - **31 个 vcpkg DLL + VC143 CRT 部署**：
+     - 精准部署 24 个 OCCT 动态库、`ccd.dll` 以及 6 个底层图形与压缩支撑库（`freetype.dll`, `libpng16.dll`, `z.dll`, `bz2.dll`, `brotlidec.dll`, `brotlicommon.dll`）；
+     - App-Local 模式部署 MSVC 官方 VC143 CRT（包含 `msvcp140.dll`、`vcruntime140.dll` 等 10 个 DLL）；
+     - 完整镜像展开 `SampleScenes/`（23 个文件、1.23 MB）与 `resources/`（1.66 KB）；
+   - **全隔离环境冒烟实测**：在完全剥离外部 Qt/vcpkg/VS 环境变量（PATH 仅含系统目录）的隔离环境下，直接执行 `build/dist/SiFastSuiteOLP.exe --verify` 退出码 0，成功加载 12 个 B-Rep 实体并完成 1047 帧烘焙，导出文件写入用户临时目录（`D:/UserTemp/SiFastSuiteOLP/`），`build/dist/` 保持干净零残留。
+
 ## 2026-11-04：DIR-003-STEP1-PATH-001 Round 1 APPROVED（UTF-8 路径自适应与输出解耦）
 
 1. **[DONE] 架构分层下沉、UTF-8 路径自适应与会话输出解耦。** 任务号 `DIR-003-STEP1-PATH-001`，Round 1 **APPROVED**：

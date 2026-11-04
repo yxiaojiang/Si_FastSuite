@@ -1,6 +1,6 @@
-# Implementation Report — Task DIR-003-STEP1-PATH-001 (Round 1)
+# Implementation Report — Task DIR-003-STEP2-STAGING-001 (Round 1)
 
-- **Task ID**: `DIR-003-STEP1-PATH-001`
+- **Task ID**: `DIR-003-STEP2-STAGING-001`
 - **Round**: `1`
 - **Status**: `READY_FOR_REVIEW`
 - **Executor**: Executor
@@ -8,60 +8,48 @@
 
 ---
 
-## 1. 任务背景与目标（DIR-003 第 1 步：P0-Path）
+## 1. 任务背景与目标（DIR-003 第 2 步：P0-Staging）
 
-按照 `PackagePlan.md` 与用户指令，推进 DIR-003 软件独立打包发布的「第 1 步（P0-Path，UTF-8 路径自适应与输出解耦）」：
-1. **架构分层下沉**：将 `src/io/Utf8Path.cpp` 移入底层 `olp_core` 编译（保持 `include/olp/io/Utf8Path.h` 与 `olp::io` 命名空间不变），使 `olp_device`（Layer 4）无需反向链接 `olp_io`（Layer 5）即可直接使用路径工具；
-2. **路径自适应函数**：在 `olp::io` 实现统一返回 UTF-8 `std::string` 的 `resolveWorkspaceOrAppDir()`（优先探测可执行文件同级的 `SampleScenes` 与 `resources`，不存在且处于开发环境时回退至 `OLP_SOURCE_DIR`）；同时提供 `pathToUtf8`、`isSandboxEnvironment` 与 `resolveSessionOutputDir`；
-3. **源码路径解耦与中文路径支持**：
-   - 改造 `src/device/RobotModel.cpp` 接入自适应函数，且第 107、142 行文件流改用 `olp::io::utf8ToPath` 打开，支持 Windows 中文路径；
-   - 改造 `src/ui/SampleSession.cpp` 读取使用自适应函数，并将导出的 `WELD_001.ls` 与 `WELD_001_Preview.html` 在沙盒环境下写向用户临时目录 `std::filesystem::temp_directory_path() / "SiFastSuiteOLP"`，彻底消除 UAC 权限写保护与卸载残留隐患；
-4. **测试补齐与验证**：补齐自动化单元测试，确保 `Tools/Compile.bat` 编译 exit 0、全量自动化单测全部通过、`--verify` exit 0，单文件行数严格处于安全区间。
+按照 `PackagePlan.md` 与发布计划，推进 DIR-003 软件独立打包发布的「第 2 步（P0-Staging，31 个 vcpkg DLL + CRT 沙盒装配）」：
+1. **纯英文装配脚本**：遵循脚本禁止包含中文硬约束，编写 `Tools/package_stage.bat`；
+2. **沙盒环境装配（`build/dist/`）**：
+   - 提取 Release 编译构建版主程序 `SiFastSuiteOLP.exe`；
+   - 调用 `windeployqt` 抽取 Qt 运行时（平台插件、样式、图标、格式等），部署至 `plugins/`，生成 `qt.conf` 配置，主动剔除未引用的 `Qt6PrintSupport.dll`；
+   - 收集拷贝全部 31 个 vcpkg 依赖库（24 个 OCCT 动态库 + `ccd.dll` + 6 个底层图形库）；
+   - 收集拷贝 VS2022 官方 `Microsoft.VC143.CRT` 全套运行时（App-Local 模式）；
+   - 完整展开 `SampleScenes/` 与 `resources/` 目录树；
+3. **脱机运行验证**：在全新屏蔽外部 Qt/vcpkg `PATH` 的隔离终端中，运行 `build/dist/SiFastSuiteOLP.exe --verify`，验证其无需外部开发环境即可独立加载示例工位、执行逆解仿真并成功导出，且安装沙盒目录下零残留文件（导出写向临时目录）。
 
 ---
 
 ## 2. 核心改动实施细节
 
-### 2.1 架构分层下沉与 CMake 依赖解耦
-- **`CMakeLists.txt`**：
-  - 将 `src/io/Utf8Path.cpp` 从 `olp_io`（Layer 5）的目标源文件中移除，加入 `olp_core`（Layer 4）编译；
-  - `olp_core` 供 `olp_device`、`olp_cad`、`olp_algo`、`olp_io` 全局依赖，`olp_device` 仅链接 `olp_core`，彻底杜绝逆向或循环依赖；
-  - 头文件路径 `include/olp/io/Utf8Path.h` 与命名空间 `olp::io` 保持 100% 兼容。
+### 2.1 纯英文沙盒装配脚本 `Tools/package_stage.bat`
+- **文件规范**：新建 `Tools/package_stage.bat`（219 行），严格遵循 100% 纯英文规范，无任何非 ASCII 字符或中文注释；
+- **核心流程**：
+  1. 自动化检测与探测 Qt、vcpkg、MSVC CRT 路径（兼容 VS2022 VC143 CRT 最新工具集）；
+  2. 支持参数 `--skip-build`（复用现有 Release 构建）与 `--no-verify`（跳过冒烟验证）；
+  3. 清空并重建 `build/dist/` 沙盒目录；
+  4. 拷贝 `SiFastSuiteOLP.exe` 并调用 `windeployqt.exe`：
+     `windeployqt.exe --release --no-compiler-runtime --no-translations --no-opengl-sw --no-printsupport --plugindir "%DIST_DIR%\plugins" "%DIST_DIR%\SiFastSuiteOLP.exe"`
+  5. 落地 `qt.conf`：
+     ```ini
+     [Paths]
+     Plugins = plugins
+     ```
+  6. 校验并拷贝全量 31 个 vcpkg 依赖 DLL；
+  7. 拷贝 VS2022 VC143 CRT 运行时全量 DLL（`msvcp140.dll`、`vcruntime140.dll`、`vcruntime140_1.dll` 等 10 个 DLL）；
+  8. 调用 `robocopy` 镜像展开 `SampleScenes/` 与 `resources/`；
+  9. 将 `PATH` 彻底剥离外部开发环境（仅保留 `%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem`），执行 `build/dist/SiFastSuiteOLP.exe --verify`，并校验 `build/dist` 目录下没有遗留 `WELD_001.ls` 或 `WELD_001_Preview.html`。
 
-### 2.2 UTF-8 路径自适应与沙盒探测机制
-- **`include/olp/io/Utf8Path.h` 与 `src/io/Utf8Path.cpp`**：
-  - `pathToUtf8(const std::filesystem::path& p)`：在 Windows 下使用 `generic_wstring()` 与 `WideCharToMultiByte(CP_UTF8)` 生成统一的 forward-slash UTF-8 字符串；非 Windows 下直接使用 `generic_u8string()`；
-  - `isSandboxEnvironment()`：通过 `GetModuleFileNameW` 探测当前运行可执行文件同级目录，检查是否同时存在 `SampleScenes` 与 `resources` 目录。在打包发布的独立沙盒（`build/dist/`）中返回 `true`，在开发环境构建目录（`build/Release/`）中返回 `false`；
-  - `resolveWorkspaceOrAppDir(const std::string& overrideRoot = "")`：
-    1. 若传入 `overrideRoot` 则直接返回；
-    2. 优先探测可执行文件同级目录是否包含 `SampleScenes` 与 `resources`，若存在直接以可执行文件所在目录为根；
-    3. 若不存在且处于开发环境（宏定义 `OLP_SOURCE_DIR` 存在且包含 `SampleScenes`），平滑回退至源码根目录；
-    4. 兜底回退至可执行文件所在目录或当前工作目录；
-  - `resolveSessionOutputDir(const std::string& wsRoot = "", bool forceSandbox = false)`：
-    - 若处于沙盒环境（或 `forceSandbox == true`），返回 `std::filesystem::temp_directory_path() / "SiFastSuiteOLP"` 并自动创建目录；
-    - 若处于开发环境，返回 `<wsRoot>/build` 并自动创建目录。
-
-### 2.3 源码绝对路径解耦与中文路径支持
-- **`src/device/RobotModel.cpp`**：
-  - 引入 `#include "olp/io/Utf8Path.h"`；
-  - `RobotModel::createFanucM10iA`：通过 `workspaceRoot.empty() ? io::resolveWorkspaceOrAppDir() : workspaceRoot` 统一定位 `root`，网格目录 `baseDir` 与 JSON 路径 `jsonPath` 均基于 `root` 派生，彻底去除 `OLP_SOURCE_DIR` 宏硬编码；
-  - 第 107 行读取 `fanuc_m10ia.json` 时，改用 `std::ifstream jin(io::utf8ToPath(jsonPath))`；
-  - 第 142 行 `RobotModel::loadFromUrdf` 读取 URDF 文件时，改用 `std::ifstream ifs(io::utf8ToPath(urdfFilePath))`，彻底解决 Windows 中文路径打不开问题。
-- **`src/ui/SampleSession.cpp`**：
-  - 第 35 行将 `const std::string wsRoot = OLP_SOURCE_DIR;` 替换为 `const std::string wsRoot = olp::io::resolveWorkspaceOrAppDir();`；
-  - 第 225-226 行输出路径改由 `olp::io::resolveSessionOutputDir(wsRoot)` 动态解析：
-    - 沙盒安装环境下输出至 `%TEMP%/SiFastSuiteOLP/`，杜绝 `C:\Program Files` 下 UAC 写保护拒绝和卸载残留；
-    - 源码开发环境下输出至 `<wsRoot>/build/`，保持与现有脚本/产物预期完全兼容。
-
-### 2.4 补齐自动化单元测试
-- **`tests/test_support.h`、`tests/test_main.cpp` 与 `tests/test_cad.cpp`**：
-  - 新增 `void testUtf8PathAdaptationAndDecoupling()` 测试集，覆盖 15 项深度断言：
-    1. `pathToUtf8` 与 `utf8ToPath` 空路径与中文字符串双向往返一致性；
-    2. `resolveWorkspaceOrAppDir` 覆盖参数直接返回、无参自动解析开发目录、以及解析目录下 `SampleScenes` 和 `resources/robots/fanuc_m10ia.json` 真实存在性；
-    3. `isSandboxEnvironment` 开发环境正确识别为 `false`；
-    4. `resolveSessionOutputDir` 开发环境返回 `build/`、强制沙盒模式返回 `%TEMP%/SiFastSuiteOLP/`，并在临时目录执行物理文件写入读取权限校验；
-    5. `RobotModel::createFanucM10iA` 无参调用自适应解析 JSON 并验证 J3/J6 偏置；
-    6. `RobotModel::loadFromUrdf` 在临时中文路径下创建并成功解析 URDF 模型。
+### 2.2 31 个 vcpkg DLL 清单核验
+通过对 `SiFastSuiteOLP.exe` 及其所调用模块的深度 PE 依赖递归追踪，31 个 DLL 均从 `C:\vcpkg\vcpkg\installed\x64-windows\bin` 完整收集并在 `build/dist/` 验证无误：
+- **24 个 OCCT 动态库**：
+  `TKBO.dll`, `TKBRep.dll`, `TKCAF.dll`, `TKCDF.dll`, `TKDE.dll`, `TKDESTEP.dll`, `TKG2d.dll`, `TKG3d.dll`, `TKGeomAlgo.dll`, `TKGeomBase.dll`, `TKHLR.dll`, `TKLCAF.dll`, `TKMath.dll`, `TKMesh.dll`, `TKOpenGl.dll`, `TKPrim.dll`, `TKService.dll`, `TKShHealing.dll`, `TKTopAlgo.dll`, `TKV3d.dll`, `TKVCAF.dll`, `TKXCAF.dll`, `TKXSBase.dll`, `TKernel.dll`
+- **1 个碰撞几何算法库**：
+  `ccd.dll`
+- **6 个底层图形与压缩库**：
+  `freetype.dll`, `libpng16.dll`, `z.dll`, `bz2.dll`, `brotlidec.dll`, `brotlicommon.dll`
 
 ---
 
@@ -69,27 +57,21 @@
 
 | 文件路径 | 职责与变更说明 | 修改后行数 | 门禁判定（< 1000 行软门禁） |
 | :--- | :--- | :---: | :---: |
-| `CMakeLists.txt` | 将 `Utf8Path.cpp` 从 `olp_io` 调整移入 `olp_core` 编译 | 225 | PASS（< 1000） |
-| `include/olp/io/Utf8Path.h` | 声明 `pathToUtf8`、`isSandboxEnvironment`、`resolveWorkspaceOrAppDir`、`resolveSessionOutputDir` | 36 | PASS（< 1000） |
-| `src/io/Utf8Path.cpp` | 实现 UTF-8 路径自适应解析与沙盒/开发输出重定向逻辑 | 136 | PASS（< 1000） |
-| `src/device/RobotModel.cpp` | 接入 `resolveWorkspaceOrAppDir`，文件流使用 `utf8ToPath` | 296 | PASS（< 1000） |
-| `src/ui/SampleSession.cpp` | 示例工位读取接入自适应，输出路径解耦为沙盒临时目录/开发 build | 272 | PASS（< 1000） |
-| `tests/test_support.h` | 声明 `testUtf8PathAdaptationAndDecoupling` 测试函数 | 39 | PASS（< 1000） |
-| `tests/test_main.cpp` | 测试主入口挂载新测试集 | 72 | PASS（< 1000） |
-| `tests/test_cad.cpp` | 实现 15 项自适应与解耦自动化断言 | 555 | PASS（< 1000） |
+| `Tools/package_stage.bat` | 纯英文沙盒装配与全隔离离线验证批处理脚本 | 219 | PASS（< 1000，纯英文） |
 
 ---
 
 ## 4. 本机真实测试与验证结果
 
-1. **编译构建**：
-   - 执行 `Tools\Compile.bat`，MSVC 2022 Release 编译退出码 0，零警告零错误。
-2. **自动化测试**：
-   - `build/Testing/Temporary/LastTest.log` 显示全量测试：
-     `Summary: 925 passed, 0 failed.`（由前置 910 项增至 925 项，全部 PASS）。
-3. **主程序冒烟自检**：
-   - `SiFastSuiteOLP.exe --verify` 运行退出码 0：
-     - 正确加载 `Full_Welding_Cell_With_Robot.step`；
-     - 识别并隐藏 5 个静态机器人实体，将 M-10iA 放置在底座 `(0, 0, 500)` mm；
-     - 完成焊缝计算、轨迹生成、OPW 逆解烘焙 1047 帧；
-     - 成功输出 FANUC `.ls` 程序与离线 HTML 3D 预览包。
+1. **装配执行**：
+   - 运行 `Tools\package_stage.bat --skip-build`，退出码 0：
+     - `windeployqt` 成功提取核心 Qt 插件（`platforms/qwindows.dll`, `styles/`, `iconengines/`, `imageformats/` 等）；
+     - 生成标准 `qt.conf`；
+     - 31 个 vcpkg DLL 及 10 个 VC143 CRT DLL 100% 完整部署至 `build/dist/`；
+     - `SampleScenes/`（1.23 MB）与 `resources/`（1.66 KB）完整展开。
+2. **全隔离环境冒烟验证（`PATH` 无 Qt/vcpkg/VS）**：
+   - 在将 `PATH` 严格限制为操作系统原生标准目录的隔离环境下，执行 `build/dist/SiFastSuiteOLP.exe --verify`，退出码为 0：
+     - 成功解析并导入 `Full_Welding_Cell_With_Robot.step`（12 个 B-Rep 实体）；
+     - 识别并隐藏 5 个静态实体，移动版 M-10iA 正确落座于底座 `(0, 0, 500)` mm；
+     - 完成焊缝生成、轨迹规划与 OPW 运动学 1047 帧烘焙；
+     - 导出的 `WELD_001.ls` 与 `WELD_001_Preview.html` 成功写入用户临时目录（`D:/UserTemp/SiFastSuiteOLP/`），`build/dist/` 目录下无任何临时文件残留。

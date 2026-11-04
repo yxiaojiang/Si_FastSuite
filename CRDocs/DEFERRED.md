@@ -499,3 +499,13 @@
 - **触发阶段**：下一次改 `resolveSessionOutputDir`、`createFanucM10iA` 的 JSON 读取，或改这组断言时。
 - **验收条件**：JSON 打不开时，机器人那条断言失败。开发环境输出路径以解析出的根加 `/build` 结尾。`forceSandbox == true` 时路径是 `temp_directory_path()` 下的 `SiFastSuiteOLP`。
 
+---
+
+## DIR-003-002 [OPEN] 装配脚本的隔离自检不看输出目录和平台插件（P2）
+
+- **来源轮次**：`DIR-003-STEP2-STAGING-001` Round 1 审核（2026-11-04）。
+- **位置**：`Tools/package_stage.bat:183-214`；`src/main.cpp:51-53`。
+- **现状**：自检把 PATH 设为 `System32`、`SystemRoot`、`System32\Wbem`。`QT_PLUGIN_PATH` 与 `QT_QPA_PLATFORM_PLUGIN_PATH` 保持原值。通过条件是 `--verify` 退出码 0，以及 dist 里没有 `WELD_001.ls` 和 `WELD_001_Preview.html`。`:213` 打印输出已进临时目录，脚本没有读这个目录。`--verify` 不创建 `QApplication`，不加载 `qwindows.dll`。去掉平台插件，或把导出改回源码树的 `build/`，这两项检查仍然可以通过。本轮沙盒本身已单独跑通：退出码 0，导出在 `D:/UserTemp/SiFastSuiteOLP/`，`qwindows.dll` 从 `build/dist/plugins/platforms` 加载。
+- **触发阶段**：下一次改 `package_stage.bat` 的自检，或改 `--verify` 的启动路径时。
+- **验收条件**：自检前清除 `QT_PLUGIN_PATH` 和 `QT_QPA_PLATFORM_PLUGIN_PATH`。`--verify` 退出码为 0，打印出的两个导出路径都在 `temp_directory_path()/SiFastSuiteOLP` 下，源码树 `build` 里同名文件的修改时间不变，dist 里仍然没有这两份文件。`plugins/platforms/qwindows.dll` 不存在时脚本以非 0 退出。
+

@@ -1,14 +1,14 @@
 # 当前协作状态
 
-- **Task ID**：`DIR-003-STEP1-PATH-001`
-- **Task**：DIR-003 第 1 步（P0-Path，UTF-8 路径自适应与输出解耦）
+- **Task ID**：`DIR-003-STEP2-STAGING-001`
+- **Task**：DIR-003 第 2 步（P0-Staging，31 个 vcpkg DLL + CRT 沙盒装配）
 - **Round**：`1`
 - **Status**：`APPROVED`
 - **Last Updated By**：`Reviewer`
 - **Blocking Issues**：`0`
 - **Summary**：
-  1. `Utf8Path.cpp` 只编进 `olp_core`。`olp_device` 仍只链接 `olp_core`。
-  2. 可执行文件旁同时有 `SampleScenes` 与 `resources` 时，资源根是该目录，会话输出写到用户临时目录下的 `SiFastSuiteOLP`。开发环境回退源码根，输出仍是 `<根>/build`。
-  3. `RobotModel` 的 JSON 与 URDF、`SampleSession` 的 STEP 读取和 `.ls` / HTML 写出已接上这套路径。`--verify` 在开发环境下写出 `build/WELD_001.ls`。
-  4. 本机 `Tools\Compile.bat` exit 0，`LastTest.log` 为 925 passed / 0 failed。关节偏置和输出目录两条断言盖不住回归，记为 `DIR-003-001`，不挡通过。
-- **详细审核**：见 `CRDocs/REVIEW.md` 顶部。
+  1. **范围**：本轮只关闭 `build/dist` 沙盒装配。Inno Setup 与 `Tools/Package.bat` 仍是第 3 步。
+  2. **脚本**：`Tools/package_stage.bat` 219 行，非 ASCII 为 0。31 个 vcpkg DLL、10 个 VC143 CRT、`qt.conf`、`plugins/platforms/qwindows.dll`、`SampleScenes` 与 `resources` 已在 `build/dist` 核对。`Qt6PrintSupport.dll` 不在 dist 中，exe 的依赖扫描也不需要它。
+  3. **隔离运行**：PATH 仅含系统目录，并去掉 Qt 插件变量后，`build/dist/SiFastSuiteOLP.exe --verify` 退出码 0。12 个实体，底座 `(0, 0, 500)` mm，1047 帧。导出在 `D:/UserTemp/SiFastSuiteOLP/`。移走 dist 内 STEP 后，失败路径指向 dist。`qwindows.dll` 从 `build/dist/plugins/platforms` 加载。
+  4. **延期**：`DIR-003-002`（脚本自检不检查临时目录和平台插件）已写入 `DEFERRED.md`。`DIR-003-001`、`DIR-002-003`、`DIR-002-004`、`DIR-002-005` 仍为 OPEN。
+- **详细结论**：见 `CRDocs/REVIEW.md` 顶部 `DIR-003-STEP2-STAGING-001` Round 1。

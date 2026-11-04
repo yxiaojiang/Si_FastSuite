@@ -1,3 +1,65 @@
+# 审核结论 — DIR-003-STEP2-STAGING-001 Round 1
+
+> **Task ID**：`DIR-003-STEP2-STAGING-001`  
+> **Round**：1  
+> **Reviewer**：独立审核方（核对 `Tools/package_stage.bat`、`build/dist` 与隔离运行；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-11-04  
+> **Verdict**：**APPROVED**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：`DIR-003-002` 已入 `DEFERRED`
+
+## 1. 结论
+
+第 2 步可以关闭。本轮产品改动是未跟踪的 `Tools/package_stage.bat`（219 行，非 ASCII 字符 0）。`build/dist/SiFastSuiteOLP.exe` 与 `build/Release/SiFastSuiteOLP.exe` 同为 2026-11-04 16:17:17、3,226,112 字节，晚于 `src/io/Utf8Path.cpp`（16:12:17）。
+
+收紧 PATH 并去掉 Qt 插件变量后，`build/dist/SiFastSuiteOLP.exe --verify` 退出码 0。导入 12 个 B-Rep 实体，隐藏 5 个静态实体，活动机器人落在底座 `(0, 0, 500)` mm，烘焙 1047 帧。`.ls` 与 HTML 写到 `D:/UserTemp/SiFastSuiteOLP/`。源码树 `build/WELD_001.ls` 与 `build/WELD_001_Preview.html` 的时间保持 16:34:44。`build/dist` 里没有这两份文件。
+
+把 dist 里的 `Full_Welding_Cell_With_Robot.step` 移走后再跑，失败日志中的路径是 `C:/Users/mimovr/Desktop/TEmp/Si_FastSuite/build/dist/SampleScenes/Scene2_Full_Workcell_STEP/Full_Welding_Cell_With_Robot.step`。文件已放回。
+
+## 2. 核对通过的部分
+
+`package_stage.bat:20-28` 接受 `--skip-build` 与 `--no-verify`。`:41-58` 在 `QT_BIN`、`VCPKG_BIN`、`CRT_DIR` 未设置时使用 PackagePlan 里的本机路径。`vcruntime140.dll` 与 `VC\Redist\MSVC\14.44.35112\x64\Microsoft.VC143.CRT` 中同名文件的 SHA256 一致。`:75-77` 的默认构建是 `Compile.bat Release --no-tests`。交接记录使用的是 `--skip-build`。`:91-97` 删除并重建 `build/dist`。
+
+`:112` 调用 `windeployqt --release --no-compiler-runtime --no-translations --no-opengl-sw --no-printsupport --plugindir`。`:120-123` 删除偶然带上的 `Qt6PrintSupport.dll`。dist 中没有这个文件。对 exe 和 `plugins` 下全部 DLL 做 `dumpbin /dependents` 后，依赖要么在 dist 里，要么在 `System32`。`:127-130` 写出的 `qt.conf` 是 `[Paths]` 与 `Plugins = plugins`。
+
+`:134` 的 31 个 vcpkg DLL 都在 dist 根目录：24 个 `TK*.dll`、`ccd.dll`，以及 `freetype.dll`、`libpng16.dll`、`z.dll`、`bz2.dll`、`brotlidec.dll`、`brotlicommon.dll`。`:151-165` 拷贝官方 CRT 目录的 `*.dll`。dist 中有 10 个：`concrt140.dll`、`msvcp140.dll`、`msvcp140_1.dll`、`msvcp140_2.dll`、`msvcp140_atomic_wait.dll`、`msvcp140_codecvt_ids.dll`、`vccorlib140.dll`、`vcruntime140.dll`、`vcruntime140_1.dll`、`vcruntime140_threads.dll`。exe 导入其中的 `msvcp140.dll`、`vcruntime140.dll`、`vcruntime140_1.dll`。
+
+`:169-178` 的 robocopy 结果与源码树一致。`SampleScenes` 23 个文件、1,289,817 字节，`resources` 1 个文件、1,702 字节，相对路径和长度相同。`resources/robots/fanuc_m10ia.json` 在 dist 中。
+
+windeployqt 还放入了 `Qt6Network.dll`、`Qt6Svg.dll`、`D3Dcompiler_47.dll`，以及 `plugins/generic`、`plugins/networkinformation`、`plugins/tls`。计划中的 `platforms/qwindows.dll`、`iconengines`、`imageformats`、`styles` 都在。`qwindows.dll` 依赖 `Qt6Core.dll`、`Qt6Gui.dll` 和系统库。
+
+`QT_DEBUG_PLUGINS=1`、PATH 仅含系统目录、并去掉 Qt 插件变量后，无参数启动的日志为：从 `build/dist/plugins/platforms/qwindows.dll` 加载 `QWindowsIntegrationPlugin`。进程保持运行，6 秒后被结束。dist 中仍然没有 `WELD_001.ls`。
+
+`:110` 给 `WINDEPLOY_PATH` 赋值。`windeployqt` 的调用用的是 `%QT_BIN%\windeployqt.exe`。
+
+`git diff -- include/olp/algo src/algo` 为空。`git status` 里的产品文件只有未跟踪的 `Tools/package_stage.bat`。
+
+## 3. 本机实跑
+
+工作目录是临时目录。PATH 为 `%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem`。进程环境中没有 `QT_PLUGIN_PATH`、`QT_QPA_PLATFORM_PLUGIN_PATH`、`QT_QPA_PLATFORM`、`QTDIR`、`QML_IMPORT_PATH`、`QML2_IMPORT_PATH`。
+
+`--verify` 退出码 0。日志：
+
+- `Imported 12 B-Rep solids.`
+- `Hid 5 static robot solids`
+- `pedestal base (0, 0, 500) mm`
+- `M11 baked 1047 frames | Estimated cycle 34.7508 s`
+- `Exported FANUC .ls: D:/UserTemp/SiFastSuiteOLP/WELD_001.ls`
+- `Exported HTML TCP preview: D:/UserTemp/SiFastSuiteOLP/WELD_001_Preview.html`
+
+这次运行后，临时目录里两个文件的时间是 16:48:26。源码树 `build` 下同名文件仍是 16:34:44。工作目录文件数为 0。
+
+移走 STEP 后的失败返回在 `src/ui/SampleSession.cpp:53-54`，代码是 `failed(1, ...)`。stderr 打印的是 dist 里的绝对路径。`src/main.cpp:51-53` 的 `--verify` 只跑 `runSampleWorkcell`，不创建 `QApplication`。平台插件是另一次无参数启动证实的。
+
+## 4. 仍延期
+
+`DIR-003-002`：`package_stage.bat:183-214` 只替换 PATH，并用退出码和 dist 内无 `WELD_*` 作为通过条件。
+
+`DIR-003-001`、`DIR-002-003`、`DIR-002-004`、`DIR-002-005` 仍是 OPEN。本轮 diff 只有装配脚本。
+
+---
+
 # 审核结论 — DIR-003-STEP1-PATH-001 Round 1
 
 > **Task ID**：`DIR-003-STEP1-PATH-001`  
