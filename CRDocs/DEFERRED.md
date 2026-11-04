@@ -488,3 +488,14 @@
 - **现状**：测试创建了 `OcctViewport` 但没有显示。`view_` 已分配，`context` 仍是空的。`syncScene` 在 `context.IsNull()` 处返回，到不了 `selectEdge(..., false)`。`LastTest.log:142` 的 PASS 只说明回调保持 false。随后的 `undo()` / `canRedo()` 没有发生在恢复高亮期间。把 `false` 改回默认 `true`，这组断言仍然可以通过。产品路径已在 Round 2 关闭，见 `DIR-002-001`。
 - **触发阶段**：下一次改 `selectEdge` 或 `syncScene` 的高亮恢复时。
 - **验收条件**：回归必须执行到恢复高亮那次 `selectEdge`，并断言用户拾取回调没有被调用。撤销建缝若发生在同一次刷新里，重做栈仍保留原命令。
+
+---
+
+## DIR-003-001 [OPEN] 路径自适应测试有两处不会在回归时失败（P2）
+
+- **来源轮次**：`DIR-003-STEP1-PATH-001` Round 1 审核（2026-11-04）。
+- **位置**：`tests/test_cad.cpp:498-522`；默认偏置 `src/device/RobotModel.cpp:76`；JSON `resources/robots/fanuc_m10ia.json` 的 `joint_offsets_deg`。
+- **现状**：`createFanucM10iA` 在打开 JSON 之前就把 J3 写成 `-π/2`、J6 写成 `π`。JSON 里的角度是 `-90` 和 `180`，换算后与默认值相同。文件打不开时 `:1041` 仍是 PASS。`resolveSessionOutputDir("", false)` 与 `("", true)` 只断言目录存在，沙盒那次再断言能写一个临时文件。返回源码根、返回 `build/`、返回别的可写目录，这三条都可以通过。本轮源码和 `--verify` 的输出路径是对的，所以不挡通过。
+- **触发阶段**：下一次改 `resolveSessionOutputDir`、`createFanucM10iA` 的 JSON 读取，或改这组断言时。
+- **验收条件**：JSON 打不开时，机器人那条断言失败。开发环境输出路径以解析出的根加 `/build` 结尾。`forceSandbox == true` 时路径是 `temp_directory_path()` 下的 `SiFastSuiteOLP`。
+

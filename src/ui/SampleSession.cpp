@@ -32,7 +32,7 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
     auto& cad = mainWin.cadKernel();
     const auto& robotModel = mainWin.activeRobotModel();
 
-    const std::string wsRoot = OLP_SOURCE_DIR;
+    const std::string wsRoot = olp::io::resolveWorkspaceOrAppDir();
     const std::string fullCellStep =
         wsRoot + "/SampleScenes/Scene2_Full_Workcell_STEP/Full_Welding_Cell_With_Robot.step";
 
@@ -222,8 +222,9 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
     const auto lsVal = olp::io::FanucLsPostProcessor::validateProgram(sampleProg);
     const bool refuseProductionLs = !lsVal.ok || blockingIssue;
 
-    const std::string lsOut = wsRoot + "/build/WELD_001.ls";
-    const std::string htmlOut = wsRoot + "/build/WELD_001_Preview.html";
+    const std::string outDir = olp::io::resolveSessionOutputDir(wsRoot);
+    const std::string lsOut = outDir + "/WELD_001.ls";
+    const std::string htmlOut = outDir + "/WELD_001_Preview.html";
     bool lsOk = false;
     if (refuseProductionLs) {
         std::error_code ec;

@@ -1,3 +1,48 @@
+# 审核结论 — DIR-003-STEP1-PATH-001 Round 1
+
+> **Task ID**：`DIR-003-STEP1-PATH-001`  
+> **Round**：1  
+> **Reviewer**：独立审核方（只读源码与本机产物；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-11-04  
+> **Verdict**：**APPROVED**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：`DIR-003-001` 已入 `DEFERRED`
+
+## 1. 结论
+
+第 1 步可以关闭。`Utf8Path.cpp` 只在 `olp_core` 里编译，`olp_device` 仍只链接 `olp_core`。可执行文件旁边同时有 `SampleScenes` 和 `resources` 时，资源根是该目录，会话输出改到用户临时目录下的 `SiFastSuiteOLP`。开发环境回退到 `OLP_SOURCE_DIR`，输出仍是 `<根>/build`。
+
+新增 15 条断言是绿的。其中关节偏置和输出目录两条，在文件没打开或目录指错时也不会失败。记为 `DIR-003-001`，不挡本轮。
+
+## 2. 核对通过的部分
+
+`CMakeLists.txt:59-61` 把 `src/io/Utf8Path.cpp` 放进 `olp_core`。`olp_io` 的源文件列表（`:120-125`）里没有这个文件。`olp_device`（`:90-96`）只链接 `olp_core`。头文件仍是 `include/olp/io/Utf8Path.h`，命名空间仍是 `olp::io`。
+
+`isSandboxEnvironment`（`src/io/Utf8Path.cpp:83-89`）和 `resolveWorkspaceOrAppDir`（`:99-104`）用的是同一对目录：可执行文件旁边的 `SampleScenes` 与 `resources`。两个都在才把根定为可执行文件目录。否则在宏 `OLP_SOURCE_DIR` 下存在 `SampleScenes` 时回退到源码根（`:107-111`）。再不行才用可执行文件目录或当前目录。
+
+`resolveSessionOutputDir`（`:121-133`）：`forceSandbox` 或沙盒为真时创建并返回 `temp_directory_path()/SiFastSuiteOLP`。否则创建并返回 `<根>/build`。
+
+`RobotModel::createFanucM10iA`（`src/device/RobotModel.cpp:93-106`）在根为空时调用 `resolveWorkspaceOrAppDir`，JSON 用 `utf8ToPath` 打开。`loadFromUrdf`（`:141`）同样。网格路径仍是 UTF-8 字符串；`importStl`（`src/cad/OcctCadKernel.cpp:479`）和 `loadBinaryRobotStlMm`（`src/io/HtmlAnimationDataPrep.cpp:130`）已经用 `utf8ToPath`。
+
+`SampleSession.cpp:35-37` 用解析出的根读 STEP。`:225-227` 用 `resolveSessionOutputDir(wsRoot)` 写 `.ls` 和 HTML。`--verify` 写出的是 `C:/Users/mimovr/Desktop/TEmp/Si_FastSuite/build/WELD_001.ls` 与同目录的 `WELD_001_Preview.html`。这是开发环境的 `<源码根>/build`，不是安装目录。
+
+`LastTest.log:1030-1044` 十五条均为 PASS。`:1032` 的中文相对路径经 `utf8ToPath` 再 `pathToUtf8` 与原字符串相同。`:1043-1044` 从临时目录里的 URDF 读出了 `fanuc_m10ia_chinese_test`，说明 `loadFromUrdf` 打开了这条路径。
+
+## 3. 本机实跑
+
+`Tools\Compile.bat` exit 0。`build/Testing/Temporary/LastTest.log:1047` 为 `Summary: 925 passed, 0 failed.` `SiFastSuiteOLP.exe --verify` exit 0。
+
+编辑器行号（含空行）：`Utf8Path.h` 36，`Utf8Path.cpp` 136，`RobotModel.cpp` 296，`SampleSession.cpp` 272，`test_cad.cpp` 555，`CMakeLists.txt` 225。全部低于 1000。
+
+`git diff` 对 `include/olp/algo` 与 `src/algo` 为空。
+
+## 4. 仍延期
+
+`DIR-003-001`：关节偏置断言与构造函数里的默认值相同；输出目录断言只要求目录存在且可写。
+
+---
+
 # 审核结论 — DIR-002-STEP-IMPORT-001 Round 2
 
 > **Task ID**：`DIR-002-STEP-IMPORT-001`  

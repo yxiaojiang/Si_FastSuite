@@ -1,6 +1,6 @@
 # Plan.md — 当前活跃事项
 
-> 最近刷新：2026-11-04 Asia/Shanghai（UTC+8）。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001`、`DIR-002` 与 `DIR-003`。`DIR-002-STEP-IMPORT-001` 已 APPROVED 闭环并移入 `Plan-archive.md`。`PackagePlan.md` 为打包发布专项实施计划。
+> 最近刷新：2026-11-04 Asia/Shanghai（UTC+8）。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001`、`DIR-002` 与 `DIR-003`。`DIR-003-STEP1-PATH-001` 已 APPROVED 闭环并移入 `Plan-archive.md`。`PackagePlan.md` 为打包发布专项实施计划。
 
 ## 里程碑达成度
 
@@ -30,12 +30,12 @@
 
 ## 正在做的事
 
-1. **[READY_FOR_DEV] `DIR-003` 独立安装包发布（Inno Setup + 运行沙盒，方案见 `PackagePlan.md`）**：
+1. **[IN_PROGRESS] `DIR-003` 独立安装包发布 — 第 2 步（P0-Staging，31 个 vcpkg DLL + CRT 沙盒装配）**：
    - 第 0 步已完成：`DIR-002-STEP-IMPORT-001` APPROVED 闭环；
-   - 第 1 步（P0-Path）：`src/io/Utf8Path.cpp` 移入 `olp_core`，实现 UTF-8 路径自适应函数 `resolveWorkspaceOrAppDir()`，解耦 `RobotModel.cpp`（接入 `utf8ToPath`）与 `SampleSession.cpp`（只读路径与临时目录写出隔离）；
-   - 第 2 步（P0-Staging）：编写纯英文 `Tools/package_stage.bat`，组装 31 个 vcpkg DLL、VS2022 VC143 CRT、Qt 运行时沙盒与 `SampleScenes/`，完成屏蔽外部 PATH 的 `--verify` 冒烟测试；
+   - 第 1 步已完成：`DIR-003-STEP1-PATH-001`（P0-Path）APPROVED 闭环（`Utf8Path.cpp` 移入 `olp_core`，UTF-8 路径自适应函数 `resolveWorkspaceOrAppDir()`，解耦 `RobotModel.cpp` 与 `SampleSession.cpp`，测试增至 925 项全绿）；
+   - **当前第 2 步（P0-Staging）**：编写纯英文 `Tools/package_stage.bat`，组装 31 个 vcpkg DLL（24 个 OCCT 动态库 + `ccd.dll` + 6 个底层图形库）、VS2022 官方 `Microsoft.VC143.CRT`、`windeployqt` 抽取 Qt 运行时（剔除未引用的 `Qt6PrintSupport`）、生成隔离配置 `qt.conf`、完整拷贝 `SampleScenes/` 与 `resources/`；并在屏蔽外部 PATH 终端验证 `build/dist/SiFastSuiteOLP.exe --verify` 退出码 0；
    - 第 3 步（P0-Installer）：编写 `installer/SiFastSuite.iss` 与 `Tools/Package.bat`，编译单文件安装包 `SiFastSuiteOLP_Setup_v0.1.0.exe` 并完成安装/卸载完整性验证。
 2. **[OPEN] `RISK-001`** — 无 ROBOGUIDE / 真机金样对拍前，J2/J3 耦合符号、圈数轴与法兰相对示教器位姿仍未核验。导出水印与红条只是草稿门禁，不关闭本风险。
 3. **[QUEUED] `DIR-002` 后续阶段** — 第 2 步（P0-B，工件/夹具追加导入命令与角色区分）与第 3 步（P1，FANUC 家族多机型参数扩展与 3 处 M-10iA 硬编码解耦）。
 
-已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix / MAINT-CLEANUP / M14-PROJECT-REBIND-002 / DIR-002-STEP-IMPORT-001 叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。HTML 三维动画已于 `M13-HTML3D-EXPORT-001` Round 2 APPROVED 完成。
+已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix / MAINT-CLEANUP / M14-PROJECT-REBIND-002 / DIR-002-STEP-IMPORT-001 / DIR-003-STEP1-PATH-001 叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。

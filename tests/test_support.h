@@ -36,3 +36,4 @@ void testProjectJsonSerialization();
 void testTJointSampleSceneEndToEndRegression();
 void testChinesePathStepImport();
 void testWorkcellImportReplaceAndSeamCreationLoop();
+void testUtf8PathAdaptationAndDecoupling();

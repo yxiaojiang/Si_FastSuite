@@ -1,5 +1,13 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-11-04：DIR-003-STEP1-PATH-001 Round 1 APPROVED（UTF-8 路径自适应与输出解耦）
+
+1. **[DONE] 架构分层下沉、UTF-8 路径自适应与会话输出解耦。** 任务号 `DIR-003-STEP1-PATH-001`，Round 1 **APPROVED**：
+   - **架构分层下沉**：将 `src/io/Utf8Path.cpp` 移入底层 `olp_core` 编译，保持头文件 `include/olp/io/Utf8Path.h` 与 `olp::io` 命名空间不变；`olp_device`（Layer 4）仅链接 `olp_core`，彻底根除对 `olp_io`（Layer 5）的反向依赖；
+   - **统一 UTF-8 路径自适应函数**：在 `olp::io` 中实现 `resolveWorkspaceOrAppDir()`、`pathToUtf8()`、`isSandboxEnvironment()` 与 `resolveSessionOutputDir()`。优先探测可执行文件同级的 `SampleScenes` 与 `resources` 目录，开发环境下平滑回退至 `OLP_SOURCE_DIR`；
+   - **源码路径解耦与中文路径支持**：`RobotModel.cpp` 接入 `resolveWorkspaceOrAppDir()`，彻底消除 `OLP_SOURCE_DIR` 硬编码；读取 JSON 与 URDF 文件流统一接入 `olp::io::utf8ToPath`，彻底解决 Windows 中文路径打开失败问题；`SampleSession.cpp` 接入自适应函数，沙盒环境下输出重定向至用户临时目录 `std::filesystem::temp_directory_path() / "SiFastSuiteOLP"`，开发环境下保留在 `<wsRoot>/build`，彻底消除 UAC 权限与卸载残留隐患；
+   - **自动化测试**：新增 `testUtf8PathAdaptationAndDecoupling` 单元测试，全量测试扩充至 **925 passed / 0 failed**；`Tools\Compile.bat` exit 0；`SiFastSuiteOLP.exe --verify` exit 0；各文件行数均受控在 1000 行以内。
+
 ## 2026-11-04：DIR-002-STEP-IMPORT-001 Round 2 APPROVED（整工位动态导入与视口选边建缝闭环）
 
 1. **[DONE] 整工位动态导入与视口选边建缝闭环。** 任务号 `DIR-002-STEP-IMPORT-001`，Round 2 **APPROVED**。`M14-014` 与 `M14-015` 彻底闭环：

@@ -1,4 +1,5 @@
 #include "olp/device/RobotModel.h"
+#include "olp/io/Utf8Path.h"
 
 #include <cmath>
 #include <fstream>
@@ -89,9 +90,8 @@ RobotModel RobotModel::createFanucM10iA(const std::string& workspaceRoot) {
     // URDF joint chain definitions are populated when loadFromUrdf() parses a URDF file
     m.urdfLoaded = false;
 
-    const std::string baseDir = workspaceRoot.empty()
-        ? std::string(OLP_SOURCE_DIR) + "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Robot_FANUC_M10iA/meshes"
-        : workspaceRoot + "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Robot_FANUC_M10iA/meshes";
+    const std::string root = workspaceRoot.empty() ? io::resolveWorkspaceOrAppDir() : workspaceRoot;
+    const std::string baseDir = root + "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Robot_FANUC_M10iA/meshes";
 
     const std::array<std::string, 7> linkFiles = {
         "base_link.stl", "link_1.stl", "link_2.stl",
@@ -102,9 +102,8 @@ RobotModel RobotModel::createFanucM10iA(const std::string& workspaceRoot) {
         m.collisionMeshFiles[i] = baseDir + "/collision/" + linkFiles[i];
     }
 
-    const std::string root = workspaceRoot.empty() ? std::string(OLP_SOURCE_DIR) : workspaceRoot;
     const std::string jsonPath = root + "/resources/robots/fanuc_m10ia.json";
-    std::ifstream jin(jsonPath);
+    std::ifstream jin(io::utf8ToPath(jsonPath));
     if (jin) {
         std::stringstream buffer;
         buffer << jin.rdbuf();
@@ -139,7 +138,7 @@ RobotModel RobotModel::createFanucM10iA(const std::string& workspaceRoot) {
 }
 
 std::optional<RobotModel> RobotModel::loadFromUrdf(const std::string& urdfFilePath) {
-    std::ifstream ifs(urdfFilePath);
+    std::ifstream ifs(io::utf8ToPath(urdfFilePath));
     if (!ifs.is_open()) {
         return std::nullopt;
     }

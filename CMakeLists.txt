@@ -58,6 +58,7 @@ add_compile_definitions(OLP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 # ------------------------------------------------------------------------------
 add_library(olp_core STATIC
     src/core/ProjectModel.cpp
+    src/io/Utf8Path.cpp
 )
 target_include_directories(olp_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -121,7 +122,6 @@ add_library(olp_io STATIC
     src/io/HtmlAnimationDataPrep.cpp
     src/io/HtmlAnimationExporter.cpp
     src/io/ProjectSerializer.cpp
-    src/io/Utf8Path.cpp
 )
 target_include_directories(olp_io PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

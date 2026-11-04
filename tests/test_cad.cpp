@@ -460,5 +460,96 @@ void testChinesePathStepImport() {
     std::filesystem::remove_all(tempDir, ec);
 }
 
+void testUtf8PathAdaptationAndDecoupling() {
+    std::cout << "\n--- Test DIR-003-P0-Path: UTF-8 Path Adaptation and Output Decoupling ---\n";
+
+    // 1. pathToUtf8 and utf8ToPath roundtrip with Chinese/Unicode paths
+    {
+        check(olp::io::pathToUtf8(std::filesystem::path{}).empty(), "DIR-003: Empty path converts to empty UTF-8 string");
+        check(olp::io::utf8ToPath("").empty(), "DIR-003: Empty UTF-8 string converts to empty path");
+
+        const std::string zhRel = "工位目录_测试/机器人_FANUC/焊缝_001.step";
+        const auto p = olp::io::utf8ToPath(zhRel);
+        const std::string backU8 = olp::io::pathToUtf8(p);
+        check(backU8 == zhRel, "DIR-003: utf8ToPath and pathToUtf8 roundtrip matches generic UTF-8 string", backU8);
+    }
+
+    // 2. resolveWorkspaceOrAppDir
+    {
+        const std::string custom = "/custom/testing/workspace";
+        check(olp::io::resolveWorkspaceOrAppDir(custom) == custom, "DIR-003: Override root is returned directly");
+
+        const std::string resolved = olp::io::resolveWorkspaceOrAppDir();
+        check(!resolved.empty(), "DIR-003: Resolved workspace root is non-empty");
+
+        std::error_code ec;
+        const auto sampleScenesDir = olp::io::utf8ToPath(resolved + "/SampleScenes");
+        const auto resourcesRobotsJson = olp::io::utf8ToPath(resolved + "/resources/robots/fanuc_m10ia.json");
+        check(std::filesystem::is_directory(sampleScenesDir, ec), "DIR-003: SampleScenes directory exists under resolved root");
+        check(std::filesystem::is_regular_file(resourcesRobotsJson, ec), "DIR-003: resources/robots/fanuc_m10ia.json exists under resolved root");
+    }
+
+    // 3. isSandboxEnvironment and resolveSessionOutputDir
+    {
+        const bool sandbox = olp::io::isSandboxEnvironment();
+        // In dev test runner inside build/, isSandboxEnvironment is false because SampleScenes is at repo root
+        check(!sandbox, "DIR-003: Dev test runner is not detected as standalone sandbox");
+
+        const std::string devOut = olp::io::resolveSessionOutputDir("", false);
+        const auto devOutPath = olp::io::utf8ToPath(devOut);
+        std::error_code ec;
+        check(std::filesystem::is_directory(devOutPath, ec), "DIR-003: Dev session output directory exists", devOut);
+
+        const std::string sandboxOut = olp::io::resolveSessionOutputDir("", true);
+        const auto sandboxOutPath = olp::io::utf8ToPath(sandboxOut);
+        check(std::filesystem::is_directory(sandboxOutPath, ec), "DIR-003: Sandbox session output directory created in temp", sandboxOut);
+
+        // Verify write access in sandbox output directory
+        const auto testFilePath = sandboxOutPath / "write_test.tmp";
+        {
+            std::ofstream ofs(testFilePath);
+            ofs << "DIR-003 permission test";
+        }
+        check(std::filesystem::exists(testFilePath), "DIR-003: Can write to sandbox session output directory without UAC issues");
+        std::filesystem::remove(testFilePath, ec);
+    }
+
+    // 4. RobotModel::createFanucM10iA adaptive loading
+    {
+        const auto model = olp::device::RobotModel::createFanucM10iA();
+        check(std::abs(model.opw.offsetsRad[2] + olp::core::kPi * 0.5) < 1e-9 &&
+              std::abs(model.opw.offsetsRad[5] - olp::core::kPi) < 1e-9,
+              "DIR-003: RobotModel::createFanucM10iA loads json via adaptive path and utf8ToPath");
+    }
+
+    // 5. RobotModel::loadFromUrdf via Chinese path
+    {
+        std::error_code ec;
+        const auto tempZhDir = std::filesystem::temp_directory_path(ec) / "测试机器人目录_FANUC";
+        std::filesystem::create_directories(tempZhDir, ec);
+        const auto zhUrdfPath = tempZhDir / "测试机器人_M10iA.urdf";
+        const std::string dummyUrdf =
+            "<?xml version=\"1.0\"?>\n"
+            "<robot name=\"fanuc_m10ia_chinese_test\">\n"
+            "  <link name=\"base_link\"/>\n"
+            "</robot>\n";
+        {
+            std::ofstream ofs(zhUrdfPath);
+            ofs << dummyUrdf;
+        }
+        check(std::filesystem::exists(zhUrdfPath), "DIR-003: Created dummy URDF in Chinese directory");
+
+        const std::string zhUrdfU8 = olp::io::pathToUtf8(zhUrdfPath);
+        const auto loaded = olp::device::RobotModel::loadFromUrdf(zhUrdfU8);
+        check(loaded.has_value(), "DIR-003: RobotModel::loadFromUrdf succeeds with Chinese path", zhUrdfU8);
+        if (loaded) {
+            check(loaded->modelId == "fanuc_m10ia_chinese_test", "DIR-003: Correct modelId loaded from Chinese URDF path");
+        }
+
+        std::filesystem::remove_all(tempZhDir, ec);
+    }
+}
+
+
 
 

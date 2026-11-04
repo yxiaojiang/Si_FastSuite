@@ -62,6 +62,7 @@ int main(int argc, char* argv[]) {
     testTJointSampleSceneEndToEndRegression();
     testChinesePathStepImport();
     testWorkcellImportReplaceAndSeamCreationLoop();
+    testUtf8PathAdaptationAndDecoupling();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";
