@@ -1,3 +1,65 @@
+# 审核结论 — DIR-003-STEP3-INSTALLER-001 Round 1
+
+> **Task ID**：`DIR-003-STEP3-INSTALLER-001`  
+> **Round**：1  
+> **Reviewer**：独立审核方（核对 `installer/SiFastSuite.iss`、`Tools/Package.bat` 与一次独立安装/卸载；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-11-04  
+> **Verdict**：**APPROVED**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：`DIR-003-003`、`DIR-003-004` 已入 `DEFERRED`
+
+## 1. 结论
+
+第 3 步可以关闭。本轮新增 `installer/SiFastSuite.iss`（76 行）和 `Tools/Package.bat`（176 行），非 ASCII 字符都是 0。`build/installer/SiFastSuiteOLP_Setup_v0.1.0.exe` 的长度为 22,816,160 字节，时间 17:16:02，晚于这两个脚本。
+
+安装包把 `build/dist` 的 84 个文件原样展开，另加 `unins000.exe` 和 `unins000.dat`。当前用户的静默安装、隔离 `--verify`、开始菜单和桌面快捷方式、以及静默卸载都已单独跑过。卸载后安装目录、当前用户的快捷方式和 `HKCU` 卸载项都没有留下。
+
+## 2. 核对通过的部分
+
+`SiFastSuite.iss:14` 的 `AppId` 是 `{{C6B5E86E-35F7-4180-87F8-E3E374E51F7D}`。这是 Inno Setup 的写法：两个左花括号、一个右花括号。`:23` 的默认目录是 `{autopf}\SiFastSuite OLP`。`:32-33` 只允许 64 位。`:36-37` 是 `PrivilegesRequired=lowest`，并用 `dialog commandline` 允许选择所有用户或当前用户。当前用户安装时 `{autopf}` 落在该用户的 Programs 目录；所有用户安装写入 `HKLM`。`:30-31` 使用 `lzma2/ultra64` 和固实压缩。
+
+`:56` 把 `build\dist\*` 递归拷入 `{app}`。`:59-62` 创建开始菜单里的主程序、`Sample Scenes`、卸载程序，以及带任务 `desktopicon` 的桌面快捷方式。`:52` 把这个任务标成 `unchecked`。`:67-76` 在卸载时再删 `plugins`、`SampleScenes`、`resources`、`*.ls`、`*.html`、`*.log`、`qt.conf`，并在 `{app}` 为空时删除该目录。
+
+`Package.bat:56-69` 先找 `C:\Program Files (x86)\Inno Setup 6\ISCC.exe`，否则用 PATH 里的 `iscc`。`:76-82` 调用 `package_stage.bat`，`--skip-build` 和 `--no-verify` 会传进去。`:97` 编译 `installer\SiFastSuite.iss`。`:123` 的测试安装使用 `/VERYSILENT /CURRENTUSER /DIR=build\test_install`。
+
+`git diff -- include/olp/algo src/algo` 为空。`Tools/package_stage.bat` 已在版本库中且本轮没有 diff。产品新增文件是未跟踪的 `Tools/Package.bat` 和 `installer/`。
+
+`build/Testing/Temporary/LastTest.log:1047` 为 `Summary: 925 passed, 0 failed.` 结束时间是 Nov 04 17:16。本轮没有改 `src/`、`include/`、`tests/`。
+
+## 3. 本机实跑
+
+机器上已有一份所有用户安装：`D:\Soft\SiFastSuite OLP`，卸载项在 `HKLM\...\Uninstall\{C6B5E86E-35F7-4180-87F8-E3E374E51F7D}_is1`。它和 `build/dist` 的 84 个文件长度一致。公共桌面和公共开始菜单的快捷方式指向该目录。审核没有卸载或改动这一份。
+
+另一次安装使用安装包自身：
+
+`SiFastSuiteOLP_Setup_v0.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER /MERGETASKS=desktopicon /DIR=D:\UserTemp\SiFastSuiteOLP_review_install`
+
+退出码 0。相对 `build/dist`，缺文件 0、多出的非卸载器文件 0、长度不同 0。`qt.conf` 仍是 `[Paths]` / `Plugins = plugins`。`HKLM` 的安装位置和公共桌面快捷方式的目标没有变。
+
+当前用户快捷方式：
+
+- 桌面 `SiFastSuite OLP.lnk` 指向安装目录里的 `SiFastSuiteOLP.exe`
+- 开始菜单 `Sample Scenes.lnk` 指向安装目录里的 `SampleScenes`
+- 开始菜单主程序和 `Uninstall SiFastSuite OLP.lnk` 分别指向 exe 和 `unins000.exe`
+- `HKCU` 卸载项的 `InstallLocation` 是 `D:\UserTemp\SiFastSuiteOLP_review_install\`
+
+隔离 `--verify` 的 PATH 只有系统目录，并去掉了 Qt 插件变量。退出码 0。12 个实体，隐藏 5 个静态实体，底座 `(0, 0, 500)` mm，1047 帧。导出路径是 `D:/UserTemp/SiFastSuiteOLP/WELD_001.ls` 和同目录的 HTML。源码树 `build` 下同名文件的时间保持 17:16:37。安装目录里没有这两份文件。
+
+无参数启动时，`qwindows.dll` 从 `D:/UserTemp/SiFastSuiteOLP_review_install/plugins/platforms/qwindows.dll` 加载。进程保持运行，6 秒后被结束。
+
+随后执行该目录的 `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`，并等到 `unins000` 进程结束。安装目录不存在。当前用户的桌面快捷方式、开始菜单目录和 `HKCU` 卸载项都不存在。`D:\Soft\SiFastSuite OLP`、公共桌面快捷方式和公共开始菜单仍在。
+
+## 4. 仍延期
+
+`DIR-003-003`：`Package.bat:143-170` 的生命周期自检不看卸载退出码、快捷方式和注册表，目录还在时会自己 `rmdir`。
+
+`DIR-003-004`：桌面图标任务默认不勾选。`Package.bat:123` 的静默安装没有打开这个任务。
+
+`DIR-003-002`、`DIR-003-001`、`DIR-002-003`、`DIR-002-004`、`DIR-002-005` 仍是 OPEN。
+
+---
+
 # 审核结论 — DIR-003-STEP2-STAGING-001 Round 1
 
 > **Task ID**：`DIR-003-STEP2-STAGING-001`  

@@ -1,6 +1,6 @@
 # Plan.md — 当前活跃事项
 
-> 最近刷新：2026-11-04 Asia/Shanghai（UTC+8）。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001`、`DIR-002` 与 `DIR-003`。`DIR-003-STEP2-STAGING-001` 已 APPROVED 闭环并移入 `Plan-archive.md`。`PackagePlan.md` 为打包发布专项实施计划。
+> 最近刷新：2026-11-04 Asia/Shanghai（UTC+8）。28 周排期仍在根目录 `Plan.md`。设计基线仍是 `Docs/OLP_System_Design_Claude.md`（v1.1）。方向决定见 `PlanDocs/DECISIONS.md` 的 `DIR-001`、`DIR-002` 与 `DIR-003`。`DIR-003` 独立安装包发布（Steps 1~3）已全闭环并移入 `Plan-archive.md`。`PackagePlan.md` 为打包发布专项实施计划。
 
 ## 里程碑达成度
 
@@ -27,15 +27,15 @@
 | 单文件 HTML 三维动画 | 完成 | `M13-HTML3D-EXPORT-001` Round 2 已 APPROVED；100% 离线自包含 3D 渲染，含工位零件、7 节连杆+焊枪（枪尖与 TCP 物理重合 0 mm）、TCP 轨迹/电弧光晕、转盘相机与倍速播放 |
 | 3D PDF 五天熔断 | 完成 | 执行熔断收口（`RISK-003` CLOSED），三维可交互仿真交付统一收口至基于 Web 标准的单文件离线 HTML 3D 动画包，2D 报告由 QPdfWriter 承载 |
 | 交互与视口操作体验 | 完成 | 工业级转盘相机（Turntable Orbit）、键位功能映射、Dock 分割条无死锁弹性布局均已落地 |
+| 独立单文件安装包与脱机沙盒 | 完成 | `DIR-003` 独立安装包发布全线 APPROVED 闭环；Inno Setup 单文件安装包（22.8 MB）、31 个 vcpkg DLL + CRT 沙盒隔离脱机、会话输出解耦与全流程无残留卸载已通过 |
 
 ## 正在做的事
 
-1. **[READY_FOR_DEV] `DIR-003` 独立安装包发布 — 第 3 步（P0-Installer，Inno Setup 单文件安装包与验证）**：
-   - 第 0 步已完成：`DIR-002-STEP-IMPORT-001` APPROVED 闭环；
-   - 第 1 步已完成：`DIR-003-STEP1-PATH-001`（P0-Path）APPROVED 闭环（`Utf8Path.cpp` 移入 `olp_core`，UTF-8 路径自适应函数 `resolveWorkspaceOrAppDir()`，解耦 `RobotModel.cpp` 与 `SampleSession.cpp`，测试增至 925 项全绿）；
-   - 第 2 步已完成：`DIR-003-STEP2-STAGING-001`（P0-Staging）APPROVED 闭环（编写纯英文 `Tools/package_stage.bat`，组装 31 个 vcpkg DLL + 10 个 VC143 CRT + windeployqt Qt 运行时 + `SampleScenes/`，屏蔽外部 PATH 隔离验证 `--verify` 退出码 0，输出解耦零残留）；
-   - **当前第 3 步（P0-Installer）**：编写 `installer/SiFastSuite.iss` 与纯英文 `Tools/Package.bat`，调用 `ISCC.exe` 编译单文件安装包 `SiFastSuiteOLP_Setup_v0.1.0.exe` 并完成安装展开、快捷方式启动与卸载无残留验证。
+1. **[READY_FOR_DEV] `DIR-002` 阶段二 — 第 2 步（P0-B，工件/夹具追加导入命令与角色区分）**：
+   - 在 `WorkcellLayoutService` 中新增可撤销的追加零件/夹具命令，支持区分 `CollisionRole::Workpiece` 与 `CollisionRole::Fixture` 角色；
+   - 在主界面文件菜单与场景树提供追加导入入口，保持与现有几何句柄重绑定、撤销重做栈及碰撞检测机制的无缝契合；
+   - 补齐无头自动化测试，确保追加零件与工位协同稳定。
 2. **[OPEN] `RISK-001`** — 无 ROBOGUIDE / 真机金样对拍前，J2/J3 耦合符号、圈数轴与法兰相对示教器位姿仍未核验。导出水印与红条只是草稿门禁，不关闭本风险。
-3. **[QUEUED] `DIR-002` 后续阶段** — 第 2 步（P0-B，工件/夹具追加导入命令与角色区分）与第 3 步（P1，FANUC 家族多机型参数扩展与 3 处 M-10iA 硬编码解耦）。
+3. **[QUEUED] `DIR-002` 阶段三** — 第 3 步（P1，FANUC 家族多机型参数扩展与 3 处 M-10iA 硬编码解耦：`FclCollisionQueries.cpp`、`OcctViewport.cpp`、`ShellWindow.cpp`）。
 
-已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix / MAINT-CLEANUP / M14-PROJECT-REBIND-002 / DIR-002-STEP-IMPORT-001 / DIR-003-STEP1-PATH-001 / DIR-003-STEP2-STAGING-001 叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。
+已完成的 FIX-EXPORT-SAFETY / DIR-001 / Bugfix / MAINT-CLEANUP / M14-PROJECT-REBIND-002 / DIR-002-STEP-IMPORT-001 / DIR-003（Steps 1~3）叙事见 `Plan-archive.md`。`RISK-002` 与 DEFERRED 延期项仍有效。

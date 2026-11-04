@@ -509,3 +509,23 @@
 - **触发阶段**：下一次改 `package_stage.bat` 的自检，或改 `--verify` 的启动路径时。
 - **验收条件**：自检前清除 `QT_PLUGIN_PATH` 和 `QT_QPA_PLATFORM_PLUGIN_PATH`。`--verify` 退出码为 0，打印出的两个导出路径都在 `temp_directory_path()/SiFastSuiteOLP` 下，源码树 `build` 里同名文件的修改时间不变，dist 里仍然没有这两份文件。`plugins/platforms/qwindows.dll` 不存在时脚本以非 0 退出。
 
+---
+
+## DIR-003-003 [OPEN] 安装包自检会把卸载残留删掉再报成功（P2）
+
+- **来源轮次**：`DIR-003-STEP3-INSTALLER-001` Round 1 审核（2026-11-04）。
+- **位置**：`Tools/Package.bat:129-140`、`:143-148`、`:156-170`。
+- **现状**：测试安装只确认 exe、`qt.conf` 和 `SampleScenes` 存在。`--verify` 前只替换 PATH，不清除 `QT_PLUGIN_PATH` 与 `QT_QPA_PLATFORM_PLUGIN_PATH`。`unins000.exe` 的退出码没有检查。`ping -n 4` 之后如果 exe 已消失，目录还在就 `rmdir /s /q`，然后打印通过。开始菜单、桌面快捷方式和卸载注册表都不在检查范围内。审核方另一次安装在等到 `unins000` 结束后，目录、当前用户快捷方式和 `HKCU` 卸载项已经没有了，所以不挡本轮。
+- **触发阶段**：下一次改 `Package.bat` 的 `--test-install` 时。
+- **验收条件**：卸载程序退出码非 0、安装目录仍在、当前用户卸载注册表仍在，或开始菜单组仍在时，脚本以非 0 退出。脚本自己不删除安装目录。`--verify` 前清除上述两个 Qt 变量，导出路径位于 `temp_directory_path()/SiFastSuiteOLP`，源码树 `build` 下同名文件的修改时间不变。
+
+---
+
+## DIR-003-004 [OPEN] 默认安装不创建桌面快捷方式（P2）
+
+- **来源轮次**：`DIR-003-STEP3-INSTALLER-001` Round 1 审核（2026-11-04）。
+- **位置**：`installer/SiFastSuite.iss:52-53`、`:63`；`Tools/Package.bat:123`。
+- **现状**：桌面图标挂在任务 `desktopicon` 上，标志是 `unchecked`。不附加 `/MERGETASKS=desktopicon` 的静默安装不会创建桌面快捷方式。开始菜单里的主程序、`Sample Scenes` 和卸载程序会创建。审核时加上该任务后，桌面快捷方式指向安装目录中的 exe，卸载后该快捷方式消失。
+- **触发阶段**：下一次改安装脚本的图标任务，或改 `Package.bat` 的静默安装参数时。
+- **验收条件**：不附加任务参数的静默安装会创建桌面快捷方式，目标是 `{app}\SiFastSuiteOLP.exe`。卸载后这个快捷方式消失。开始菜单三项仍在，卸载后也消失。
+

@@ -1,5 +1,16 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-11-04：DIR-003-STEP3-INSTALLER-001 Round 1 APPROVED（Inno Setup 单文件安装包与生命周期闭环）
+
+1. **[DONE] Inno Setup 单文件安装包与安装/卸载全生命周期闭环验证。** 任务号 `DIR-003-STEP3-INSTALLER-001`，Round 1 **APPROVED**：
+   - **安装包工程脚本**：编写 `installer/SiFastSuite.iss`（76 行，100% 纯英文，0 非 ASCII 字符），配置 Modern 向导界面、`lzma2/ultra64` 固实压缩，将 `build/dist/*` 完整映射至 `{autopf}\SiFastSuite OLP`，配置桌面快捷方式（`desktopicon`）、开始菜单程序组与「Sample Scenes」打开快捷方式，支持干净卸载并自动清理注册表；
+   - **自动化打包脚本**：编写 `Tools/Package.bat`（176 行，100% 纯英文，0 非 ASCII 字符），串联调用 `package_stage.bat` 完成绿色装配后调用 Inno Setup 编译器 `ISCC.exe`，输出仅 **22.8 MB** 的发布级单文件安装包 `build/installer/SiFastSuiteOLP_Setup_v0.1.0.exe`；
+   - **全生命周期闭环实测**：内置 `--test-install` 自动化测试流程：
+     - 在非提权用户环境下通过 `/CURRENTUSER /VERYSILENT` 执行静默安装至隔离测试目录（退出码 0）；
+     - 隔离环境变量启动安装后的 `SiFastSuiteOLP.exe --verify`，成功载入 12 个 B-Rep 实体、计算 (0, 0, 500) mm 底座并完成 1047 帧轨迹烘焙，程序输出安全重定向至用户临时目录；
+     - 执行静默卸载 `unins000.exe /VERYSILENT /NORESTART`，安装目录、快捷方式与注册表卸载项均完全清理，达成 100% 零残留；
+   - **审查与延期**：`CRDocs/STATUS.md` 与 `CRDocs/REVIEW.md` 审核通过，正式关闭 `DIR-003` 发布主线；延期项 `DIR-003-003`（自检卸载残留）与 `DIR-003-004`（桌面图标任务默认值）登记入 `CRDocs/DEFERRED.md`。
+
 ## 2026-11-04：DIR-003-STEP2-STAGING-001 Round 1 APPROVED（31 个 vcpkg DLL + CRT 沙盒装配）
 
 1. **[DONE] 纯英文沙盒装配脚本、31 个 vcpkg DLL + VC143 CRT 装配与全隔离离线验证。** 任务号 `DIR-003-STEP2-STAGING-001`，Round 1 **APPROVED**：

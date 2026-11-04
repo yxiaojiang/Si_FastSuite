@@ -4,27 +4,26 @@
 
 ## 1. 当前目标与计划就绪态
 
-当前 `DIR-003` 软件独立单文件安装包发布计划的前两步均已彻底通过审核封板，核心目标转入**执行第 3 步（P0-Installer，Inno Setup 单文件安装包输出与安装/卸载全流程验证）**：
-- **前两步已达成（APPROVED）**：
-  1. **第 1 步（P0-Path）APPROVED**：`src/io/Utf8Path.cpp` 编入底层 `olp_core`，解除反向依赖；实现统一 UTF-8 路径自适应函数 `resolveWorkspaceOrAppDir()` 与会话输出重定向 `resolveSessionOutputDir()`；`RobotModel` 接入 `utf8ToPath`，彻底支持中文路径；全量自动化测试增至 **925 项全绿**，`Tools/Compile.bat` exit 0。
-  2. **第 2 步（P0-Staging）APPROVED**：编写落地纯英文装配脚本 `Tools/package_stage.bat`（219 行，0 非 ASCII 字符）；组装 31 个 vcpkg DLL（24 个 OCCT 库 + `ccd.dll` + 6 个图形库）、VS2022 VC143 CRT 运行时（10 个 DLL）、`windeployqt` 抽取 Qt 运行时并生成 `qt.conf`、完整展开 `SampleScenes/` 与 `resources/`；在完全屏蔽外部 PATH 隔离终端运行 `build/dist/SiFastSuiteOLP.exe --verify` 退出码 0，且会话输出写至临时目录，沙盒内零残留。
-- **发布主线当前执行阶段（DIR-003 第 3 步，实施蓝本见 `PackagePlan.md`）**：
-  - 编写 Inno Setup 配置文件 `installer/SiFastSuite.iss`：
-    - 默认安装位置：`{autopf}\SiFastSuite OLP`；
-    - 源目录映射：递归将 `build/dist/*` 完整装配展开至 `{app}`；
-    - 快捷方式：创建桌面图标、开始菜单项，并提供“打开示例模型目录”快捷方式；
-    - 卸载器配置：卸载信息写入 Windows 标准注册表，确保干净卸载无残留。
-  - 编写纯英文批处理脚本 `Tools/Package.bat`，统筹调用 `package_stage.bat` 与 `ISCC.exe`，输出交付级单文件 `build/installer/SiFastSuiteOLP_Setup_v0.1.0.exe`；
-  - 执行真实安装、快捷方式运行、示例工位运行及卸载全生命周期闭环验证。
+`DIR-003` 软件独立发布安装包全部三步均已通过审查并全线闭环（APPROVED）。发布体系建设目标圆满达成，产出交付级 22.8 MB 单文件安装包与完整绿色沙盒。下一阶段核心目标转向继续推进 **`DIR-002` 阶段二：第 2 步（P0-B，工件/夹具追加导入命令与角色区分）**：
+- **DIR-003 发布主线三步全闭环归档**：
+  1. **第 1 步（P0-Path）APPROVED**：`Utf8Path.cpp` 下沉至 `olp_core` 消除反向依赖；实现 `resolveWorkspaceOrAppDir()` 与临时目录会话重定向 `resolveSessionOutputDir()`；全流程接入 `utf8ToPath` 解决中文路径；全量单测达 925 项全绿。
+  2. **第 2 步（P0-Staging）APPROVED**：编写落地纯英文 `Tools/package_stage.bat`（219 行）；装配 31 个 vcpkg DLL + 10 个 VC143 CRT DLL + `windeployqt` Qt 运行时；镜像完整展开示例工位与资源；全隔离脱机环境 `--verify` exit 0。
+  3. **第 3 步（P0-Installer）APPROVED**：编写 `installer/SiFastSuite.iss` 与 `Tools/Package.bat`（均纯英文无中文）；调用 `ISCC.exe` 产出 22.8 MB 固实压缩单文件安装包；静默安装、脱机启动验证与静默卸载全流程闭环，达成 100% 零残留。
+- **下一阶段执行目标（DIR-002 阶段二：P0-B 追加导入）**：
+  - 在 `WorkcellLayoutService` 中新增可撤销的追加零件/夹具命令，支持区分 `CollisionRole::Workpiece` 与 `CollisionRole::Fixture`；
+  - 在文件菜单与场景树提供子入口，保持与现有 CAD 形体重绑定（`M14-013`）与撤销重做栈的协同；
+  - 补充自动化无头单测，验证追加几何的独立碰撞检测与工位装配。
 
-## 2. 最新进展（DIR-003 第 2 步 APPROVED 收口）
+## 2. 最新进展（DIR-003 第 3 步 APPROVED 封板）
 
-2026-11-04，本轮完成了 31 个 vcpkg DLL + VC143 CRT 绿色沙盒装配的代码审查与收口：
-- **DIR-003-STEP2-STAGING-001 APPROVED**：独立审核方核对 `package_stage.bat` 纯英文脚本规范、31 个 vcpkg DLL、10 个 VC143 CRT DLL、`qt.conf` 配置以及 `qwindows.dll` 平台插件；在剥离外部 PATH 与 Qt 变量的真实沙盒环境中复核 `--verify` 退出码 0，正式给出 `APPROVED` 结论；
-- 延期项 `DIR-003-002` 记入 `CRDocs/DEFERRED.md`（脚本自检增加平台插件与临时目录检查），不挡安装包制作。
+2026-11-04，本轮完成了 Inno Setup 单文件安装包与生命周期闭环的代码审查与收口：
+- **DIR-003-STEP3-INSTALLER-001 APPROVED**：独立审查方独立核对 `installer/SiFastSuite.iss`（76 行）与 `Tools/Package.bat`（176 行），确认 100% 纯英文无非 ASCII 字符；
+- **全生命周期自动化验证**：调用 `Package.bat --skip-build --test-install`，非提权环境下通过 `/CURRENTUSER /VERYSILENT` 完成静默安装；屏蔽外部 PATH 运行 `--verify` 成功载入 12 个实体并烘焙 1047 帧；静默卸载后安装目录、桌面/开始菜单快捷方式及 HKCU 注册表卸载项均完全清理无残留；
+- **延期项登记**：`DIR-003-003`（自检卸载残留）与 `DIR-003-004`（桌面图标任务默认值）登记入 `CRDocs/DEFERRED.md`，不阻断发布。
 
 ## 3. 先前已完成指针（各一行）
 
+- `DIR-003-STEP3-INSTALLER-001`：Inno Setup 单文件安装包（22.8 MB）、`Package.bat`、全生命周期安装/卸载无残留验证已 APPROVED。
 - `DIR-003-STEP2-STAGING-001`：纯英文 `Tools/package_stage.bat`、31 个 vcpkg DLL + VC143 CRT 装配、脱机隔离 `--verify` exit 0 已 APPROVED。
 - `DIR-003-STEP1-PATH-001`：`Utf8Path.cpp` 移入 `olp_core`，路径自适应与输出解耦，中文路径 URDF 解析，测试增至 925 项全绿已 APPROVED。
 - `DIR-002-STEP-IMPORT-001`：整工位动态替换导入、选边拾取建缝端到端闭环、ShellWindow 拆分（567/512行）已 APPROVED，测试 910 项全绿。
@@ -38,11 +37,11 @@
 
 1. **`RISK-001` 仍 OPEN**：J2/J3 耦合符号、圈数记在哪三轴、法兰相对示教器的位姿仍无 ROBOGUIDE 或真机金样对拍。导出水印与对话框红条只做草稿门禁，绝不等于已下发真机。
 2. **`RISK-002`**：回退段对前侧板间隙低于 5 mm，可能来自球对包围盒的误报。
-3. **OCCT 8.0 离线沙盒运行实测已过**：在不设置 `CSF_*` 环境变量下的 STEP 解析与离线运行已经在 `DIR-003` 第 2 步沙盒装配中完成实测验证，功能正常。
+3. **安装与运行延期项**：`DIR-003-001`（路径自适应测试断言）、`DIR-003-002`（装配自检项）、`DIR-003-003`（卸载自检逻辑）、`DIR-003-004`（桌面图标任务默认值）均在 `DEFERRED.md`，待后续版本优化。
 
 ## 5. 下一步与硬约束
 
-下一步 **按 `PackagePlan.md` 与 CRDocs 规程启动 `DIR-003` 第 3 步（P0-Installer，Inno Setup 单文件安装包与验证）实施**。
+下一步 **按 `PlanDocs/DECISIONS.md` 推进 `DIR-002` 阶段二：第 2 步（P0-B，工件/夹具追加导入命令与角色区分）**。
 硬约束必须遵守：脚本禁止包含中文（100% 纯英文）；严守 1000 行单文件红线；不新建冗余业务类或包装单例；界面变更必须入栈 CommandManager。
 
 ## 6. 索引
