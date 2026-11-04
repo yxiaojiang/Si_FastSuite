@@ -11,6 +11,10 @@
 #include <vector>
 #include <unordered_set>
 
+namespace olp::app {
+struct SceneRobotReplaceResult;
+}
+
 namespace olp::ui {
 
 // Section 1.2 & M01: Dual Workbench separation (Layout Workbench vs OLP Programming Workbench)
@@ -36,11 +40,23 @@ public:
     void selectSceneNode(const std::string& nodeId);
     void selectOperation(const std::string& operationId);
     void selectTarget(const std::string& targetId, const std::string& operationId = "");
+    void selectSeam(const std::string& seamId);
+    void clearSelection();
     const std::string& selectedSceneNodeId() const noexcept { return selectedSceneNodeId_; }
     const std::string& selectedOperationId() const noexcept { return selectedOperationId_; }
     const std::string& selectedTargetId() const noexcept { return selectedTargetId_; }
+    const std::string& selectedSeamId() const noexcept { return selectedSeamId_; }
     int addSelectionListener(std::function<void()> listener);
     void removeSelectionListener(int listenerId);
+
+    // M04: STEP workcell import & picked-edge seam creation
+    bool importStepWorkcell(
+        const std::string& stepFilePath,
+        app::SceneRobotReplaceResult* resultOut = nullptr);
+    bool createSeamFromPickedEdge(
+        int cadHandleId,
+        int edgeIndex,
+        std::string* createdSeamIdOut = nullptr);
 
     // M08: Target navigation & toolpath editing
     bool stepTarget(bool forward, bool wrap = false);
@@ -147,6 +163,7 @@ private:
     std::string selectedSceneNodeId_{};
     std::string selectedOperationId_{};
     std::string selectedTargetId_{};
+    std::string selectedSeamId_{};
     struct SelectionListener {
         int id{0};
         std::function<void()> fn{};

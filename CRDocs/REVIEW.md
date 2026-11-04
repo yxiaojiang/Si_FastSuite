@@ -1,3 +1,127 @@
+# 审核结论 — DIR-002-STEP-IMPORT-001 Round 2
+
+> **Task ID**：`DIR-002-STEP-IMPORT-001`  
+> **Round**：2  
+> **Reviewer**：独立审核方（重读 Round 2 源码与本机产物；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-11-04  
+> **Verdict**：**APPROVED**  
+> **P0**：无  
+> **P1**：`DIR-002-001`、`DIR-002-002` 均 **RESOLVED**  
+> **P2**：`DIR-002-005` 已入 `DEFERRED`。`DIR-002-003`、`DIR-002-004` 仍为延期
+
+## 1. 结论
+
+两条 P1 已关闭。恢复高亮时 `selectEdge` 传入 `false`，回调和 `edgePicked` 都在这个参数里面。导入快照按结构体字段顺序写入焊缝 id，失败和撤销都走同一份快照。
+
+本轮新增的 `syncScene` 断言没有走进恢复高亮。视口控件未显示时 `context` 仍是空的，`syncScene` 在调用 `selectEdge` 之前返回。把 `false` 改回默认 `true`，这条断言仍然可以通过。产品路径已经修好，测试缺口记为 `DIR-002-005`，不挡本轮。
+
+## 2. DIR-002-001 [RESOLVED]
+
+- `selectEdge`（`src/ui/OcctViewportPicking.cpp:204`、`:268-275`）只在 `emitSignal` 为真时调用 `edgePickedCb_` 并发出 `edgePicked`。
+- `syncScene`（`src/ui/OcctViewport.cpp:500-501`）恢复 `lastPickedEdge_` 时传入 `false`。全库只有这一处调用 `selectEdge`，用户拾取仍走默认的 `true`（`tests/test_ui.cpp:264`）。
+- 槽函数（`src/ui/ShellWindowChrome.cpp:312-315`）在 `isRefreshing()` 时返回。这只盖住 `refreshFromDocument` 内部。`importStepFile` 在刷新结束后还会再调一次 `syncScene`，那时刷新深度已经是 0，靠的是 `false` 参数。
+- `LastTest.log:142` 与 `:145-146` 为 PASS。`:142` 的通过原因见 `DIR-002-005`。撤销后焊缝回到原来的条数，重做能加回来，这是命令本身的行为，与信号无关。
+
+## 3. DIR-002-002 [RESOLVED]
+
+- `SelectionSnapshot`（`include/olp/app/WorkcellLayoutService.h:19-24`）的字段顺序是场景节点、焊缝、操作、目标。
+- 取值（`src/ui/MainWindow.cpp:158-160`）按这个顺序写入 `selectedSeamId_`。恢复（`:161-166`）把四项都赋回去，不再单独清空焊缝。
+- 成功导入写入空快照（`src/app/WorkcellLayoutService.cpp:141-142`）。失败（`:149-150`）和 `undo()`（`:176-177`）写回 `beforeSelection_`。失败时 `didMutate()` 为 false，命令不入栈。
+- `LastTest.log:988-1007`：选中焊缝后另外三项被清空；导入后焊缝选中为空；撤销后回到 `dummy_seam_1`；重做再次清空；打不开的 STEP 保持该焊缝选中，且 `undoCount()` 不变。测试没有再断言另外三项，源码赋值包含它们。
+
+## 4. 本机实跑
+
+`Tools\Compile.bat` exit 0。`build/Testing/Temporary/LastTest.log:1030` 为 `Summary: 910 passed, 0 failed.` `--verify` exit 0，底座仍在 `(0, 0, 500)` mm。
+
+编辑器行号（含空行）：`ShellWindow.cpp` 567，`ShellWindowChrome.cpp` 512，`MainWindow.cpp` 935，`OcctViewport.cpp` 677，`OcctViewportPicking.cpp` 286，`test_ui.cpp` 656。全部低于 1000。`MainWindow.cpp` 仍是 935，下一次往这个文件加行为之前要先拆开。
+
+`git diff` 对 `include/olp/algo` 与 `src/algo` 为空。
+
+## 5. 仍延期
+
+`DIR-002-003`、`DIR-002-004` 未改。`DIR-002-005` 记录本轮测试没有进入 `selectEdge`。
+
+---
+
+# 审核结论 — DIR-002-STEP-IMPORT-001 Round 1
+
+> **Task ID**：`DIR-002-STEP-IMPORT-001`  
+> **Round**：1  
+> **Reviewer**：独立审核方（只读源码与本机产物；未改 `src/`、`include/`、`tests/`）  
+> **Reviewed at**：2026-11-01  
+> **Verdict**：**CHANGES_REQUESTED**  
+> **P0**：无  
+> **P1**：`DIR-002-001`、`DIR-002-002` **OPEN**  
+> **P2**：`DIR-002-003`、`DIR-002-004` 已入 `DEFERRED`。`M14-014`、`M14-015` **RESOLVED**
+
+## 1. 结论
+
+整工位替换、撤销四份文档数据、中文路径和脏文档拦截可以对上源码。无头测试里的「导入 → 建缝 → 生成路径 → 仿真」也能跑通。挡住本轮的是视口信号。
+
+`syncScene` 用 `selectEdge` 恢复高亮时会再次发出 `edgePicked`。新建的槽函数把这个信号当成用户拾取，执行建缝命令。撤销刚建的焊缝后，文档监听立刻刷新视口，同一条边被再导入栈，重做栈被清掉。902 条全绿覆盖不到这条：建缝撤销测试没有创建出视口。
+
+另一条：导入命令的选中快照只有场景节点、操作和目标。选中焊缝时这三个字段是空的，恢复回调还固定把 `selectedSeamId` 清掉。
+
+## 2. DIR-002-001 [OPEN] 恢复高亮再次发出拾取信号，撤销建缝会被加回来（P1）
+
+- **位置**：`src/ui/OcctViewport.cpp:500-502`；`src/ui/OcctViewportPicking.cpp:268-272`；`src/ui/ShellWindowChrome.cpp:312-324`；`src/ui/ShellWindow.cpp:35-40`；`src/app/CommandManager.cpp:418-434`；焊缝 id `src/algo/SeamAndToolpathAlgo.cpp:290`。
+- **现状**：用户拾取成功后 `lastPickedEdge_` 有值。文档一变，`ShellWindow` 的监听同步调用 `refreshFromDocument`。指纹里含焊缝 id，焊缝增删会进入 `syncScene`。`syncScene` 末尾调用 `selectEdge`，该函数在画完高亮后无条件 `Q_EMIT edgePicked`。槽函数不看 `isRefreshing()`，直接 `createSeamFromPickedEdge`。
+- **第一次拾取为什么没叠出两条**：建缝 id 是 `seam_` 加句柄和边号。信号重入发生在第一条命令已经写入文档之后，第二条撞上相同 id，`CreateSeamFromPickedEdgeCommand::execute` 直接返回。`LastTest.log:1009-1016` 因此仍是 PASS。
+- **撤销为什么失败**：`CommandManager::undo` 先删掉焊缝，再 `notifyDocumentChanged`。这时文档里已经没有这条 id，重入的槽会新建一条命令。`executeCommand` 入栈时执行 `redoStack_.clear()`，刚弹进重做栈的原命令被清掉。界面上撤销像没发生，重做也没了。
+- **测试为什么是绿的**：`tests/test_ui.cpp:628-634` 只拿 `MainWindow` 调 `undo()`。这条路径的 `OcctViewport::view_` 为空，`syncScene` 在开头返回，不会调用 `selectEdge`。`LastTest.log:1019` 的 PASS 只说明无头命令能删掉焊缝。
+- **验收**：恢复高亮不得发出 `edgePicked`。用户撤销拾取建缝后，焊缝数量回到撤销前，原命令留在重做栈，重做能把同一条焊缝加回来。回归要在「刷新视口会调用恢复高亮」的前提下失败；只断言无头 `undo()` 不算通过。
+
+## 3. DIR-002-002 [OPEN] 导入撤销不恢复焊缝选中，失败导入还会改掉选中（P1）
+
+- **位置**：`include/olp/app/WorkcellLayoutService.h:19-23`；`src/ui/MainWindow.cpp:131-139`、`:158-166`；`src/app/WorkcellLayoutService.cpp:144-151`；`src/app/CommandManager.cpp:408-409`。
+- **现状**：`SelectionSnapshot` 只有 `sceneNodeId`、`operationId`、`targetId`。取值lambda 也不读 `selectedSeamId_`。写入回调在恢复快照之后执行 `selectedSeamId_.clear()`。`selectSeam` 会清空另外三项，所以「当前选中的是焊缝」在快照里是三个空字符串。
+- **撤销**：导入成功再撤销，场景、焊缝和控制器能回来，焊缝选中回不来。之后 `generateOperationFromSelectedSeam` 在选中为空时用 `doc_.seams.front()`，多条焊缝时会生成另一条。
+- **失败**：`importStep` 失败时文档按快照写回，回调仍清掉焊缝选中。`didMutate()` 为 false，命令不入栈，这次选中变化无法撤销。
+- **测试为什么是绿的**：`tests/test_ui.cpp:479-503` 只 `selectSceneNode("dummy_part_1")`。`LastTest.log:996` 恢复的是这个节点 id。
+- **验收**：快照包含焊缝 id。选中一条焊缝后导入再撤销，`selectedSeamId` 与导入前相同。对一个打不开的 STEP 调用 `importStepWorkcell` 后，四项选中都保持原样，撤销栈深度不变。
+
+## 4. 本轮核对通过的部分
+
+替换命令把导入结果装进新向量，再整体赋给 `doc.sceneNodes`，并清空 `seams` 与 `controllers`。非空文档不会再往旧数组上追加。`undo()` 写回这三份数据和 `isDirty`。命令体内没有 `cadKernel_.clear()`。`execute()` 写完 `resultOut_` 后把指针置空，重做不会再写调用方的栈地址。`DefineUFrameCommand` 对 `nodeIdOut_` 做了同样的处理。
+
+`refreshFromDocument` 的场景指纹是节点 `id`、`cadHandleId` 和焊缝 `id` 的串联。新导入会分配新句柄，实体数量相同的换工会进入 `syncScene`。交接里写的变换矩阵 FNV 没有出现在这个函数里。位姿单独变化仍走机器人关节那一支；这是本轮验收所要求的「同数量换工位」之外的行为。
+
+`rebuildProgramTree` 把 `"seam"` 放在 `Qt::UserRole`，焊缝 id 放在 `Qt::UserRole + 1`。程序树的点击槽按这两个角色调用 `selectSeam`。交接写的「id 写在 UserRole」与源码不一致，和点击槽是对齐的。
+
+`loadSample` 与 `importStepFile` 在改文档前调用 `confirmDiscardIfDirty`。`LastTest.log:1003-1007` 五条 PASS。`M14-014` 关闭。
+
+`hashStepFile`、`importStepBuiltin`、`importStl`、`importStepWithOcct` 都用 `utf8ToPath` 打开文件。`STEPCAFControl_Reader::ReadStream` 的名字参数是流名称，字节来自已经打开的流。`openProject` 把 `lexically_normal().u8string()` 交给 `importStep`。`LastTest.log:978-982` 五条 PASS。`M14-015` 关闭。
+
+无底座关键字的 T 型接头把机器人放在原点，`LastTest.log:1002` 为 PASS。`--verify` 仍把示例工位机器人放在底座 `(0, 0, 500)` mm，隐藏 5 个静态机器人实体。无头建缝生成了至少三个目标并算出轨迹帧，`LastTest.log:1008-1017` 为 PASS。
+
+`ShellWindow.cpp` 567 行，`ShellWindowChrome.cpp` 509 行，`CMakeLists.txt` 已加入后一个编译单元。拆开的是菜单、工具栏、Dock 和信号，与窗口槽函数分开，没有从函数中间截断。
+
+| 文件 | 行号 |
+| :--- | ---: |
+| `src/ui/ShellWindow.cpp` | 567 |
+| `src/ui/ShellWindowChrome.cpp` | 509 |
+| `src/ui/MainWindow.cpp` | 935 |
+| `src/cad/OcctCadKernel.cpp` | 889 |
+| `src/app/WorkcellLayoutService.cpp` | 311 |
+| `tests/test_ui.cpp` | 639 |
+| `tests/test_cad.cpp` | 464 |
+
+全部低于 1000。`MainWindow.cpp` 已到 935，下一次往这个文件加行为之前要先按职责拆开。
+
+`git diff` 对 `include/olp/algo` 与 `src/algo` 为空。`olp_algo` 仍只链 `olp_core`、`olp_cad`、`olp_device` 和 FCL。
+
+## 5. 本机实跑
+
+`Tools\Compile.bat` exit 0。`build/Testing/Temporary/LastTest.log:1022` 为 `Summary: 902 passed, 0 failed.` `SiFastSuiteOLP.exe --verify` exit 0。
+
+全绿不构成 `DIR-002-001` 已关闭的证据。
+
+## 6. 仍延期
+
+`DIR-002-003`：拾取成功后 `applySelection` 不读 `selectedSeamId`，程序树不会停在新焊缝上；`showOlpWorkbench` 随后盖掉状态栏里的建缝说明。`DIR-002-004`：`openProject` 清了场景节点、操作和目标，没清 `selectedSeamId`。
+
+---
+
 # 审核结论 — M14-PROJECT-REBIND-002 Round 1
 
 > **Task ID**：`M14-PROJECT-REBIND-002`  

@@ -1,5 +1,6 @@
 #include "olp/ui/MainWindow.h"
 #include "olp/algo/TrajectorySimulator.h"
+#include "olp/app/WorkcellLayoutService.h"
 #include "olp/io/HtmlAnimationExporter.h"
 #include "olp/io/ProjectSerializer.h"
 #include "olp/io/Utf8Path.h"
@@ -36,6 +37,17 @@ void MainWindow::handleDocumentChanged() {
     if (!selectedTargetId_.empty()) {
         if (doc_.findTarget(selectedTargetId_) == nullptr) {
             selectedTargetId_.clear();
+        }
+    }
+
+    if (!selectedSceneNodeId_.empty()) {
+        if (doc_.findSceneNode(selectedSceneNodeId_) == nullptr) {
+            selectedSceneNodeId_.clear();
+        }
+    }
+    if (!selectedSeamId_.empty()) {
+        if (doc_.findSeam(selectedSeamId_) == nullptr) {
+            selectedSeamId_.clear();
         }
     }
 
@@ -106,13 +118,77 @@ void MainWindow::selectSceneNode(const std::string& nodeId) {
 }
 
 void MainWindow::selectOperation(const std::string& operationId) {
-    if (selectedOperationId_ == operationId && selectedTargetId_.empty() && selectedSceneNodeId_.empty()) {
+    if (selectedOperationId_ == operationId && selectedTargetId_.empty() && selectedSceneNodeId_.empty() && selectedSeamId_.empty()) {
         return;
     }
     selectedOperationId_ = operationId;
     selectedTargetId_.clear();
     selectedSceneNodeId_.clear();
+    selectedSeamId_.clear();
     notifySelectionChanged();
+}
+
+void MainWindow::selectSeam(const std::string& seamId) {
+    if (selectedSeamId_ == seamId && selectedTargetId_.empty() && selectedSceneNodeId_.empty() && selectedOperationId_.empty()) {
+        return;
+    }
+    selectedSeamId_ = seamId;
+    selectedTargetId_.clear();
+    selectedSceneNodeId_.clear();
+    selectedOperationId_.clear();
+    notifySelectionChanged();
+}
+
+void MainWindow::clearSelection() {
+    selectedSceneNodeId_.clear();
+    selectedOperationId_.clear();
+    selectedTargetId_.clear();
+    selectedSeamId_.clear();
+    notifySelectionChanged();
+}
+
+bool MainWindow::importStepWorkcell(const std::string& stepFilePath, app::SceneRobotReplaceResult* resultOut) {
+    app::SceneRobotReplaceResult res;
+    auto cmd = std::make_unique<app::ImportSceneAndReplaceRobotCommand>(
+        doc_,
+        cadKernel_,
+        stepFilePath,
+        robotModel_,
+        &res,
+        [this]() -> app::SelectionSnapshot {
+            return {selectedSceneNodeId_, selectedSeamId_, selectedOperationId_, selectedTargetId_};
+        },
+        [this](const app::SelectionSnapshot& snap) {
+            selectedSceneNodeId_ = snap.sceneNodeId;
+            selectedSeamId_ = snap.seamId;
+            selectedOperationId_ = snap.operationId;
+            selectedTargetId_ = snap.targetId;
+            notifySelectionChanged();
+        });
+    cmdMgr_.executeCommand(std::move(cmd));
+    if (resultOut != nullptr) {
+        *resultOut = res;
+    }
+    return res.success;
+}
+
+bool MainWindow::createSeamFromPickedEdge(int cadHandleId, int edgeIndex, std::string* createdSeamIdOut) {
+    if (cadHandleId <= 0 || edgeIndex < 0) {
+        return false;
+    }
+    const size_t beforeCount = doc_.seams.size();
+    auto cmd = std::make_unique<app::CreateSeamFromPickedEdgeCommand>(
+        doc_, cadKernel_, cadHandleId, edgeIndex);
+    cmdMgr_.executeCommand(std::move(cmd));
+    if (doc_.seams.size() > beforeCount) {
+        const std::string seamId = doc_.seams.back().id;
+        if (createdSeamIdOut != nullptr) {
+            *createdSeamIdOut = seamId;
+        }
+        selectSeam(seamId);
+        return true;
+    }
+    return false;
 }
 
 void MainWindow::selectTarget(const std::string& targetId, const std::string& operationId) {
@@ -233,7 +309,9 @@ bool MainWindow::stepTarget(bool forward, bool wrap) {
 
 bool MainWindow::generateOperationFromSelectedSeam(const core::ToolpathGenParams* params) {
     std::string seamId{};
-    if (!selectedOperationId_.empty()) {
+    if (!selectedSeamId_.empty() && doc_.findSeam(selectedSeamId_) != nullptr) {
+        seamId = selectedSeamId_;
+    } else if (!selectedOperationId_.empty()) {
         const auto* op = doc_.findOperation(selectedOperationId_);
         if (op != nullptr && !op->seamId.empty()) {
             seamId = op->seamId;
@@ -817,11 +895,12 @@ bool MainWindow::openProject(const std::string& filePath, std::string* errorOut)
             continue;
         }
 
-        const std::string normKey = resolvedPath.lexically_normal().string();
+        const auto u8Norm = resolvedPath.lexically_normal().u8string();
+        const std::string normKey(u8Norm.begin(), u8Norm.end());
         auto it = loadedCadFiles.find(normKey);
         if (it == loadedCadFiles.end()) {
             std::vector<core::SceneNode> importedNodes;
-            const bool imported = cadKernel_.importStep(resolvedPath.string(), importedNodes);
+            const bool imported = cadKernel_.importStep(normKey, importedNodes);
             if (!imported || importedNodes.empty()) {
                 node.cadHandleId = -1;
                 continue;

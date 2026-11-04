@@ -347,25 +347,23 @@
 
 ---
 
-## M14-014 [OPEN] 加载示例工位不询问未保存修改（P2）
+## M14-014 [RESOLVED in DIR-002-STEP-IMPORT-001] 加载示例工位不询问未保存修改（P2 -> CLOSED）
 
-- **来源轮次**：`M14-PROJECT-REBIND-002` Round 1 审核（2026-10-31）。
-- **位置**：`src/ui/ShellWindow.cpp:151-157`、`:586-614`；`src/ui/SampleSession.cpp:46-48`。
-- **现状**：文件菜单「加载示例工位」直接调用 `loadSample`。`runSampleWorkcell` 在当前文档上执行 `ImportSceneAndReplaceRobotCommand`，不经 `confirmDiscardIfDirty`。导入成功会往现有场景上追加实体，并把文档标脏。
-- **后果**：已有未保存修改时，这条菜单仍会改动当前工程，没有取消机会。
-- **触发阶段**：下一轮改文件菜单或示例工位入口时。
-- **验收条件**：文档为脏时，加载示例与打开、关闭使用同一条确认。取消后场景节点、程序和 `isDirty` 与点击前一致。不脏时不弹窗，示例仍能加载。无头测试用现有回调，不弹出 `QMessageBox`。
+- **来源轮次**：`M14-PROJECT-REBIND-002` Round 1 审核（2026-10-31）；`DIR-002-STEP-IMPORT-001` Round 1 审核确认（2026-11-01）。
+- **位置**：`src/ui/ShellWindow.cpp:108-110`、`:145-158`、`:174-177`。
+- **现状**：审核方核对源码与 `LastTest.log:1003-1007` 后关闭。`loadSample` 与 `importStepFile` 在改文档前调用 `confirmDiscardIfDirty`。取消则返回。测试覆盖干净文档、脏文档取消、脏文档确认，对象是 `loadSample`。
+- **验收条件**：已满足。
 
 ---
 
-## M14-015 [OPEN] 重绑定 STEP 时把窄字符路径交给 importStep（P2）
+## M14-015 [RESOLVED in DIR-002-STEP-IMPORT-001] 重绑定 STEP 时把窄字符路径交给 importStep（P2 -> CLOSED）
 
-- **来源轮次**：`M14-PROJECT-REBIND-002` Round 1 审核（2026-10-31）。
-- **位置**：`src/ui/MainWindow.cpp:804-824`；`src/cad/OcctCadKernel.cpp:123-136`、`:730`。
-- **现状**：存在性判断用 `utf8ToPath` 之后的 `filesystem::path`。真正导入调用 `importStep(resolvedPath.string())`。`importStep` 里的 `ifstream` 和 `ReadFile` 直接使用这串窄字符，不再走 `utf8ToPath`。本机示例路径是 ASCII，`LastTest.log` 的重绑定断言通过。`clear()` 在 `doc_` 替换之前执行；导入若抛异常，当前文档还在，内核已经空了。
-- **后果**：`sourceCadFile` 含非 ASCII 且文件确实存在时，导入可能失败，句柄被写成 -1，视口退回网格。不会画上一个工程的形体。
-- **触发阶段**：工程里的 `sourceCadFile` 含中文或其他非当前代码页字符时，或要让导入失败仍保持打开前的内核时。
-- **验收条件**：存在的 `sourceCadFile` 用与 `utf8ToPath` 相同的路径对象完成导入，并写上新的 `cadHandleId`。导入失败或抛异常时，若新文档尚未替换，打开前的内核与句柄保持可用。ASCII 相对路径的现有重绑定断言仍通过。
+- **来源轮次**：`M14-PROJECT-REBIND-002` Round 1 审核（2026-10-31）；`DIR-002-STEP-IMPORT-001` Round 1 审核确认（2026-11-01）。
+- **位置**：`src/cad/OcctCadKernel.cpp:91`、`:135`、`:479`、`:731-735`；`src/ui/MainWindow.cpp:898-903`。
+- **现状**：审核方核对源码与 `LastTest.log:978-982` 后关闭。四处打开文件都走 `utf8ToPath`。OCCT `ReadStream` 的名字参数是流名称，内容来自这股流。`openProject` 把规范化路径的 `u8string` 交给 `importStep`。
+- **验收条件**：已满足。
+
+---
 
 ## M15-001 [OPEN] T 型接头回归有几处断言盖不住交接里的几何和碰撞（P2）
 
@@ -460,3 +458,33 @@
 - **现状**：未点仿真就导出时会重新 `plan`，不用过期的 `lastSimulationResult_`。示例里 `tcpOffset` 与 `localTransform` 都是 Z=150，只有一个工具、一个 UFRAME、一段程序，所以本轮 TCP 与界面一致。多工具、多程序或重复 UFRAME 编号时两边会分开。
 - **触发阶段**：工程里出现 2 号工具、两段程序，或两个节点共用同一个 `uframeNumber` 时。
 - **验收条件**：HTML 使用的基座、UFRAME、UTOOL 与时间轴播放同一段程序时用的是同一组变换。菜单导出当前选中程序；只有一段程序时行为与现在相同。
+
+---
+
+## DIR-002-003 [OPEN] 拾取建缝后程序树和状态栏看不出当前焊缝（P2）
+
+- **来源轮次**：`DIR-002-STEP-IMPORT-001` Round 1 审核（2026-11-01）。
+- **位置**：`src/ui/ShellWindow.cpp:511-517`；`src/ui/ShellWindow.cpp:103-105`；`src/ui/ShellWindowChrome.cpp:312-320`。
+- **现状**：`selectedSeamId` 已经写入，`generateOperationFromSelectedSeam` 会用它。`applySelection` 在操作 id 为空时直接返回，程序树当前项不落到新焊缝，属性面板保持上一次的内容。槽函数写下建缝说明后立刻调用 `showOlpWorkbench`，状态栏改成工作台提示。不挡 `DIR-002-001`：那条要解决的是撤销被加回来。
+- **触发阶段**：下一次改选中项刷新，或改拾取成功后的状态栏文案时。
+- **验收条件**：拾取成功后程序树当前项是这条焊缝。状态栏在切到编程工作台之后仍能看出刚建的焊缝。生成路径仍使用 `selectedSeamId`。
+
+---
+
+## DIR-002-004 [OPEN] 打开工程不清空焊缝选中（P2）
+
+- **来源轮次**：`DIR-002-STEP-IMPORT-001` Round 1 审核（2026-11-01）。
+- **位置**：`src/ui/MainWindow.cpp:925-931`；`src/ui/MainWindow.cpp:48-51`。
+- **现状**：`openProject` 清空场景节点、操作和目标三项选中。`selectedSeamId_` 留到 `handleDocumentChanged`，只有新文档里找不到这个 id 才清。新工程若有同名焊缝 id，选中会落到另一条焊缝上。导入命令自己的选中问题见 `DIR-002-002`，不并入本条。
+- **触发阶段**：下一次改打开工程后的选中复位时。
+- **验收条件**：`openProject` 成功返回前清空 `selectedSeamId`，与另外三项一起清。新工程里存在同名焊缝 id 时，打开后选中仍为空。
+
+---
+
+## DIR-002-005 [OPEN] 恢复高亮的回归在调用 selectEdge 之前就返回（P2）
+
+- **来源轮次**：`DIR-002-STEP-IMPORT-001` Round 2 审核（2026-11-04）。
+- **位置**：`tests/test_ui.cpp:283-291`；`src/ui/OcctViewport.cpp:364-366`、`:500-501`。
+- **现状**：测试创建了 `OcctViewport` 但没有显示。`view_` 已分配，`context` 仍是空的。`syncScene` 在 `context.IsNull()` 处返回，到不了 `selectEdge(..., false)`。`LastTest.log:142` 的 PASS 只说明回调保持 false。随后的 `undo()` / `canRedo()` 没有发生在恢复高亮期间。把 `false` 改回默认 `true`，这组断言仍然可以通过。产品路径已在 Round 2 关闭，见 `DIR-002-001`。
+- **触发阶段**：下一次改 `selectEdge` 或 `syncScene` 的高亮恢复时。
+- **验收条件**：回归必须执行到恢复高亮那次 `selectEdge`，并断言用户拾取回调没有被调用。撤销建缝若发生在同一次刷新里，重做栈仍保留原命令。

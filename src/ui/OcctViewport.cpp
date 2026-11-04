@@ -498,7 +498,7 @@ void OcctViewport::syncScene() {
         syncGizmoPosition();
     }
     if (lastPickedEdge_.has_value()) {
-        selectEdge(lastPickedEdge_->cadHandleId, lastPickedEdge_->edgeIndex);
+        selectEdge(lastPickedEdge_->cadHandleId, lastPickedEdge_->edgeIndex, false);
     }
     view_->context->UpdateCurrentViewer();
 

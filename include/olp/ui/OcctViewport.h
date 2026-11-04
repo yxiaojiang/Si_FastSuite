@@ -98,7 +98,7 @@ public:
     void clearPickedEdge() noexcept { lastPickedEdge_.reset(); }
 
     bool pickAt(int pixelX, int pixelY);
-    bool selectEdge(int cadHandleId, int edgeIndex);
+    bool selectEdge(int cadHandleId, int edgeIndex, bool emitSignal = true);
 
 #ifdef OLP_HAS_QT6
 Q_SIGNALS:

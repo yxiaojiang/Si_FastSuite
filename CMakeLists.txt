@@ -158,6 +158,7 @@ if(Qt6_FOUND)
         src/ui/ShellChromeHelpers.cpp
         src/ui/GizmoDragPreviewHandler.cpp
         src/ui/ShellWindow.cpp
+        src/ui/ShellWindowChrome.cpp
         src/ui/TwistScanWidget.cpp
         src/ui/IssueListPanel.cpp
         src/ui/TargetWaypointTable.cpp

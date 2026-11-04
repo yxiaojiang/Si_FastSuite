@@ -19,6 +19,8 @@ SceneRobotReplaceResult WorkcellLayoutService::importFullSceneAndReplaceRobot(
 
     bool foundStaticBase = false;
     core::Vec3 baseMountPos{0.0, 0.0, 0.0};
+    std::vector<core::SceneNode> newNodes;
+    newNodes.reserve(importedNodes.size() + 1);
 
     for (auto& node : importedNodes) {
         // Identify static robot solids by naming convention ("Static_" or "FANUC_")
@@ -40,10 +42,10 @@ SceneRobotReplaceResult WorkcellLayoutService::importFullSceneAndReplaceRobot(
             baseMountPos.z = node.renderMesh.bboxMax.z; // Top mounting surface of pedestal
         }
 
-        doc.sceneNodes.push_back(std::move(node));
+        newNodes.push_back(std::move(node));
     }
 
-    // Place movable library robot at the detected base mounting transform
+    // Place movable library robot at the detected base mounting transform (default (0,0,0) if none detected)
     core::SceneNode robotNode;
     robotNode.id = "robot_active_" + libraryRobotModel.modelId;
     robotNode.name = libraryRobotModel.displayName;
@@ -56,7 +58,12 @@ SceneRobotReplaceResult WorkcellLayoutService::importFullSceneAndReplaceRobot(
 
     res.activeRobotNodeId = robotNode.id;
     res.detectedRobotBaseTransform = robotNode.localTransform;
-    doc.sceneNodes.push_back(std::move(robotNode));
+    newNodes.push_back(std::move(robotNode));
+
+    // Full replacement: replace scene nodes and clear prior seams & controllers
+    doc.sceneNodes = std::move(newNodes);
+    doc.seams.clear();
+    doc.controllers.clear();
 
     res.success = true;
     doc.isDirty = true;
@@ -103,39 +110,72 @@ ImportSceneAndReplaceRobotCommand::ImportSceneAndReplaceRobotCommand(
     cad::ICadKernel& cadKernel,
     std::string stepFilePath,
     device::RobotModel libraryRobotModel,
-    SceneRobotReplaceResult* resultOut)
+    SceneRobotReplaceResult* resultOut,
+    GetSelectionFn getSelection,
+    SetSelectionFn setSelection)
     : doc_(doc),
       cadKernel_(cadKernel),
       stepFilePath_(std::move(stepFilePath)),
       libraryRobotModel_(std::move(libraryRobotModel)),
-      resultOut_(resultOut) {}
+      resultOut_(resultOut),
+      getSelection_(std::move(getSelection)),
+      setSelection_(std::move(setSelection)) {}
 
 void ImportSceneAndReplaceRobotCommand::execute() {
     if (!applied_) {
         beforeNodes_ = doc_.sceneNodes;
+        beforeSeams_ = doc_.seams;
+        beforeControllers_ = doc_.controllers;
         beforeDirty_ = doc_.isDirty;
+        if (getSelection_) {
+            beforeSelection_ = getSelection_();
+        }
+
         result_ = WorkcellLayoutService::importFullSceneAndReplaceRobot(
             doc_, cadKernel_, stepFilePath_, libraryRobotModel_);
-        afterNodes_ = doc_.sceneNodes;
         applied_ = true;
         mutated_ = result_.success;
-        if (!mutated_) {
+
+        if (mutated_) {
+            afterNodes_ = doc_.sceneNodes;
+            if (setSelection_) {
+                setSelection_({});
+            }
+        } else {
             doc_.sceneNodes = beforeNodes_;
+            doc_.seams = beforeSeams_;
+            doc_.controllers = beforeControllers_;
             doc_.isDirty = beforeDirty_;
+            if (setSelection_) {
+                setSelection_(beforeSelection_);
+            }
         }
-        if (resultOut_ != nullptr) *resultOut_ = result_;
+        if (resultOut_ != nullptr) {
+            *resultOut_ = result_;
+            resultOut_ = nullptr;
+        }
         return;
     }
+
     if (!mutated_) return;
     doc_.sceneNodes = afterNodes_;
+    doc_.seams.clear();
+    doc_.controllers.clear();
     doc_.isDirty = true;
-    if (resultOut_ != nullptr) *resultOut_ = result_;
+    if (setSelection_) {
+        setSelection_({});
+    }
 }
 
 void ImportSceneAndReplaceRobotCommand::undo() {
     if (!mutated_) return;
     doc_.sceneNodes = beforeNodes_;
+    doc_.seams = beforeSeams_;
+    doc_.controllers = beforeControllers_;
     doc_.isDirty = beforeDirty_;
+    if (setSelection_) {
+        setSelection_(beforeSelection_);
+    }
 }
 
 DefineUFrameCommand::DefineUFrameCommand(
@@ -167,13 +207,15 @@ void DefineUFrameCommand::execute() {
             doc_.sceneNodes = beforeNodes_;
             doc_.isDirty = beforeDirty_;
         }
-        if (nodeIdOut_ != nullptr) *nodeIdOut_ = nodeId_;
+        if (nodeIdOut_ != nullptr) {
+            *nodeIdOut_ = nodeId_;
+            nodeIdOut_ = nullptr;
+        }
         return;
     }
     if (!mutated_) return;
     doc_.sceneNodes = afterNodes_;
     doc_.isDirty = true;
-    if (nodeIdOut_ != nullptr) *nodeIdOut_ = nodeId_;
 }
 
 void DefineUFrameCommand::undo() {

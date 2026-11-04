@@ -60,6 +60,8 @@ int main(int argc, char* argv[]) {
     testFclSinglePoseTiming();
     testProjectJsonSerialization();
     testTJointSampleSceneEndToEndRegression();
+    testChinesePathStepImport();
+    testWorkcellImportReplaceAndSeamCreationLoop();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

@@ -43,3 +43,33 @@
 第三方无关键字 STEP 默认在 `(0, 0, 0)` 放置机器人；属性面板微调实体 Transform 暂不阻塞第 1 步；阶段二新机型连杆 STL 网格需控制在 5 MB 以内。
 
 **计划位置**：`.claude/Plan.md`、`.claude/SessionBrief.md`。
+
+---
+
+## DIR-003（2026-11-04）软件单文件安装包打包发布与沙盒装配方案（Inno Setup + 运行沙盒）
+
+**决定**：
+采用业界成熟的标准向导式单文件安装包交付规范（摒弃启动解压到 Temp 的伪单文件方案）。选用本机已有的 Inno Setup 6 编译单一可执行文件 `SiFastSuiteOLP_Setup_v0.1.0.exe`。安装后将主程序、全套依赖库、Qt 平台插件及附带的 `SampleScenes` 完整展开至安装目录。
+通过“31 个 vcpkg DLL 全量收集 + App-Local VC143 CRT + windeployqt 抽取 + `qt.conf` 隔绝”装配绿色沙盒；通过“`src/io/Utf8Path.cpp` 下沉至 `olp_core` + UTF-8 路径自适应函数 `resolveWorkspaceOrAppDir()` + `SampleSession` 写出重定向至临时目录”彻底解耦源码绝对路径硬编码、避免中文路径乱码、杜绝 UAC 写保护阻断与卸载残留。
+
+**顺序**：
+
+1. **第 0 步（前置收口）**：
+   - 先按 `CRDocs/REVIEW.md` 修复 `DIR-002-STEP-IMPORT-001`（闭环 `DIR-002-001` 与 `DIR-002-002`），完成审核并取得 `APPROVED`，确保基线干净。
+2. **第 1 步（P0-Path，UTF-8 路径自适应与会话输出目录解耦）**：
+   - 将 `src/io/Utf8Path.cpp` 下沉编入 `olp_core`（头文件与命名空间保持 `olp::io` 不变），新增统一返回 UTF-8 `std::string` 的 `resolveWorkspaceOrAppDir()`；
+   - 改造 `src/device/RobotModel.cpp` 接入 `resolveWorkspaceOrAppDir()`，并将第 107、142 行 `std::ifstream` 改为通过 `olp::io::utf8ToPath` 打开；
+   - 改造 `src/ui/SampleSession.cpp`：读取 `SampleScenes/` 使用 `resolveWorkspaceOrAppDir()`；在沙盒环境下将导出的 `WELD_001.ls` 与 `WELD_001_Preview.html` 写向 `std::filesystem::temp_directory_path() / "SiFastSuiteOLP"`，在源码开发环境下保留 `wsRoot + "/build/..."`；
+   - 补齐路径自适应与输出重定向单测，确保 `Tools/Compile.bat` 全量测试全绿。
+3. **第 2 步（P0-Staging，31 个 vcpkg DLL + CRT 沙盒完整装配与验证）**：
+   - 编写纯英文 `Tools/package_stage.bat`：执行 Release 构建、调用 `windeployqt` 部署 Qt 运行时（剔除 `Qt6PrintSupport`）、拷贝全部 31 个 vcpkg DLL（24 个 OCCT 库 + `ccd.dll` + 6 个底层图形库）、拷贝 VS2022 `Microsoft.VC143.CRT` 运行时 DLL、镜像拷贝 `SampleScenes/` 与 `resources/`；
+   - 在屏蔽 Qt/vcpkg `PATH` 的独立终端中执行 `build/dist/SiFastSuiteOLP.exe --verify`，验证工位 STEP 载入与仿真全流程通过，测试含中文路径的沙盒运行。
+4. **第 3 步（P0-Installer，Inno Setup 单文件安装包与安装/卸载闭环）**：
+   - 编写 `installer/SiFastSuite.iss` 配置；
+   - 编写纯英文 `Tools/Package.bat` 串联装配与 `ISCC.exe` 编译，生成 `build/installer/SiFastSuiteOLP_Setup_v0.1.0.exe`；
+   - 执行真实安装与卸载测试，确认安装后展开完整、桌面快捷方式秒开、卸载后安装目录无残留文件。
+
+**未决假设**：
+OCCT 8.0 在清空环境变量后无隐式资源文件依赖，第 2 步沙盒验证予以最终实测闭环。
+
+**计划位置**：`PackagePlan.md`、`.claude/Plan.md`、`.claude/SessionBrief.md`。

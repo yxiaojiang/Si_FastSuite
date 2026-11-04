@@ -8,6 +8,7 @@
 #include "olp/device/RobotModel.h"
 #include "olp/io/FanucLsPostProcessor.h"
 #include "olp/ui/MainWindow.h"
+#include "olp/ui/SampleSession.h"
 #include "olp/ui/OcctViewport.h"
 #include "olp/ui/TcpGizmo.h"
 
@@ -279,11 +280,15 @@ void testBRepMeshRenderingAndEdgePicking() {
     check(cmdMgr.canUndo(), "Command pushed to Undo stack");
 
     // Sync scene to verify viewport renders new seam
+    // Verify syncScene does not re-fire edgePicked (DIR-002-001)
+    callbackFired = false;
     viewport.syncScene();
+    check(!callbackFired, "OcctViewport::syncScene does not re-emit edgePicked callback (DIR-002-001)");
 
     cmdMgr.undo();
     check(doc.seams.size() == initialSeamCount, "Undo CreateSeamFromPickedEdgeCommand restores seam list");
     check(!doc.isDirty, "Undo restores clean document dirty state");
+    check(cmdMgr.canRedo(), "Undo preserves redo stack when syncScene is invoked (DIR-002-001)");
 
     cmdMgr.redo();
     check(doc.seams.size() == initialSeamCount + 1, "Redo CreateSeamFromPickedEdgeCommand restores created seam");
@@ -442,5 +447,210 @@ void testTcpGizmoMountAndInteraction() {
     viewport.clearTargetGizmo();
     check(viewport.activeTargetId().empty(), "clearTargetGizmo clears activeTargetId");
 }
+
+void testWorkcellImportReplaceAndSeamCreationLoop() {
+    std::cout << "\n--- DIR-002: Workcell Import Replacement, Undo Integrity & Picked-Edge Seam Loop ---\n";
+    const std::string wsRoot = OLP_SOURCE_DIR;
+    const std::string fullCellStep =
+        wsRoot + "/SampleScenes/Scene2_Full_Workcell_STEP/Full_Welding_Cell_With_Robot.step";
+    const std::string boxStep =
+        wsRoot + "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_TJoint_With_Clamps.step";
+
+    // 1. Non-empty document full workcell replacement & undo integrity
+    {
+        olp::ui::MainWindow win;
+        auto& doc = win.document();
+        auto& cmdMgr = win.commandManager();
+
+        // Populate dummy initial state
+        olp::core::SceneNode dummyNode;
+        dummyNode.id = "dummy_part_1";
+        dummyNode.name = "DummyPart";
+        dummyNode.type = olp::core::SceneNodeType::Part;
+        dummyNode.cadHandleId = 9999;
+        doc.sceneNodes.push_back(dummyNode);
+
+        olp::core::SeamDefinition dummySeam;
+        dummySeam.id = "dummy_seam_1";
+        dummySeam.name = "DummySeam";
+        doc.seams.push_back(dummySeam);
+
+        olp::core::ControllerUnit dummyCu;
+        dummyCu.id = "dummy_cu_1";
+        dummyCu.name = "DummyCU";
+        doc.controllers.push_back(dummyCu);
+
+        win.selectSceneNode("dummy_part_1");
+        win.selectSeam("dummy_seam_1");
+        check(win.selectedSceneNodeId().empty(), "Selecting seam clears node selection");
+        check(win.selectedSeamId() == "dummy_seam_1", "Initial selection set to dummy seam (DIR-002-002)");
+
+        olp::app::SceneRobotReplaceResult repRes;
+        const bool imported = win.importStepWorkcell(fullCellStep, &repRes);
+        check(imported, "importStepWorkcell succeeds on non-empty document");
+        check(repRes.totalSolidsImported == 12, "Imported 12 solids from full cell STEP");
+        check(doc.sceneNodes.size() == 13, "Scene replaced with exactly 13 nodes (12 solids + 1 robot, no stacking)",
+              "count=" + std::to_string(doc.sceneNodes.size()));
+
+        // Old dummy entities and old seams/controllers must be cleared
+        check(doc.findSceneNode("dummy_part_1") == nullptr, "Dummy node cleared from scene");
+        check(doc.seams.empty(), "Document seams cleared after workcell replacement");
+        check(doc.controllers.empty(), "Document controllers cleared after workcell replacement");
+        check(win.selectedSceneNodeId().empty(), "Selection cleared after workcell replacement");
+        check(win.selectedSeamId().empty(), "Seam selection cleared after workcell replacement (DIR-002-002)");
+
+        // Verify Undo restores all 4 states completely
+        cmdMgr.undo();
+        check(doc.sceneNodes.size() == 1 && doc.sceneNodes.front().id == "dummy_part_1",
+              "Undo restores dummy scene node", "count=" + std::to_string(doc.sceneNodes.size()));
+        check(doc.seams.size() == 1 && doc.seams.front().id == "dummy_seam_1",
+              "Undo restores dummy seam");
+        check(doc.controllers.size() == 1 && doc.controllers.front().id == "dummy_cu_1",
+              "Undo restores dummy controller");
+        check(win.selectedSeamId() == "dummy_seam_1", "Undo restores previous seam selection (DIR-002-002)");
+
+        // Verify Redo re-applies full replacement
+        cmdMgr.redo();
+        check(doc.sceneNodes.size() == 13, "Redo re-applies full workcell nodes");
+        check(doc.seams.empty() && doc.controllers.empty(), "Redo clears seams and controllers");
+        check(win.selectedSceneNodeId().empty(), "Redo clears node selection");
+        check(win.selectedSeamId().empty(), "Redo clears seam selection (DIR-002-002)");
+
+        // Verify failed import does not mutate selection and does not push command to undo stack (DIR-002-002)
+        win.selectSeam("dummy_seam_1");
+        const size_t undoDepthBefore = cmdMgr.undoCount();
+        olp::app::SceneRobotReplaceResult failRes;
+        const bool failImport = win.importStepWorkcell("non_existent_file.step", &failRes);
+        check(!failImport, "Failed import returns false");
+        check(win.selectedSeamId() == "dummy_seam_1", "Failed import preserves seam selection (DIR-002-002)");
+        check(cmdMgr.undoCount() == undoDepthBefore, "Failed import does not push to undo stack (DIR-002-002)");
+    }
+
+    // 2. Default origin placement when no pedestal keyword is present
+    {
+        olp::ui::MainWindow win;
+        olp::app::SceneRobotReplaceResult repRes;
+        const bool ok = win.importStepWorkcell(boxStep, &repRes);
+        check(ok, "importStepWorkcell succeeds for box assembly");
+        const auto* robot = win.document().findSceneNode(repRes.activeRobotNodeId);
+        check(robot != nullptr, "Active robot node exists");
+        if (robot != nullptr) {
+            check(std::abs(robot->localTransform.pos.x) < 1e-6 &&
+                  std::abs(robot->localTransform.pos.y) < 1e-6 &&
+                  std::abs(robot->localTransform.pos.z) < 1e-6,
+                  "Robot placed at default world origin (0, 0, 0) when no base keyword exists",
+                  "pos=(" + std::to_string(robot->localTransform.pos.x) + ", " +
+                  std::to_string(robot->localTransform.pos.y) + ", " +
+                  std::to_string(robot->localTransform.pos.z) + ")");
+        }
+    }
+
+    // 3. M14-014: confirmDiscardIfDirty gates loadSample & importStepFile
+#ifdef OLP_HAS_QT6
+    {
+        olp::ui::MainWindow win;
+        olp::ui::ShellWindow shell(win);
+        int loaderCalls = 0;
+        shell.setSampleLoader([&] {
+            ++loaderCalls;
+            olp::core::SceneNode sampleNode;
+            sampleNode.id = "sample_node_1";
+            win.document().sceneNodes.push_back(sampleNode);
+            win.document().isDirty = true;
+        });
+
+        // Clean document does not trigger discard callback
+        bool callbackCalled = false;
+        shell.setConfirmDiscardCallback([&]() {
+            callbackCalled = true;
+            return false;
+        });
+        shell.loadSample();
+        check(!callbackCalled, "M14-014 clean document loadSample proceeds without prompt");
+        check(loaderCalls == 1, "M14-014 sample loader executed once on clean document");
+
+        // Dirty document with cancel retains existing state
+        callbackCalled = false;
+        shell.loadSample();
+        check(callbackCalled, "M14-014 dirty document loadSample prompts confirmation");
+        check(loaderCalls == 1, "M14-014 cancel discard does not call sample loader");
+
+        // Dirty document with accept proceeds
+        shell.setConfirmDiscardCallback([&]() {
+            return true;
+        });
+        shell.loadSample();
+        check(loaderCalls == 2, "M14-014 accept discard proceeds and re-executes sample loader");
+    }
+#endif
+
+    // 4. Viewport picked-edge seam creation and end-to-end loop
+    {
+        olp::ui::MainWindow win;
+        olp::app::SceneRobotReplaceResult repRes;
+        win.importStepWorkcell(fullCellStep, &repRes);
+
+        // Mount tool torch
+        olp::core::SceneNode toolNode;
+        toolNode.id = "tool_torch_1";
+        toolNode.name = "Welding_Torch_150mm";
+        toolNode.type = olp::core::SceneNodeType::Tool;
+        toolNode.utoolNumber = 1;
+        toolNode.tcpOffset = olp::core::Transform4d::fromTranslation(0.0, 0.0, 150.0);
+        toolNode.localTransform = toolNode.tcpOffset;
+        toolNode.parentId = repRes.activeRobotNodeId;
+        win.document().sceneNodes.push_back(toolNode);
+
+        // Define table UFRAME
+        win.commandManager().executeCommand(
+            std::make_unique<olp::app::DefineUFrameCommand>(
+                win.document(), 1, "UFRAME_1_Table",
+                olp::core::Vec3{500.0, -300.0, 600.0},
+                olp::core::Vec3{900.0, -300.0, 600.0},
+                olp::core::Vec3{500.0, 100.0, 600.0}));
+
+        int frontWallHandle = -1;
+        for (const auto& node : win.document().sceneNodes) {
+            if (node.name.find("Workpiece_BoxWall_Front") != std::string::npos && node.cadHandleId > 0) {
+                frontWallHandle = node.cadHandleId;
+                break;
+            }
+        }
+        check(frontWallHandle > 0, "Found Workpiece_BoxWall_Front for picked-edge seam test",
+              "handle=" + std::to_string(frontWallHandle));
+
+        std::string createdSeamId;
+        const bool seamCreated = win.createSeamFromPickedEdge(frontWallHandle, 3, &createdSeamId);
+        check(seamCreated, "createSeamFromPickedEdge succeeds from edge 3", createdSeamId);
+        check(!createdSeamId.empty() && win.selectedSeamId() == createdSeamId,
+              "Newly created seam is selected in MainWindow");
+        check(!win.document().seams.empty(), "Seam added to doc.seams");
+
+        // Generate operation from selected seam
+        const bool opGenerated = win.generateOperationFromSelectedSeam();
+        check(opGenerated, "generateOperationFromSelectedSeam succeeds");
+        check(!win.selectedOperationId().empty(), "Operation selected after generation");
+
+        const auto* op = win.document().findOperation(win.selectedOperationId());
+        check(op != nullptr && op->seamId == createdSeamId, "Generated operation links to created seam");
+        check(op != nullptr && op->targets.size() >= 3,
+              "Generated operation contains at least approach, weld, and retract targets",
+              op ? ("targetCount=" + std::to_string(op->targets.size())) : "null op");
+
+        // Validate simulation
+        const auto simRes = win.validateCurrentOperation();
+        check(!simRes.frames.empty(), "Simulation produces trajectory frames for created seam",
+              "frames=" + std::to_string(simRes.frames.size()));
+
+        // Undo operation generation and seam creation
+        check(win.commandManager().canUndo(), "Command manager has undoable commands");
+        win.commandManager().undo(); // undo generate op
+        check(win.commandManager().canUndo(), "Command manager can undo seam creation");
+        win.commandManager().undo(); // undo seam creation
+        check(win.document().findSeam(createdSeamId) == nullptr,
+              "Undo successfully removes seam definition from document");
+    }
+}
+
 
 

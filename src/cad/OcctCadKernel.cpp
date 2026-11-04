@@ -1,4 +1,5 @@
 #include "olp/cad/OcctCadKernel.h"
+#include "olp/io/Utf8Path.h"
 
 #include <algorithm>
 #include <cctype>
@@ -87,7 +88,7 @@ namespace {
 
 
 std::string hashStepFile(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(olp::io::utf8ToPath(path), std::ios::binary);
     std::uint64_t hash = 14695981039346656037ull;
     char buffer[4096];
     while (in) {
@@ -131,7 +132,7 @@ bool OcctCadKernel::importStep(const std::string& filePath, std::vector<core::Sc
 }
 
 bool OcctCadKernel::importStepBuiltin(const std::string& filePath, std::vector<core::SceneNode>& outPartNodes) {
-    std::ifstream ifs(filePath);
+    std::ifstream ifs(olp::io::utf8ToPath(filePath));
     if (!ifs.is_open()) {
         return false;
     }
@@ -475,7 +476,7 @@ bool OcctCadKernel::importStepBuiltin(const std::string& filePath, std::vector<c
 }
 
 bool OcctCadKernel::importStl(const std::string& filePath, core::TriMesh& outMesh) {
-    std::ifstream ifs(filePath, std::ios::binary);
+    std::ifstream ifs(olp::io::utf8ToPath(filePath), std::ios::binary);
     if (!ifs.is_open()) {
         return false;
     }
@@ -727,7 +728,11 @@ bool OcctCadKernel::importStepWithOcct(const std::string& filePath, std::vector<
     STEPCAFControl_Reader reader;
     reader.SetColorMode(true);
     reader.SetNameMode(true);
-    if (reader.ReadFile(filePath.c_str()) != IFSelect_RetDone) {
+    std::ifstream fileStream(olp::io::utf8ToPath(filePath), std::ios::in | std::ios::binary);
+    if (!fileStream.is_open()) {
+        return false;
+    }
+    if (reader.ReadStream(filePath.c_str(), fileStream) != IFSelect_RetDone) {
         return false;
     }
     if (!reader.Transfer(doc)) {

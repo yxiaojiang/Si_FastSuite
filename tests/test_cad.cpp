@@ -7,6 +7,8 @@
 #include "olp/cad/OcctCadKernel.h"
 #include "olp/device/RobotModel.h"
 #include "olp/io/FanucLsPostProcessor.h"
+#include "olp/io/Utf8Path.h"
+#include <filesystem>
 #include "olp/ui/MainWindow.h"
 #include "olp/ui/OcctViewport.h"
 #include "olp/ui/TcpGizmo.h"
@@ -431,5 +433,32 @@ void testOcctWeldEdgeMatchesBuiltin() {
     }
 #endif
 }
+
+void testChinesePathStepImport() {
+    olp::cad::OcctCadKernel cad;
+    const std::string wsRoot = OLP_SOURCE_DIR;
+    const std::filesystem::path srcStep = olp::io::utf8ToPath(
+        wsRoot + "/SampleScenes/Scene1_TJoint_And_FANUC_M10iA/Workpiece_TJoint_With_Clamps.step");
+    check(std::filesystem::exists(srcStep), "M14-015 source sample STEP exists");
+
+    std::error_code ec;
+    const std::filesystem::path tempDir = std::filesystem::temp_directory_path() / "测试中文工位_目录";
+    std::filesystem::create_directories(tempDir, ec);
+    const std::filesystem::path dstStep = tempDir / "测试工件_Workpiece.step";
+    std::filesystem::copy_file(srcStep, dstStep, std::filesystem::copy_options::overwrite_existing, ec);
+    const auto u8Str = dstStep.u8string();
+    const std::string utf8Path(u8Str.begin(), u8Str.end());
+    check(!ec, "M14-015 copied sample STEP to Chinese path", utf8Path);
+    std::vector<olp::core::SceneNode> nodes;
+    const bool ok = cad.importStep(utf8Path, nodes);
+    check(ok, "M14-015 importStep succeeds with Chinese path", utf8Path);
+    check(nodes.size() == 4, "M14-015 imported nodes count matches T-joint workpiece", "count=" + std::to_string(nodes.size()));
+    if (!nodes.empty()) {
+        check(nodes.front().cadHandleId > 0, "M14-015 valid cadHandleId allocated", "handle=" + std::to_string(nodes.front().cadHandleId));
+    }
+
+    std::filesystem::remove_all(tempDir, ec);
+}
+
 
 

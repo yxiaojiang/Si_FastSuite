@@ -43,9 +43,7 @@ SampleSessionResult runSampleWorkcell(MainWindow& mainWin) {
     std::cout << "[1/5] Importing Full Workcell STEP & Executing 3.4 Scheme A Robot Replacement...\n";
 
     olp::app::SceneRobotReplaceResult repRes;
-    mainWin.commandManager().executeCommand(
-        std::make_unique<olp::app::ImportSceneAndReplaceRobotCommand>(
-            doc, cad, fullCellStep, robotModel, &repRes));
+    mainWin.importStepWorkcell(fullCellStep, &repRes);
     auto finish = [&](SampleSessionResult result) {
         mainWin.noteSampleRun(result.exitCode, result.frameCount, result.cycleTimeSec, result.weldTimeSec);
         return result;

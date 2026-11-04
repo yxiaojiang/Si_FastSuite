@@ -4,10 +4,10 @@
 - **Topic**：无
 - **Round**：0
 - **Status**：**IDLE**
-- **Last decision**：`DIR-002`（2026-11-01），见 `DECISIONS.md`
+- **Last decision**：`DIR-003`（2026-11-04），见 `DECISIONS.md`
 - **Current owner**：无
-- **Last updated at**：2026-11-01
+- **Last updated at**：2026-11-04
 
 ## 下一步
 
-没有进行中的讨论。`DIR-002` 已采纳收口，进入代码实施阶段（第 1 步 P0-A）。新话题从提案开始。
+没有进行中的讨论。`DIR-003` 已采纳收口。当前代码任务：先闭环 `CRDocs` 中正在修复的 `DIR-002-STEP-IMPORT-001`（第 0 步），随后按 `PackagePlan.md` 与 `DIR-003` 顺序启动打包实施任务。新讨论话题从提案开始。

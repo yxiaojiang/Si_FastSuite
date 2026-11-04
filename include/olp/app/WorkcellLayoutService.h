@@ -16,6 +16,16 @@ struct SceneRobotReplaceResult {
     core::Transform4d detectedRobotBaseTransform{};
 };
 
+struct SelectionSnapshot {
+    std::string sceneNodeId{};
+    std::string seamId{};
+    std::string operationId{};
+    std::string targetId{};
+};
+
+using GetSelectionFn = std::function<SelectionSnapshot()>;
+using SetSelectionFn = std::function<void(const SelectionSnapshot&)>;
+
 // M04: Workcell Layout & Section 3.4 Scheme A (Full Scene STEP Import + Robot Replacement)
 class WorkcellLayoutService {
 public:
@@ -45,7 +55,9 @@ public:
         cad::ICadKernel& cadKernel,
         std::string stepFilePath,
         device::RobotModel libraryRobotModel,
-        SceneRobotReplaceResult* resultOut = nullptr);
+        SceneRobotReplaceResult* resultOut = nullptr,
+        GetSelectionFn getSelection = nullptr,
+        SetSelectionFn setSelection = nullptr);
 
     void execute() override;
     void undo() override;
@@ -58,10 +70,15 @@ private:
     std::string stepFilePath_;
     device::RobotModel libraryRobotModel_;
     SceneRobotReplaceResult* resultOut_{nullptr};
+    GetSelectionFn getSelection_{nullptr};
+    SetSelectionFn setSelection_{nullptr};
     SceneRobotReplaceResult result_{};
     std::vector<core::SceneNode> beforeNodes_{};
     std::vector<core::SceneNode> afterNodes_{};
+    std::vector<core::SeamDefinition> beforeSeams_{};
+    std::vector<core::ControllerUnit> beforeControllers_{};
     bool beforeDirty_{false};
+    SelectionSnapshot beforeSelection_{};
     bool applied_{false};
     bool mutated_{false};
 };

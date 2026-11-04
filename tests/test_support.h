@@ -34,3 +34,5 @@ void testWorkcellPdfReportExport();
 void testFclSinglePoseTiming();
 void testProjectJsonSerialization();
 void testTJointSampleSceneEndToEndRegression();
+void testChinesePathStepImport();
+void testWorkcellImportReplaceAndSeamCreationLoop();

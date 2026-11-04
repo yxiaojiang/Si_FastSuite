@@ -201,7 +201,7 @@ bool OcctViewport::pickAt(int pixelX, int pixelY) {
 }
 
 
-bool OcctViewport::selectEdge(int cadHandleId, int edgeIndex) {
+bool OcctViewport::selectEdge(int cadHandleId, int edgeIndex, bool emitSignal) {
 #ifdef OLP_HAS_OCCT
     if (cadKernel_ == nullptr) {
         return false;
@@ -265,16 +265,19 @@ bool OcctViewport::selectEdge(int cadHandleId, int edgeIndex) {
         }
     }
 
-    if (edgePickedCb_) {
-        edgePickedCb_(info);
-    }
+    if (emitSignal) {
+        if (edgePickedCb_) {
+            edgePickedCb_(info);
+        }
 #ifdef OLP_HAS_QT6
-    Q_EMIT edgePicked(QString::fromStdString(targetNode->id), cadHandleId, edgeIndex);
+        Q_EMIT edgePicked(QString::fromStdString(targetNode->id), cadHandleId, edgeIndex);
 #endif
+    }
     return true;
 #else
     (void)cadHandleId;
     (void)edgeIndex;
+    (void)emitSignal;
     return false;
 #endif
 }

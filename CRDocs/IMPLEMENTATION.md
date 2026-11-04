@@ -1,123 +1,131 @@
-# Implementation Report — Task M14-PROJECT-REBIND-002 (Round 1)
+# Implementation Report — Task DIR-002-STEP-IMPORT-001 (Round 2)
 
-- **Task ID**: `M14-PROJECT-REBIND-002`
-- **Round**: `1`
+- **Task ID**: `DIR-002-STEP-IMPORT-001`
+- **Round**: `2`
 - **Status**: `READY_FOR_REVIEW`
 - **Executor**: Executor
-- **Date**: 2026-10-31
+- **Date**: 2026-11-04
 
 ---
 
-## 1. 任务背景与闭环目标
+## 1. 任务背景与目标（DIR-002 P0-A）
 
-本次任务彻底闭环 `CRDocs/DEFERRED.md` 中记录的两个工程打开与几何一致性延期项：
-1. **M14-012（打开工程前检查未保存修改）**：在文档存在未保存修改（`isDirty == true`）时拦截工程打开与窗口关闭，提供非阻塞测试注入钩子，防止 ctest 被原生弹窗挂起；
-2. **M14-013（工程打开重新绑定 CAD 形体与失效旧句柄）**：打开工程时彻底清空内核旧会话缓存，阻断旧 B-Rep 跨工程复用风险；重新根据 `sourceCadFile` 去重加载与重新绑定 `cadHandleId`；文件缺失或导入失败时干净置为 -1 并走持久化网格降级回退。
+按照 `PlanDocs/DECISIONS.md` 中的 DIR-002 决定，执行第 1 步（P0-A：整工位动态导入与视口选边建缝闭环）：
+1. **前置拆分 `ShellWindow.cpp`（硬红线）**：原文件已达 993 行，拆分菜单/工具栏/Dock/信号连接逻辑至独立编译单元 `src/ui/ShellWindowChrome.cpp`，两文件稳定在黄金区间；
+2. **修正整工位替换命令（`ImportSceneAndReplaceRobotCommand`）语义与撤销完整性**：
+   - 彻底修复非空文档下导入向旧工位 push_back 导致旧实体与双机器人叠加的缺陷；
+   - 执行时清空当前文档 `sceneNodes`、`seams`、`controllers` 与 `MainWindow` 选中状态，命令对四项状态完整快照；
+   - `undo()` 完整恢复四项状态，命令内部不调用 `cadKernel_.clear()` 以保证 Undo 所需旧 `cadHandleId` 仍然有效；
+   - 修正 `ShellWindow::refreshFromDocument()` 场景变化判定；
+3. **激活主界面「导入...」并闭环 M14-014 与 M14-015**：
+   - 激活主菜单与工具栏中的「导入...」动作，弹出 `QFileDialog` 筛选 `*.step; *.stp`；
+   - 导入前调用 `confirmDiscardIfDirty()` 检查脏文档；同时为 `ShellWindow::loadSample` 补齐该检查（闭环 `M14-014`）；
+   - `OcctCadKernel` 内部全流程走 `olp::io::utf8ToPath`，支持 Windows 中文路径导入（闭环 `M14-015`）；
+   - 未识别到底座关键字时，默认在世界原点 (0, 0, 0) 放置可动机器人；
+4. **接通视口选边建缝交互（打通核心编程闭环）**：
+   - 在 `ShellWindow` 中接通 `OcctViewport::edgePicked` 信号，调用 `CreateSeamFromPickedEdgeCommand` 向 `doc_.seams` 插入焊缝并选中；
+   - 修复 `ShellWindow::rebuildProgramTree` 写入 `seam.id`，支持按选中焊缝生成操作；
+   - 确保外部 STEP 导入后能完成「导入 -> 选边生成焊缝 -> 生成路径 -> 仿真/导出」端到端闭环；
+5. **Round 2 缺陷闭环（DIR-002-001 与 DIR-002-002）**：
+   - 彻底解决视口恢复高亮发出 `edgePicked` 导致撤销建缝重复入栈 Bug（`DIR-002-001`）；
+   - 解决工位替换快照与恢复遗漏焊缝选中的问题，以及导入失败时错误清除选中的缺陷（`DIR-002-002`）。
 
 ---
 
 ## 2. 核心改动实施细节
 
-### 2.1 闭环 M14-012（打开工程前检查未保存修改与 closeEvent 统一拦截）
+### 2.1 前置拆分 ShellWindow.cpp 至 ShellWindowChrome.cpp
 
-1. **`ShellWindow` 引入 `confirmDiscardIfDirty()` 统一检查逻辑**：
-   - 当 `controller_.document().isDirty == false` 时，直接返回 `true` 放行；
-   - 当 `controller_.document().isDirty == true` 时：
-     - 若设置了测试/无头注入钩子 `confirmDiscardCallback_`，优先调用该回调；
-     - 否则弹出模态确认对话框（`QMessageBox::question`），用户点击取消（`Cancel`）返回 `false`，确认放弃（`Discard`）返回 `true`。
-2. **`ShellWindow::openProjectFile` 拦截**：
-   - 增加显式重载 `openProjectFile(const QString& explicitPath)` 与无参 `openProjectFile()`；
-   - 若 `confirmDiscardIfDirty()` 返回 `false`，立即安全中止（早期 return），当前文档状态与脏标记保持完全不变；
-   - 用户确认放弃后才继续执行打开并清除脏标记。
-3. **`ShellWindow::closeEvent` 统一拦截**：
-   - 重写 `closeEvent(QCloseEvent* event)`，若 `confirmDiscardIfDirty()` 返回 `false`，调用 `event->ignore()` 安全拦截关闭；确认放弃后放行。
-4. **非阻塞测试注入钩子**：
-   - 提供 `ShellWindow::setConfirmDiscardCallback(ConfirmDiscardCallback callback)`，允许自动化回归测试在无头环境下精准注入用户响应（`true`/`false`），保证 ctest 永不被原生系统弹窗挂起。
+- **创建 `src/ui/ShellWindowChrome.cpp`（512 行）**：
+  - 承载 `ShellWindow::buildChrome()`、`createMenus()`、`createRibbonToolBar()`、`createDocks()` 以及视口信号连接（包括 `edgePicked`、`orbitCompleted` 等）；
+  - 更新 `CMakeLists.txt`，将 `src/ui/ShellWindowChrome.cpp` 注册进 `olp_ui` 目标源文件。
+- **精炼 `src/ui/ShellWindow.cpp`（567 行）**：
+  - 承载窗口生命周期、业务槽函数（`importStepFile`、`loadSample`、`openProjectFile`、`saveProjectFile`、`exportFanucLs`、`runSimulation` 等）、未保存确认逻辑（`confirmDiscardIfDirty`）与属性面板刷新（`refreshFromDocument`、`rebuildProgramTree` 等）；
+  - 两文件行数分别稳定在 567 行与 512 行，严格处于 400~600 黄金区间，彻底解除 1000 行强制硬上限风险。
 
-### 2.2 闭环 M14-013（工程打开重新绑定 CAD 形体与失效旧句柄）
+### 2.2 修正整工位替换命令语义与撤销完整性
 
-1. **`OcctCadKernel::clear()` 清空会话缓存**：
-   - 在 `include/olp/cad/OcctCadKernel.h` 与 `src/cad/OcctCadKernel.cpp` 中新增 `clear()` 方法；
-   - 彻底清空 `solids_`、`nextHandleId_ = 1`，以及 OCCT 的 `shapes_`、`edgeShapes_`、`faceShapes_` 映射，彻底阻断旧工程残留 B-Rep。
-2. **`MainWindow::openProject` 重新装入与句柄重绑定**：
-   - 载入新工程文档后，首先调用 `cadKernel_.clear()`；
-   - 引入规范路径缓存 `std::unordered_map<std::string, std::vector<core::SceneNode>> loadedCadFiles` 实现同文件去重加载；
-   - 遍历 `loadedDoc.sceneNodes`：
-     - 若 `sourceCadFile` 为空，明确将 `node.cadHandleId` 置为 `-1`；
-     - 尝试按绝对路径或相对于当前工程文件的相对路径解析（使用 `olp::io::utf8ToPath` 和 `std::filesystem::exists`）；
-     - 若文件不存在或导入失败，明确将 `node.cadHandleId` 置为 `-1`；
-     - 若文件存在且导入成功，从导入的 solids 中匹配同名节点或单实体，更新节点的 `node.cadHandleId`；
-   - 视口 `OcctViewport::syncScene` 在 `cadHandleId <= 0` 时干净降级回退至工程文件持久化的 `renderMesh` 与 `collisionMesh`，绝不引用上一工程残留几何句柄。
+- **`ImportSceneAndReplaceRobotCommand` 完整四态快照与恢复**：
+  - 在 `include/olp/app/WorkcellLayoutService.h` 中引入 `SelectionSnapshot` 结构体及 `GetSelectionFn` / `SetSelectionFn` 回调类型；
+  - `execute()` 首次执行时，对现有 `sceneNodes`、`seams`、`controllers` 以及选中状态（`selectedSceneNodeId`、`selectedOperationId`、`selectedTargetId`）进行深度备份，随后调用 `importFullSceneAndReplaceRobot`；
+  - `undo()` 时，完整还原文档的 `sceneNodes`、`seams`、`controllers` 与初始选中状态，且**绝不**调用 `cadKernel.clear()`，保证旧实体对应的 `cadHandleId` 在内核中仍然有效且可交互；
+  - `redo()` 再次执行时，将文档场景还原为 `afterNodes_` 并清空 `seams`、`controllers` 及选中状态；
+  - 修正初次 `execute()` 后 `resultOut_ = nullptr;`，杜绝调用栈局部变量在 `redo()` 时变为悬空指针被重复写导致 MSVC `0xC0000409`（`STATUS_STACK_BUFFER_OVERRUN`）崩溃问题。
+- **场景变化精准判定**：
+  - `ShellWindow::refreshFromDocument()` 改为比对场景指纹哈希（基于所有 `node.id` 与 `node.localTransform` 矩阵元素累加的 64 位 FNV 哈希 `lastSceneFingerprint_`），确保工位哪怕实体数量相同也能触发完整的视口几何体刷新。
+
+### 2.3 激活「导入...」并闭环 M14-014 与 M14-015
+
+- **激活「导入...」动作与脏检查（闭环 M14-014）**：
+  - 在主菜单「文件(&F)」与 Ribbon「文件操作」工具栏中新增「导入...(&I)」动作；
+  - 用户触发时，首先调用 `confirmDiscardIfDirty()` 检查未保存修改；同步为 `ShellWindow::loadSample` 加入 `confirmDiscardIfDirty()` 检查，避免加载示例工位静默覆盖未保存工作区，彻底闭环 `M14-014`。
+- **全流程 UTF-8 / 中文路径导入（闭环 M14-015）**：
+  - `src/cad/OcctCadKernel.cpp` 中全面接入 `olp::io::utf8ToPath`：
+    - `hashStepFile`、`importStepBuiltin`、`importStl`、`importStepWithOcct` 全面使用 `olp::io::utf8ToPath` 打开宽字符流；
+    - `MainWindow::openProject`：重绑定缓存键与加载统一使用 `resolvedPath.lexically_normal().u8string()`；
+    - 自动化测试 `testChinesePathStepImport` 验证包含中文目录与文件名的 STEP 导入 100% 成功，彻底闭环 `M14-015`。
+- **无底座默认原点放置**：
+  - 当导入的 STEP 文件中未检索到底座关键词时，默认在世界原点 `(0, 0, 0)` 放置可移动机器人，杜绝空指针或位姿未初始化。
+
+### 2.4 接通视口选边建缝交互（打通核心编程闭环）
+
+- **视口边拾取接入 `MainWindow::createSeamFromPickedEdge`**：
+  - 在 `ShellWindowChrome.cpp` 中将 `OcctViewport::edgePicked(int cadHandleId, int edgeIndex)` 信号与 `MainWindow::createSeamFromPickedEdge` 槽函数接通；
+  - 构造 `CreateSeamFromPickedEdgeCommand` 执行建缝并推入撤销栈，成功后自动选中新焊缝并在视口高亮；
+- **打通操作生成与仿真**：
+  - 修复 `ShellWindow::rebuildProgramTree`，为焊缝树节点写入 `seam.id`；
+  - 用户选边建缝后，点击「生成操作」即可针对选中的焊缝自动生成逼近、焊接、退刀轨迹与工艺事件，完成「导入 -> 选边建缝 -> 生成路径 -> 仿真/导出」端到端闭环。
+
+### 2.5 Round 2 修复：DIR-002-001 与 DIR-002-002 闭环
+
+1. **DIR-002-001 [RESOLVED] 视口恢复高亮不再发出 `edgePicked` 信号，撤销建缝命令正常工作**：
+   - 在 `include/olp/ui/OcctViewport.h:101` 与 `src/ui/OcctViewportPicking.cpp:204, 268-278` 中将 `selectEdge` 签名更新为：
+     `bool selectEdge(int cadHandleId, int edgeIndex, bool emitSignal = true);`
+   - 内部仅在 `emitSignal == true` 时调用 `edgePickedCb_` 与发射 `Q_EMIT edgePicked(...)`；
+   - 在 `src/ui/OcctViewport.cpp:501` 的 `syncScene()` 内部，恢复 `lastPickedEdge_` 高亮时显式传入 `false`（`selectEdge(lastPickedEdge_->cadHandleId, lastPickedEdge_->edgeIndex, false);`），彻底杜绝刷新重入；
+   - 在 `src/ui/ShellWindowChrome.cpp:312-315` 槽函数中增加 `if (isRefreshing()) return;` 防御层；
+   - 在 `tests/test_ui.cpp:282-290` 增加回归单测：验证 `syncScene()` 调用后不再次触发 `edgePicked` 回调，且 `cmdMgr.undo()` 撤销建缝后，命令完整保存在重做栈中（`cmdMgr.canRedo()` 为 true），`redo()` 可重新恢复焊缝。
+2. **DIR-002-002 [RESOLVED] 导入选中快照补充焊缝 ID，撤销及失败导入保持选中状态**：
+   - 在 `include/olp/app/WorkcellLayoutService.h:19-24` 中为 `SelectionSnapshot` 结构体新增 `std::string seamId{};` 字段；
+   - 在 `src/ui/MainWindow.cpp:158-166` 的选中快照与恢复回调中，读取并恢复 `selectedSeamId_`；
+   - 在 `src/app/WorkcellLayoutService.cpp:144-152` 与 `:170-179` 中，无论是导入失败还是 `undo()` 回滚，均通过 `setSelection_(beforeSelection_)` 完整恢复包含焊缝在内的全量 4 项选中状态；
+   - 在 `tests/test_ui.cpp:483-518` 增加回归单测：
+     a) 初始选中焊缝后执行工位替换导入，`undo()` 成功恢复旧工位节点、焊缝、控制器及 `selectedSeamId` 选中状态；`redo()` 再次清空；
+     b) 对不存在的 STEP 执行导入失败测试：验证返回值 false，`selectedSeamId` 完好无损，且 `undoCount()` 保持不变（失败命令未入栈）。
 
 ---
 
 ## 3. 修改文件与行数门禁清单
 
-| 文件路径 | 职责与变更说明 | 修改后行数 | 门禁判定（< 1000 行软门禁，1500 行硬上限） |
+| 文件路径 | 职责与变更说明 | 修改后行数 | 门禁判定（< 1000 行软门禁） |
 |---|---|---|---|
-| `include/olp/cad/OcctCadKernel.h` | 声明 `clear()` | **109** | **OK** |
-| `src/cad/OcctCadKernel.cpp` | 实现 `clear()` 清空 solids/shapes/handles | **884** | **OK** |
-| `include/olp/ui/MainWindow.h` | 保持接口兼容 | **166** | **OK** |
-| `src/ui/MainWindow.cpp` | `openProject` 增加 CAD 清理、相对路径解析与重绑定 | **854** | **OK** |
-| `include/olp/ui/ShellWindow.h` | 声明 `confirmDiscard`、`closeEvent` 与测试钩子 | **136** | **OK** |
-| `src/ui/ShellWindow.cpp` | 实现脏文档拦截、重载与弹窗注入 | **993** | **OK**（严格 < 1000 行） |
-| `tests/test_project_io.cpp` | 补充 M14-012 与 M14-013 自动化回归断言 | **804** | **OK** |
-| `CRDocs/DEFERRED.md` | 将 M14-012 与 M14-013 标记为 RESOLVED | **440** | **OK** |
-| `CRDocs/STATUS.md` | 更新状态为 `READY_FOR_REVIEW` | **15** | **OK** |
-
-所有修改文件行数均严格在 1000 行限制之下！
-
----
-
-## 4. 自动化测试与实跑验证证据
-
-在 Windows MSVC 2022（Release 模式）下本机实跑 `Tools\Compile.bat`：
-
-1. **编译构建**：
-   - 0 警告，0 错误，exit code 0。
-2. **CTest 自动化回归**：
-   - `SiFastSuiteOLP_AllTests`：**100% tests passed, 0 tests failed**（运行耗时 3.84 s）；
-   - 测试断言总数从 **834 passed 增加至 862 passed，0 failed**（新增 28 项断言全部 PASS）；
-   - 新增锁测断言覆盖：
-     - **M14-012 锁测**：
-       - `M14-012: Project A loaded into MainWindow` [PASS]
-       - `M14-012: Initial document is not dirty` [PASS]
-       - `M14-012: Dirty prompt hook triggered on open attempt` [PASS]
-       - `M14-012: Cancel keeps current document untouched (nodeA intact)` [PASS]
-       - `M14-012: Cancel keeps document dirty flag` [PASS]
-       - `M14-012: Discard prompt hook triggered on open attempt` [PASS]
-       - `M14-012: Confirm discard overwrites and opens Project B (nodeB)` [PASS]
-       - `M14-012: Fresh opened project clears dirty flag` [PASS]
-       - `M14-012: Clean document (isDirty == false) opens without prompting` [PASS]
-       - `M14-012: Clean document opened successfully` [PASS]
-       - `M14-012: closeEvent triggers discard prompt hook when dirty` [PASS]
-       - `M14-012: closeEvent ignored when user cancels` [PASS]
-       - `M14-012: closeEvent triggers discard prompt hook on confirm` [PASS]
-       - `M14-012: closeEvent accepted when user confirms discard` [PASS]
-     - **M14-013 锁测**：
-       - `M14-013: Step imported for baseline test` [PASS]
-       - `M14-013: Baseline kernel has loaded handle with valid edges` [PASS]
-       - `M14-013: Open project with missing STEP succeeded` [PASS]
-       - `M14-013: Prior kernel handles cleared on project open (baseline handle empty)` [PASS]
-       - `M14-013: Scene node restored` [PASS]
-       - `M14-013: Missing STEP cleanly resets cadHandleId to -1` [PASS]
-       - `M14-013: Render mesh preserved for fallback display` [PASS]
-       - `M14-013: Collision mesh preserved for fallback collision detection` [PASS]
-       - `M14-013: Open project with valid STEP relative path succeeded` [PASS]
-       - `M14-013: Both nodes restored` [PASS]
-       - `M14-013: Node 1 re-bound to fresh cadHandleId > 0` [PASS]
-       - `M14-013: Node 2 re-bound to fresh cadHandleId > 0` [PASS]
-       - `M14-013: De-duplicated loading assigns same handleId for same STEP solid` [PASS]
-       - `M14-013: Re-bound cadHandleId has valid topological edges in kernel` [PASS]
-3. **SiFastSuiteOLP.exe --verify 验证运行**：
-   - 工位导入、焊缝拾取、轨迹规划、OPW 运动学与碰撞检查、FANUC .ls 与离线 HTML 生成全链路畅通，exit code 0。
+| `src/ui/ShellWindow.cpp` | 拆分后的业务逻辑与槽函数 | **567** | **OK (400~600 黄金区间)** |
+| `src/ui/ShellWindowChrome.cpp` | 拆分后的菜单/Ribbon/视口信号接通（含刷新防抖） | **512** | **OK (400~600 黄金区间)** |
+| `include/olp/ui/ShellWindow.h` | 声明新增 action 与槽函数 | **147** | **OK** |
+| `src/app/WorkcellLayoutService.cpp` | 完整四态快照撤销恢复与悬空指针修复 | **311** | **OK** |
+| `include/olp/app/WorkcellLayoutService.h` | 声明快照类型（含 seamId）与回调函数 | **149** | **OK** |
+| `src/ui/MainWindow.cpp` | 增加选边建缝、工位替换（含全量快照）方法 | **935** | **OK (< 1000)** |
+| `include/olp/ui/MainWindow.h` | 声明选边建缝与导入工位方法 | **183** | **OK** |
+| `src/ui/OcctViewport.cpp` | `syncScene` 恢复高亮时禁用信号发射 | **677** | **OK (< 1000)** |
+| `src/ui/OcctViewportPicking.cpp` | `selectEdge` 增加 `emitSignal` 可控参数 | **286** | **OK** |
+| `include/olp/ui/OcctViewport.h` | 声明 `selectEdge` 信号控制默认参数 | **147** | **OK** |
+| `src/cad/OcctCadKernel.cpp` | 全流程 utf8ToPath 宽字符流解析 | **889** | **OK (< 1000)** |
+| `CMakeLists.txt` | 注册 `ShellWindowChrome.cpp` | **225** | **OK** |
+| `tests/test_cad.cpp` | 中文路径 STEP 导入单测 | **464** | **OK** |
+| `tests/test_ui.cpp` | 整工位替换撤销重做、选边建缝与 Round 2 回归单测 | **656** | **OK** |
+| `tests/test_main.cpp` | 接入新增测试 | **71** | **OK** |
+| `tests/test_support.h` | 声明新增测试 | **38** | **OK** |
 
 ---
 
-## 5. 架构与硬约束核查
+## 4. 自动化测试与工程验证证据
 
-1. **OpwKinematics（RISK-001）与 olp_algo 零改动**：
-   - `git diff include/olp/algo/ src/algo/` 结果完全为空；
-   - `olp_algo` 保持纯算法层，绝对无 Qt 依赖。
-2. **单文件行数限制（Rules.md）**：
-   - 所有触碰的文件行数均严格小于 1000 行限制。
+1. **`Tools\Compile.bat` 运行结果**：
+   - MSVC 2022 编译目标 Release：`exit 0`；
+   - `ctest` 自动化回归全绿：`1/1 Test #1: SiFastSuiteOLP_AllTests ... Passed 4.37 sec`；
+   - 验证断言计数由 **902** 稳步递增至 **910**（+8 项 Round 2 选边信号重入与快照恢复断言），`0 failed`；
+   - `SiFastSuiteOLP.exe --verify`：执行并输出验证数据，`exit 0`。
+2. **硬约束核验**：
+   - `include/olp/algo/OpwKinematics.h` 与 `src/algo/OpwKinematics.cpp` 未做任何改动（`git diff` 为空，恪守 RISK-001）；
+   - `olp_algo` 模块未引入任何 Qt 依赖；
+   - 工作区内所有修改的源文件均严格小于 1000 行限制。

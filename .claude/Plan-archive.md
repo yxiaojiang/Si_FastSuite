@@ -1,5 +1,15 @@
 # Plan-archive.md — 已完成与历史归档计划
 
+## 2026-11-04：DIR-002-STEP-IMPORT-001 Round 2 APPROVED（整工位动态导入与视口选边建缝闭环）
+
+1. **[DONE] 整工位动态导入与视口选边建缝闭环。** 任务号 `DIR-002-STEP-IMPORT-001`，Round 2 **APPROVED**。`M14-014` 与 `M14-015` 彻底闭环：
+   - **ShellWindow 拆分**：原文件达 993 行，拆分为 `ShellWindow.cpp`（567 行）与 `ShellWindowChrome.cpp`（512 行），严格处于 400~600 黄金区间，注册进 `CMakeLists.txt`；
+   - **整工位替换导入命令（`ImportSceneAndReplaceRobotCommand`）**：彻底修复非空文档追加污染缺陷；`SelectionSnapshot` 覆盖场景节点、焊缝、操作与目标 4 态，命令体内不清空 CAD 内核以保证撤销句柄有效；修复悬空指针导致 MSVC 崩溃缺陷；
+   - **DIR-002-001 闭环**：`selectEdge` 增加 `emitSignal=false` 参数，`syncScene` 恢复高亮时禁用信号发射，槽函数增加 `isRefreshing()` 防抖，撤销建缝不再重入，重做栈完整保留；
+   - **DIR-002-002 闭环**：快照补齐 `seamId`，撤销工位替换与失败导入均 100% 恢复焊缝选中状态，失败导入不推入撤销栈；
+   - **中文路径与脏检查**：`OcctCadKernel` 全流程接入 `utf8ToPath`（`M14-015` 闭环）；主界面「导入...」与「加载示例」均加入 `confirmDiscardIfDirty`（`M14-014` 闭环）；无底座关键字默认原点放置机器人；
+   - **自动化测试**：`tests/test_ui.cpp` 补充整工位替换撤销重做、选边建缝端到端、信号防重入与快照恢复单测，全量测试扩充至 **910 passed / 0 failed**；`Tools/Compile.bat` exit 0；`--verify` exit 0。
+
 ## 2026-10-31：M14-PROJECT-REBIND-002 Round 1 APPROVED（M14-012 与 M14-013 闭环）
 
 1. **[DONE] 工程打开未保存检查与 CAD 形体重绑定。** 任务号 `M14-PROJECT-REBIND-002`，Round 1 **APPROVED**。延期项 `M14-012`、`M14-013` 彻底闭环：

@@ -60,6 +60,8 @@ public slots:
     void showOlpWorkbench();
     void loadSample();
     void refreshFromDocument();
+    void importStepFile();
+    void importStepFile(const QString& explicitPath);
     void openProjectFile();
     void openProjectFile(const QString& explicitPath);
     void saveProjectFile();
@@ -85,6 +87,7 @@ private:
     MainWindow& controller_;
     std::function<void()> loader_{};
     OcctViewport* viewport_{nullptr};
+    std::string lastSceneFingerprint_{};
     size_t lastSceneNodeCount_{0};
     size_t lastSeamCount_{0};
     int documentListenerId_{-1};
@@ -111,6 +114,7 @@ private:
     QAction* olpAction_{nullptr};
     QAction* undoAction_{nullptr};
     QAction* redoAction_{nullptr};
+    QAction* importAction_{nullptr};
     QAction* exportMenuAction_{nullptr};
     QAction* exportPdfAction_{nullptr};
     QAction* exportHtmlAction_{nullptr};
