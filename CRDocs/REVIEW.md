@@ -1,3 +1,87 @@
+# 独立复审 — VE-DEMO-001-REAUDIT Round 1
+
+> **Reviewer**：独立代码审核（只审不改生产代码）  
+> **Reviewed at**：2026-11-06 UTC  
+> **Baseline**：`vision-edge` @ `c0808a5`（VE-D1..D7 已提交）  
+> **Authority**：`Docs/Vision_Edge_System_Baseline.md` 页首 2026-10-22 收窄条款；`PlanDocs/DECISIONS.md` VE-DEMO-001 / 2026-11-06 软件收口  
+> **Verdict**：**APPROVED**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：新增 `VE-D7-001` OPEN（见 `DEFERRED.md`）。既有 P2 不升、不关，除 `VE-D6-001` 一键路径维持 CLOSED。
+
+## 1. 结论
+
+页首「一块板、两次摆放、免示教沿边」的 **软件模拟**与已批准的 VE-D1..D7 一致，可以维持 **APPROVED**。本次没有发现需要打回执行者的 P0/P1。
+
+明确不包含：真机下发与安全、现场 3D 视觉、板件 FCL 已 Cleared、Qt GUI / `olp_tests`、RISK-001 关闭、v1.1 的真空托台、蘸漆羽化、完整 HMI、阶段 0 红线。
+
+## 2. 范围与架构
+
+| 项 | 核对 |
+| :--- | :--- |
+| Mode 2 | 合成轮廓 → 手眼到基座 → 直线段拟合 → 常数偏置 `d=R−δ` 密集 L → IK / `.ls` / Mock。无 CAD 主路径。 |
+| 落点 | `include/olp/runtime` + `src/runtime`。`olp_runtime` 链接既有 `olp_io`（FANUC `.ls`）与经之传递的 OPW。没有第二套运动学或后处理。 |
+| 主线边界 | `runVisionEdgeDemo*` 只被 `olp_runtime` 与 `tests/test_vision_*` 调用。焊接 UI 没有一键入口。`olp_app` 链接 `olp_runtime` 只是库依赖。 |
+| 本期不做 | 状态机无 Clamp/真空/蘸漆。`IIO` 仅有 Mock，演示编排不调用。瞬态工件网格为空，FCL 不报 Cleared。 |
+| 操作员 CLI | VE-D7 原文写「最小 CLI 或现有壳入口」。已收口的门禁是 `olp_runtime_tests`，没有单独 CLI，也没有壳按钮。完整 HMI 在页首「本期不做」里。不把缺 CLI 升为 P1。 |
+
+姿态仍按已放行口径：`+X=t`，`+Z=(0,0,-1)`，`+Y=Z×X=n_out`，压板 `-Y`。切入是最长边中点沿外法向接近（D5 门禁已按金样 `S=(967.5,650,791)` 锁定），不是另写一条切向引入。
+
+## 3. 逻辑、状态机、安全门槛
+
+状态机在 `VisionEdgeDemo.cpp`：每次调用从 Idle 起，Capture → Perceive → Fit → Plan → Validate → Execute → Done，任一步失败 `faultAt` → Fault，且 `executedMock=false`。没有持久状态，下一次调用重新从 Idle 开始。`runVisionEdgeDemoAB`（`:170-189`）对 `placement_a` 与 `placement_b` 调用同一个 `runVisionEdgeDemoOnce`。A 失败仍会跑 B；`bothDone` 只有两次都 Done 才为 true。计划没有要求 AB 短路。
+
+一键选项（`:108-114`）：`runMock=true`，`gateMockOnIkAndLsPass=true`，`roller.boundToFcl` 强制 false。Validate 内 `EdgeRollValidate.cpp:244-253` 在 ik 或 ls 非 Passed 时 upload 与 execute 都 Skipped，到不了 `:286-294` 的 `executeTrajectory`。编排层 `:130-145` 再 Fault 一次。
+
+独立探针（未入库，链接 `build-headless` 的 `libolp_runtime.a`）：
+
+| 场景 | 结果 |
+| :--- | :--- |
+| `runVisionEdgeDemoAB` | bothDone；轨迹恰好 2；起点约 `(1007.5,650,791)` 与 `(973.7,747.3,791)`，间距 > 10 mm |
+| `once("placement_far")` 相机坐标约 50000 mm | 不抛；Fault；upload/run/execute 均为 0；ik/ls Failed；mock 两步 Skipped |
+| `gate=true`，程序名 `"edge roll"`，路径仍是 A | ik Passed，ls Failed，mock 两步 Skipped，轨迹不增 |
+| `gate=false`，路径平移 80000 mm | ik Failed，`mockExecute=Passed`，轨迹 +1（D6 调试残差，非一键） |
+| 一键成功报告 | `fclStatus=NotBuilt`，`boardCollision=NotCheckedNoFcl`，`claimsSiteSafe=false`，`claimsBoardCollisionVerified=false`，`risk001Open=true`，即使调用方把 `boundToFcl=true` 也被打回 false |
+| A 的 170 个目标 | 全部 IK 成功；FANUC 姿态字（flip/up/top/turns）无变化。方角处 WPR 从 `(180,0,180)` 到 `(-180,0,-90)`，对应切向转 90°，无圆角过渡。`.ls` 写的是笛卡尔 WPR+CONFIG，不是关节角。这是已放行的密集 L，不新开 P1 |
+| 坏 JSON `polygonMm` 类型 | `DeviceResult` `InvalidArgument`，不抛 |
+
+`DeviceResult` 在已测失败路径（坏 JSON、空路径、不可达 once、缺外参）不逃逸异常。`loadFromDirectory` 的目录迭代仍可能让 `directory_iterator::operator++` 抛出 `filesystem_error`；正常数据集打不中，不升 P1。
+
+## 4. 问题清单
+
+**无 P0。无 P1。**
+
+### VE-D7-001 [P2][OPEN] runProgram 失败后仍 executeTrajectory，随后 executedMock=false
+
+- **位置**：`src/runtime/EdgeRollValidate.cpp:264-294`；`src/runtime/VisionEdgeDemo.cpp:11-17`、`:149-155`。
+- **复现**：`IRobot` 的 `uploadProgram` 成功、`runProgram` 返回失败。`runVisionEdgeDemoOnce("placement_a")` 得到 Fault、`executedMock=false`，但 `executeTrajectory` 已被调用 1 次。
+- **为何不阻断**：ik/ls 硬门成立；`MockRobot` 上传成功后不会拒绝 `runProgram`；211 全绿；真机适配器不在本期。
+- **要改什么**：见 `DEFERRED.md` `VE-D7-001`。本轮不改生产代码。
+
+### 维持的既有项
+
+- `VE-D6-001`：一键 CLOSED（本轮补测 once 不可达与 LS 失败）。未门控调试 API 仍可在 IK 失败时笛卡尔执行。
+- `VE-D1-002` / `VE-D1-003` / `VE-D1-004`、`VE-D3-001`、`VE-D5-001`、`RISK-001` 仍 OPEN。不在本轮关闭。
+
+## 5. 测试证据
+
+```text
+CXX=g++ cmake -S . -B build-headless -DOLP_HEADLESS=ON -DOLP_BUILD_TESTS=ON -DOLP_ENABLE_FCL=OFF
+cmake --build build-headless --target olp_runtime_tests -j$(nproc)
+./build-headless/olp_runtime_tests
+# Summary: 211 passed, 0 failed. exit 0
+```
+
+编译器 g++ 13.3。CMake 找到 Eigen3 与 nlohmann_json。`OLP_HEADLESS=OFF` 在 `find_package(Qt6)` 失败（无 `Qt6Config.cmake`）。`OLP_ENABLE_FCL=ON` 的无头配置打印 `FCL was not found`。因此没有 `olp_ui` / `olp_tests`，也没有带 FCL 的板件碰撞。
+
+D6 套件在本机打印 `A ik=Passed pass=170 fail=0 ls=Passed`，`.ls` 含 `L P[`、`mm/sec` 与 `RISK-001` 水印。
+
+## 6. 给执行者 B
+
+本门禁没有必须返修的 P0/P1。不要把 `mockDemoPassed` 或 211/211 写成现场通过。若下一任务碰到 `VE-D7-001` 的触发条件，按 `DEFERRED.md` 的验收改 `EdgeRollValidate.cpp` 的门控分支，并给「run 失败不得 execute」加一条回归。
+
+---
+
 # Agent A Final Gate — VE-D7-ORCHESTRATE-AB-001 Round 1 + VE-DEMO-001 软件收口
 
 > **Gate owner**：Agent A  
