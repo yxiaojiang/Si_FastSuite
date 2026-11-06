@@ -63,6 +63,13 @@ int main(int argc, char* argv[]) {
     testChinesePathStepImport();
     testWorkcellImportReplaceAndSeamCreationLoop();
     testUtf8PathAdaptationAndDecoupling();
+    testVisionRuntimeDeviceMocks();
+    testVisionHandEyeCalibration();
+    testVisionBoardPerception();
+    testVisionBoardOutlineFit();
+    testVisionEdgeRollPath();
+    testVisionEdgeRollValidateExportMock();
+    testVisionEdgeDemoOrchestrateAB();
 
     std::cout << "\n====================================================================\n";
     std::cout << "  Summary: " << g_passed << " passed, " << g_failed << " failed.\n";

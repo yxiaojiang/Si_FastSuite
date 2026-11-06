@@ -1,6 +1,7 @@
 # Build directories and outputs
 build/
 build-full/
+build-headless/
 bin/
 out/
 target/

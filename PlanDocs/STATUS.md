@@ -1,13 +1,11 @@
 # 当前计划讨论状态
 
-- **Topic ID**：无
-- **Topic**：无
-- **Round**：0
-- **Status**：**IDLE**
-- **Last decision**：`DIR-003`（2026-11-04），见 `DECISIONS.md`
-- **Current owner**：无
-- **Last updated at**：2026-11-04
+- **Topic ID**：`VE-DEMO-001`
+- **Status**：`ADOPTED`（**软件模拟实现 COMPLETE**）
+- **Last gate**：VE-D7 **APPROVED**（2026-11-06 00:21，Agent A Final Gate）
+- **Current owner**：无（代码阶段收口；实机另开 Topic）
+- **Last updated at**：2026-11-06 00:21 Asia/Singapore（UTC+8）
 
-## 下一步
+## 说明
 
-没有进行中的讨论。`DIR-003` 已采纳收口。当前代码任务：先闭环 `CRDocs` 中正在修复的 `DIR-002-STEP-IMPORT-001`（第 0 步），随后按 `PackagePlan.md` 与 `DIR-003` 顺序启动打包实施任务。新讨论话题从提案开始。
+页首「一块板两次涂胶」的 **Mock/headless 软件闭环**已闭环。不等于真机/现场/FCL/GUI 验收。`RISK-001` 与多项 P2 仍 OPEN。

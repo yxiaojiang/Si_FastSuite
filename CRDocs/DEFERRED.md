@@ -4,6 +4,78 @@
 
 ---
 
+
+## VE-D6-001 [CLOSED on one-click] IK 失败后笛卡尔 Mock（P2；一键路径已关）
+
+- **Agent A（2026-11-06）**：不升 P1；**触发阶段=VE-D7 一键编排**。验收：一键路径在 ik≠Passed 或 ls≠Passed 时不得调用 upload/run/executeTrajectory。
+- **Executor B（2026-11-06，非 C 结案）**：VE-D7 一键路径已设 `gateMockOnIkAndLsPass=true`；ik≠Passed 或 ls≠Passed 时 Mock upload/run/executeTrajectory 均为 Skipped，单测覆盖。**一键路径验收条件已满足**；是否将本条改为 CLOSED 由 C/A 决定。未门控的 D6 调试调用仍可笛卡尔 Mock。RISK-001 仍 OPEN。
+- **Agent C（2026-11-06）**：**一键路径 CLOSED**。证据：`EdgeRollValidate.cpp:244-253`（`gateBlocks` → upload+execute Skipped）；`VisionEdgeDemo.cpp:112` 强制 `gateMockOnIkAndLsPass=true` + `:130-145` Fault；`test_vision_demo.cpp:115-158` 断言 traj 不增。独立探针：未门控 `gate=false` 时 IK 失败仍 `executeTrajectory` Passed（trajDelta=1）——残差仅限 D6 调试路径，符合 A「触发阶段=VE-D7」口径。RISK-001 仍 OPEN。
+
+- **来源轮次**：`VE-D6-VALIDATE-EXPORT-MOCK-001` Round 1（Agent C，2026-11-06）。
+- **位置**：`src/runtime/EdgeRollValidate.cpp:275-282`（对比 LS/upload 门禁 `:253-273`）。
+- **现状**：IK 失败时 `.ls` 导出 Failed、Mock upload Skipped（正确）；但已连接时仍 `executeTrajectory(cartesian)` 且可 Passed。报告 `ik=Failed`、`claimsSiteSafe=false`、`risk001Open=true`，未伪造关节程序成功。笛卡尔通道与 TP 下载通道分离是有意设计。
+- **触发阶段**：若产品要求「任一 IK 失败则禁止一切 Mock 执行」，或操作员易误读 mockExecute=Passed。
+- **验收条件**：文档/选项明确双通道；或增加 `skipCartesianMockOnIkFail` 并有单测。
+
+---
+
+
+
+## VE-D5-001 [OPEN] 工具 +Y==n_out 仅有 C 探针覆盖、套件未显式断言（P2）
+
+- **来源轮次**：`VE-D5-EDGE-PATH-001` Round 1（Agent C，2026-11-06）。
+- **位置**：`tests/test_vision_edge_path.cpp`（实现 `EdgeRollPath.cpp:38-46`）。
+- **现状**：单测断言 +X、+Z、`det≈+1`；C 探针确认 +Y==n_out 且拒绝 +Y==-n_out。实现与文档已正确。
+- **触发阶段**：加固姿态回归或真机对拍工具压向时。
+- **验收条件**：入口接触点断言 `colY ≈ n_out`（及可选 `colY·n_out > 0`）。
+
+---
+
+
+
+## VE-D3-001 [OPEN] VE-D3 套件缺 CW→CCW 显式回归（P2）
+
+- **来源轮次**：`VE-D3-PERCEIVE-001` Round 1（Agent C，2026-11-05）。
+- **位置**：`tests/test_vision_perceive.cpp`；实现见 `src/runtime/BoardPerception.cpp:78-81`。
+- **现状**：placement A/B 变换后已为 CCW，单测未覆盖「输入 CW → reverse → CCW」路径。C 独立探针：CW 输入 ok、面积>0、质心仍为 A 金样、不抛异常。
+- **触发阶段**：加固感知回归或进入依赖 yaw/绕向的 VE-D4/D5 时。
+- **验收条件**：增加 CW 输入断言（CCW 面积、点数不变、质心稳定）且 `olp_runtime_tests` 绿。
+
+---
+
+
+
+## VE-D1-002 [OPEN] 无 nlohmann 时 ContourDataset 目录内 JSON 拖垮 CSV 兜底（P2）
+
+- **来源轮次**：`VE-D1-RUNTIME-MOCK-001` Round 1（Agent C，2026-11-05）。
+- **位置**：`src/runtime/ContourDataset.cpp:209-220`；`CMakeLists.txt:39-42`。
+- **现状**：无 `OLP_HAS_NLOHMANN_JSON` 时加载 `.json` 返回 `NotSupported` 并失败整个目录；`tests/data/vision_edge` 同时含 JSON+CSV，无法仅靠 CSV。有 nlohmann 时门禁通过。
+- **触发阶段**：无 JSON 库的 headless 配置，或加固数据集加载契约时。
+- **验收条件**：跳过 NotSupported JSON 并继续 CSV，或 CMake 对 `olp_runtime` REQUIRED nlohmann；CSV-only 回归绿。
+
+---
+
+## VE-D1-003 [OPEN] OLP_HEADLESS 下 olp_ui/olp_tests 因既有 QColor 头依赖不可编（P2）
+
+- **来源轮次**：`VE-D1-RUNTIME-MOCK-001` Round 1（Agent C，2026-11-05）。
+- **位置**：`include/olp/ui/WorkcellPdfReportExporter.h:5`（经 `MainWindow.h:8`）。
+- **现状**：非 VE-D1 引入。Linux 无 Qt 时 `olp_ui` fatal；VE-D1 阶段门禁为 `olp_runtime_tests`。
+- **触发阶段**：收紧 HEADLESS 构建或 Linux 全量回归。
+- **验收条件**：HEADLESS 跳过 Qt UI 源或 PDF exporter 条件编译；Windows/Qt 机完整 `olp_tests` 另证。
+
+---
+
+## VE-D1-004 [OPEN] VE-D1 套件未覆盖 CSV-only 与 queryState 断开失败（P2）
+
+- **来源轮次**：`VE-D1-RUNTIME-MOCK-001` Round 1（Agent C，2026-11-05）。
+- **位置**：`tests/test_vision_runtime.cpp`。
+- **现状**：主路径覆盖充分；缺 CSV-only 目录断言与 disconnect 后 `queryState`→`NotConnected`。
+- **触发阶段**：加强 VE-D1 回归或进入 VE-D3 数据集路径时。
+- **验收条件**：CSV-only load ok；`queryState` 断开失败码断言绿。
+
+---
+
+
 ## RISK-001 [OPEN] J2/J3 耦合比与回转圈数真机/ROBOGUIDE对拍未接入（P2）
 
 - **来源轮次**：M06 / M07 系统架构复审（2026-10-26）。

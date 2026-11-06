@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "lengthUnit": "mm",
+  "notes": "Demo fixture only for VE-D2 headless tests. Not a field-calibrated hand-eye result; do not treat as site acceptance.",
+  "T_cam_base": {
+    "rotation": [
+      [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      [
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "translationMm": [
+      1000.0,
+      500.0,
+      800.0
+    ]
+  },
+  "T_flange_tcp": {
+    "rotation": [
+      [
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "translationMm": [
+      0.0,
+      0.0,
+      150.0
+    ]
+  }
+}

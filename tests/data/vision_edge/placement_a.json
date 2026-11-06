@@ -1,0 +1,30 @@
+{
+  "placementId": "placement_a",
+  "frameId": "camera",
+  "boardThicknessMm": 18.0,
+  "fakePointCount": 1200,
+  "timestampSec": 0.0,
+  "notes": "Nominal axis-aligned board.",
+  "polygonMm": [
+    [
+      50.0,
+      40.0,
+      0.0
+    ],
+    [
+      250.0,
+      40.0,
+      0.0
+    ],
+    [
+      250.0,
+      240.0,
+      0.0
+    ],
+    [
+      50.0,
+      240.0,
+      0.0
+    ]
+  ]
+}

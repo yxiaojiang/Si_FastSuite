@@ -95,6 +95,28 @@ target_include_directories(olp_device PUBLIC
 )
 target_link_libraries(olp_device PUBLIC olp_core)
 
+
+# ------------------------------------------------------------------------------
+# Vision_Edge runtime device boundary (olp_runtime - ICamera/IRobot/IIO + Mock)
+# Pure C++ / no Qt / no vendor SDK. VE-D1 headless regression target.
+# ------------------------------------------------------------------------------
+add_library(olp_runtime STATIC
+    src/runtime/ContourDataset.cpp
+    src/runtime/MockCamera.cpp
+    src/runtime/MockRobot.cpp
+    src/runtime/MockIO.cpp
+    src/runtime/HandEyeCalibration.cpp
+    src/runtime/BoardPerception.cpp
+    src/runtime/BoardOutlineFit.cpp
+    src/runtime/EdgeRollPath.cpp
+    src/runtime/EdgeRollValidate.cpp
+    src/runtime/VisionEdgeDemo.cpp
+)
+target_include_directories(olp_runtime PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(olp_runtime PUBLIC olp_core olp_io)
+
 # ------------------------------------------------------------------------------
 # Layer 3: Algorithm Layer (olp_algo - Pure C++, UI-independent, 100% testable)
 # ------------------------------------------------------------------------------
@@ -139,7 +161,7 @@ add_library(olp_app STATIC
 target_include_directories(olp_app PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(olp_app PUBLIC olp_core olp_cad olp_device olp_algo olp_io)
+target_link_libraries(olp_app PUBLIC olp_core olp_cad olp_device olp_algo olp_io olp_runtime)
 
 # ------------------------------------------------------------------------------
 # Layer 1: Presentation & Viewport Layer (olp_ui - Qt6 + OCCT AIS + TcpGizmo)
@@ -215,6 +237,13 @@ if(OLP_BUILD_TESTS)
         tests/test_report.cpp
         tests/test_project_io.cpp
         tests/test_tjoint_regression.cpp
+        tests/test_vision_runtime.cpp
+        tests/test_vision_calib.cpp
+        tests/test_vision_perceive.cpp
+        tests/test_vision_fit.cpp
+        tests/test_vision_edge_path.cpp
+        tests/test_vision_validate.cpp
+        tests/test_vision_demo.cpp
     )
     target_link_libraries(olp_tests PRIVATE olp_ui)
     if(Qt6_FOUND)
@@ -222,4 +251,18 @@ if(OLP_BUILD_TESTS)
         target_compile_definitions(olp_tests PRIVATE "OLP_QT_PLUGINS=\"${OLP_QT_ROOT}/plugins\"")
     endif()
     add_test(NAME SiFastSuiteOLP_AllTests COMMAND olp_tests)
+
+    # VE-D1 gate: device Mock suite without Qt / OpenCASCADE GUI stack.
+    add_executable(olp_runtime_tests
+        tests/test_vision_runtime_main.cpp
+        tests/test_vision_runtime.cpp
+        tests/test_vision_calib.cpp
+        tests/test_vision_perceive.cpp
+        tests/test_vision_fit.cpp
+        tests/test_vision_edge_path.cpp
+        tests/test_vision_validate.cpp
+        tests/test_vision_demo.cpp
+    )
+    target_link_libraries(olp_runtime_tests PRIVATE olp_runtime)
+    add_test(NAME SiFastSuiteOLP_RuntimeTests COMMAND olp_runtime_tests)
 endif()

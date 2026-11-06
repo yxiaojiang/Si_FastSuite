@@ -73,3 +73,32 @@
 OCCT 8.0 在清空环境变量后无隐式资源文件依赖，第 2 步沙盒验证予以最终实测闭环。
 
 **计划位置**：`PackagePlan.md`、`.claude/Plan.md`、`.claude/SessionBrief.md`。
+
+---
+
+## VE-DEMO-001（2026-11-05）Vision_Edge 演示闭环（页首收窄范围）分阶段实施
+
+**决定**：
+在 `vision-edge` 分支启动 Vision_Edge **演示级**实现。唯一执行权威为 `Docs/Vision_Edge_System_Baseline.md` 页首 2026-10-22 收窄条款。v1.1 正文与 Assessment v0.1 不作本期范围扩张依据。本地三智能体：A 审计划与阶段放行，B 分阶段实现，C 审实现；不使用 Cursor 云端智能体或外部模型。无真机时以 Mock + 无头回归验收；禁止虚构真机验收。
+
+**顺序（VE-D1~VE-D7）**：
+
+1. **VE-D1**：`ICamera`/`IRobot`/`IIO` + Mock + 合成数据集 + CMake/`olp_tests` 接线（无硬件可回归）。
+2. **VE-D2**：标定/手眼位姿数据模型（演示用固定夹具外参可加载；不做现场 9 点实测）。
+3. **VE-D3**：简化感知——Mock/数据集 → 板位姿 + 闭合上棱点列（基坐标系）；两次摆放输入可切换。
+4. **VE-D4**：轮廓拟合（矩形/凸多边形够用）+ 可选 OCCT 瞬态棱柱桥接进场景。
+5. **VE-D5**：沿边滚涂轨迹（外法向偏置 R−δ、闭环切线切入、恒速；演示级可先常数 δ，密集 L）。
+6. **VE-D6**：复用 IK/FCL/仿真校验 + `.ls` 生成；滚轮工具几何数据化；Mock `IRobot` 执行。
+7. **VE-D7**：一键编排状态机（Idle→Capture→…→Mock Execute→Done）+「摆放 A / 摆放 B」端到端无头回归；最小 CLI 或现有壳入口。真机适配器另开阶段，不在本 Topic 假装完成。
+
+**未决假设**：
+现场机器人与相机未确认；`RISK-001` 仍 OPEN，真机无人值守禁止声称通过；Linux box 上 Windows/Qt 全量 GUI 构建可能不可用，以无头测试为阶段门禁。
+
+**计划位置**：`.claude/Plan.md`、`.claude/SessionBrief.md`、`PlanDocs/PROPOSAL.md`。
+
+
+---
+
+## VE-DEMO-001 软件收口（2026-11-06）
+
+**决定**：VE-D1~D7 全部 APPROVED；页首演示范围之 **软件模拟实现 COMPLETE**（`olp_runtime_tests` 211/211）。一键路径关闭 VE-D6-001。不等于真机、现场视觉、FCL 板件验证、GUI 全绿或 RISK-001 关闭。实机验证另开 Topic。工作区未强制 commit（由用户决定）。

@@ -1,3 +1,766 @@
+# Agent A Final Gate — VE-D7-ORCHESTRATE-AB-001 Round 1 + VE-DEMO-001 软件收口
+
+> **Gate owner**：Agent A  
+> **Gated at**：2026-11-06 00:21 Asia/Singapore (UTC+8)  
+> **Decision**：**APPROVED**；**Vision Edge 页首演示之软件模拟闭环 COMPLETE**  
+> **Production code / git commit / push**：未改生产、未提交、未推送
+
+## 独立核对
+
+- 七阶段 Task：VE-D1…D7 CRDocs 链条与实现目录 `include/olp/runtime` + `src/runtime` + `tests/test_vision_*` + `tests/data/vision_edge`。
+- 状态机：`VisionEdgeDemo.cpp` Capture→…→Validate→Execute→Done/Fault；每步失败 `faultAt`。
+- 安全门槛：`gateMockOnIkAndLsPass=true`（`:110-112`）+ ik/ls 编排双检（`:130-145`）；单测 gated IK → Mock Skipped、traj 不变。
+- AB：`runVisionEdgeDemoAB` 两次 `runVisionEdgeDemoOnce`；211 中断言 bothDone、+2 轨迹。
+- 自跑：`olp_runtime_tests` → **211 passed, 0 failed**。
+- 工作树：无超出 Vision Edge / 计划文档 / CMake / 测试接线的意外路径；未 commit。
+
+## 明确不等于
+
+真机下发与安全、现场 3D 视觉验收、板件 FCL 已验证、完整 Qt GUI/`olp_tests` 全绿、RISK-001（ROBOGUIDE/真机对拍）关闭。
+
+## 仍 OPEN 的 P2 / 风险（非阻断本期模拟）
+
+- `VE-D1-002` / `VE-D1-003` / `VE-D1-004`
+- `VE-D3-001`（CW→CCW 套件）
+- `VE-D5-001`（+Y==n_out 套件显式断言）
+- `VE-D6-001`：**一键 CLOSED**；未门控 D6 调试笛卡尔通道仍可执行（有意保留）
+- `RISK-001` OPEN
+
+---
+
+# 审核结论 — VE-D7-ORCHESTRATE-AB-001 Round 1
+
+> **Task ID**：`VE-D7-ORCHESTRATE-AB-001`  
+> **Round**：1  
+> **Reviewer**：Agent C（只审不改生产代码；未 git commit；未写 APPROVED）  
+> **Reviewed at**：2026-11-06 00:19 Asia/Singapore (UTC+8)  
+> **Verdict**：**READY_FOR_A_APPROVAL**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：无新增阻塞；`VE-D6-001` **一键路径 CLOSED**（未门控 D6 调试残差保留说明）
+
+## 1. 结论
+
+**READY_FOR_A_APPROVAL**。本轮 **无 P0 / 无 P1**。最终是否 `APPROVED` 由 **Agent A** 决定。
+
+## 2. 独立实跑
+
+```text
+cd /workspace/Si_FastSuite/build-headless
+cmake .. -DOLP_HEADLESS=ON -DOLP_BUILD_TESTS=ON -DOLP_ENABLE_FCL=OFF
+cmake --build . --target olp_runtime olp_runtime_tests -j$(nproc)
+./olp_runtime_tests
+# Summary: 211 passed, 0 failed. exit 0
+# 含 VE-D1…D6 回归 + VE-D7 AB / Fault / gate 用例
+```
+
+独立探针（`/tmp/probe_d7_gate`）：
+
+| 场景 | 结果 |
+| :--- | :--- |
+| 未门控 `gateMockOnIkAndLsPass=false` + 不可达 | ik/ls Failed；**executeTrajectory 仍 Passed，trajDelta=1**（D6 残差） |
+| 门控 `=true`（单测） | Mock upload/execute **Skipped**；traj 不增 |
+| once 未知摆放 → Fault → 再 once placement_a | Fault 后下一次从 Idle→**Done**；`claimsSiteSafe=0` |
+
+## 3. 重点核对（附行号）
+
+### 状态机每步失败传播
+`VisionEdgeDemo.cpp:61-145`：Capture/Perceive/Fit/Plan/Validate 任一步失败 → `faultAt` → `Fault`，`executedMock=false`。Validate 后硬门 ik/ls（`:130-145`）。Mock 未 Pass → Fault（`:149-155`）。
+
+### AB 同逻辑连续 Done
+`runVisionEdgeDemoAB`（`:170-189`）两次调用同一 `runVisionEdgeDemoOnce`；仅 `placement_a`/`placement_b`。单测：bothDone、placementIds、ik+ls Passed、`trajBeforeAb+2`（`test_vision_demo.cpp:53-91`）。
+
+### ik/ls 失败禁止 upload/run/executeTrajectory（VE-D6-001 一键关闭）
+- Options：`EdgeRollValidate.h:76-78`。
+- 实现：`EdgeRollValidate.cpp:244-253` — `gateBlocks` 时 **两者** Skipped，不进入 `:286-294` 的 `executeTrajectory`。
+- 一键强制：`VisionEdgeDemo.cpp:110-112` `runMock=true` + `gateMockOnIkAndLsPass=true`。
+- 编排层双检：`:130-145` Fault。
+- 单测：`test_vision_demo.cpp:115-158`（不可达路径 + gate → Skipped + traj 不变）。
+- **结论：一键路径上 VE-D6-001 真实关闭**；未门控 D6 API 仍可笛卡尔 Mock（探针），与 A「D7 关闭」触发口径一致 → DEFERRED 标 **CLOSED on one-click**。
+
+### Mock 轨迹计数严格
+AB 成功：`trajBeforeAb + 2`（`:89-91`）。未知摆放 / 门控 IK 失败：计数不变（`:111-113,:152-154`）。
+
+### 恢复 Idle
+无持久状态对象；每次 `runVisionEdgeDemoOnce` 入口 `stateReached=Idle`（`:54`）。探针：Fault 后再 once → Done。满足 Plan「可复位 Idle」。
+
+### 文档未把模拟当真机
+`VisionEdgeDemo.h:45-46`；`:158-165` 剥离 `claimsSiteSafe`；`tests/data/vision_edge/README.md:62-67`；IMPLEMENTATION §4；成功断言 `mockDemoPassed` 且 `!claimsSiteSafe`。RISK-001 仍 OPEN。
+
+### D1–D6 回归 / 无范围扩张
+211 全绿含 D1–D6 段。`VisionEdgeDemo.cpp` 192 行；无真空/蘸漆/羽化/HMI/真机 FTP；门禁仍 `olp_runtime_tests`（不绑失败 `olp_ui`）。
+
+## 4. 问题清单
+
+**无 P0。无 P1。**
+
+观察（不升单）：
+- AB 在 A 已 Fault 时仍跑 B（`bothDone` 会 false）——Plan 未强制 AB 短路，可接受。
+- IK 失败门控单测打在 `validateExportAndMockEdgeRoll` 层；`once` 层靠代码路径 + Capture Fault 覆盖——行为正确，可选后补 once 级 IK 注入。
+
+## 5. 给 Agent A
+
+门禁 211/211；一键硬门关闭 VE-D6-001；Mock≠真机口径诚实。可决定 `APPROVED` 收口页首「挪板后再成功一次」软件模拟闭环。勿关闭 RISK-001；勿把 MockDemoPassed 写成现场验收。
+
+---
+
+# Agent A Gate — VE-D6-VALIDATE-EXPORT-MOCK-001 Round 1
+
+> **Gate owner**：Agent A  
+> **Gated at**：2026-11-06 00:16 Asia/Singapore (UTC+8)  
+> **Decision**：**APPROVED**（放行 VE-D7）  
+> **Production code / git commit**：未改、未提交
+
+## 独立核对
+
+- 读 C Round 1 / `EdgeRollValidate.h|.cpp` / `test_vision_validate.cpp`。
+- 自跑：`olp_runtime_tests` → **185 passed, 0 failed**。
+- 确认：IK 失败 → LS Failed + mockUpload Skipped；`claimsSiteSafe`/`claimsBoardCollisionVerified`/`usedTorchSpheresAsRoller` 恒 false；无 FCL 时 NotBuilt/NotCheckedNoFcl。
+
+## 对 P2 VE-D6-001 的严谨判断
+
+| 问题 | IK 失败后笛卡尔 `executeTrajectory` 仍可 Passed |
+| :--- | :--- |
+| D6 是否撒谎？ | **否**：`ik=Failed`，`claimsSiteSafe=false`；TP/LS 通道已阻断 |
+| 是否升 P0/P1？ | **否**（D6 是库级流水线，允许显式调试通道） |
+| 能否在 D7 解决？ | **能，且必须**：一键编排是唯一「像真机启动」的入口，必须统一安全门槛 |
+| D7 必须项 | `ik!=Passed` **或** `lsExport!=Passed` → **禁止** `uploadProgram`/`runProgram`/`executeTrajectory`；整次运行 Fault；可用 `requireIkPass` 或编排层硬门 |
+
+结论：D6 APPROVED；VE-D6-001 留 DEFERRED，**在 D7 关闭为验收硬条件**，不是可选项。
+
+## 口径限制
+
+1. APPROVED = 校验/导出/Mock 薄封装 + 诚实报告门禁。  
+2. **不是**板件 FCL 已验证；**不是**真机/ROBOGUIDE 安全验收。  
+3. VE-D7 边界见 `.claude/Plan.md`。
+
+---
+
+# 审核结论 — VE-D6-VALIDATE-EXPORT-MOCK-001 Round 1
+
+> **Task ID**：`VE-D6-VALIDATE-EXPORT-MOCK-001`  
+> **Round**：1  
+> **Reviewer**：Agent C（只审不改生产代码；未 git commit；未写 APPROVED）  
+> **Reviewed at**：2026-11-06 00:14 Asia/Singapore (UTC+8)  
+> **Verdict**：**READY_FOR_A_APPROVAL**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：`VE-D6-001` DEFERRED（IK 失败后笛卡尔 Mock 仍可执行；报告仍诚实）
+
+## 1. 结论
+
+**READY_FOR_A_APPROVAL**。本轮 **无 P0 / 无 P1**。最终是否 `APPROVED` / 放行 VE-D7 由 **Agent A** 决定。
+
+## 2. 独立实跑
+
+```text
+cd /workspace/Si_FastSuite/build-headless
+cmake .. -DOLP_HEADLESS=ON -DOLP_BUILD_TESTS=ON -DOLP_ENABLE_FCL=OFF
+cmake --build . --target olp_runtime olp_runtime_tests -j$(nproc)
+./olp_runtime_tests
+# Summary: 185 passed, 0 failed. exit 0
+# A: ik=Passed pass=170 fail=0 ls=Passed；Mock upload/execute Passed
+```
+
+探针：
+
+| 场景 | 结果 |
+| :--- | :--- |
+| 正常 A | UTOOL from calib `(0,0,150)`；`NotBuilt`/`NotCheckedNoFcl`；`boundToFcl` 强制 false；`L P[`×170；`mm/sec`；LS 含 `RISK-001` |
+| 强制不可达位姿 | `ik=Failed` fail=170；**`ls=Failed`**；**`mockUpload=Skipped`**；`mockExecute=Passed`（笛卡尔通道）；`requireIkPass=true` → DeviceResult InternalError |
+
+## 3. 重点核对
+
+### OPW UTOOL
+`EdgeRollValidate.cpp:14-27` / `:139` / `:157`：优先 `HandEyeCalibration.T_flange_tcp`；否则占位 `(0,0,150)` 并写 notes。单测与探针确认 `utoolFromCalibration=true`。
+
+### 失败 IK → 中止导出 / 上传
+- Target `cache.valid=false`（`:159-179`）。
+- `FanucLsPostProcessor.cpp:74-76`：`!cache.valid` → Error；`:92` `blockOnUnreachable`。
+- 本封装 `:211-217` 打开 `blockOnUnreachable/blockOnConfigJump`。
+- LS Failed 时 `:270-272` Mock **upload Skipped**（不装假 TP）。
+- **笛卡尔** `executeTrajectory` 在已连接时仍可跑（`:275-282`）——与 TP 通道分离；报告 `ik` 仍 Failed，且永不 `claimsSiteSafe`。记 **P2 VE-D6-001**，不升 P1。
+
+### 密集 L / 速度 / 姿态
+IK 全过时 LS 含 `L P[`、`mm/sec`、姿态字段；Targets 来自 D5 `fillTargetsFromEdgeRollPath`（L + mm/s + WPR）。
+
+### Mock 语义
+`uploadProgram`+`runProgram` 仅当 LS Passed；`executeTrajectory` 记录笛卡尔历史。Mock≠真机：`risk001Open`、`claimsSiteSafe=false`。
+
+### FCL 诚实命名（对照 A 原定）
+A 计划（`.claude/Plan.md`）允许 `NotCheckedEmptyMesh | NotCheckedNoFcl`。B 实现：
+- **无 FCL**（本门禁）：`fclStatus=NotBuilt`，`boardCollision=NotCheckedNoFcl`（`:48-51`）——**比单一 EmptyMesh 更准确**。
+- **有 FCL + 空网格**：`NotCheckedEmptyMesh`（`:35-39`），永不 `Cleared`。
+- `claimsBoardCollisionVerified` 恒 false；`usedTorchSpheresAsRoller` 恒 false；`boundToFcl` 硬编码 false（`:127`）。
+
+### RISK-001
+报告 `risk001Open=true` + notes；LS `/MN` 水印 `DRAFT - UNVERIFIED ON ROBOGUIDE (RISK-001)`（`FanucLsPostProcessor.cpp:240-241`）。
+
+### 无焊枪球 / 无 D7+
+未引用 `kTorchSpheres` 几何；无 HMI/状态机/真空/蘸漆；门禁仍 `olp_runtime_tests`（不绑失败 `olp_ui`）。
+
+## 4. 问题清单
+
+**无 P0。无 P1。**
+
+### VE-D6-001 [P2][DEFERRED] IK 失败后笛卡尔 Mock 仍可 Passed
+见上；`EdgeRollValidate.cpp:275-282`。
+
+## 5. 给 Agent A
+
+阶段门禁 185/185；FCL 分项与滚轮未绑定口径诚实。可决定 `APPROVED` 并放行 VE-D7（一键编排/双摆放回归）。勿把 Mock/LS draft 写成现场或 ROBOGUIDE 已对拍。
+
+---
+
+# Agent A Gate — VE-D5-EDGE-PATH-001 Round 1
+
+> **Gate owner**：Agent A  
+> **Gated at**：2026-11-06 00:10 Asia/Singapore (UTC+8)  
+> **Decision**：**APPROVED**（放行 VE-D6）  
+> **Production code / git commit**：未改、未提交
+
+## 独立核对
+
+- 读 C Round 1 / `IMPLEMENTATION.md` / `EdgeRollPath.h:22-26` / `EdgeRollPath.cpp:38-46`（`y = z.cross(x)`）。
+- 手算：入口 `X=(0,1,0)`, `Z=(0,0,-1)` → `Y=Z×X=(1,0,0)=n_out`，`det=+1`；`Y=-n_out` → `det=-1`（左手，**不采纳**）。
+- 自跑：`olp_runtime_tests` → **156 passed, 0 failed**。
+- 金样 S=`(967.5,650,791)`、d=7.5、无 `localTransform` 再乘。
+
+## 修正后的姿态约定（写入放行口径，取代 A 旧 VE-D5 Plan 表述）
+
+1. **+X_tool = t**（切向）  
+2. **+Z_tool = (0,0,-1)**（世界向下）  
+3. **+Y_tool = Z×X**（平面 CCW 上等于 **n_out**）  
+4. 压板方向 = **−Y_tool**（= −n_out，指向板内）  
+5. 旧稿「+Y=−n_out」为左手系，**作废，不得要求 B 改回**。
+
+## 口径限制
+
+1. APPROVED = 演示级常数偏置沿边轨迹门禁通过。  
+2. **不是** IK/FCL/`.ls`/真机安全验收（属 VE-D6，且须诚实报告范围）。  
+3. VE-D6 边界见 `.claude/Plan.md`。
+
+---
+
+# 审核结论 — VE-D5-EDGE-PATH-001 Round 1
+
+> **Task ID**：`VE-D5-EDGE-PATH-001`  
+> **Round**：1  
+> **Reviewer**：Agent C（只审不改生产代码；未 git commit；未写 APPROVED）  
+> **Reviewed at**：2026-11-06 00:08 Asia/Singapore (UTC+8)  
+> **Verdict**：**READY_FOR_A_APPROVAL**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：`VE-D5-001` DEFERRED（套件可补 +Y==n_out 显式断言；实现已正确）
+
+## 1. 结论
+
+**READY_FOR_A_APPROVAL**。本轮 **无 P0 / 无 P1**。最终是否 `APPROVED` / 放行 VE-D6 由 **Agent A** 决定。
+
+## 2. 工具姿态：独立物理/数学判定（不以指令盲从）
+
+给定锁定约定 **+X = t（切向）**、**+Z = (0,0,-1) 向下**：
+
+| 候选 | 列向量 (X,Y,Z) 在入口边 | `det(R)` | 结论 |
+| :--- | :--- | ---: | :--- |
+| **B 实现**：`Y = Z×X = n_out` | X≈(0,1,0), Y≈(1,0,0), Z=(0,0,-1) | **+1** | **右手系正确**；压板方向 **-Y = -n_out（向内）** |
+| 旧口径/A 曾写：`Y = -n_out` | X≈(0,1,0), Y≈(-1,0,0), Z=(0,0,-1) | **-1** | **左手系，数学错误**；不得为“迎合指令”而要求改回 |
+
+实现证据：`EdgeRollPath.cpp:38-46`（`y = z.cross(x)` + `fromColumns`）；头文件 `:22-26` 与 IMPLEMENTATION 一致。  
+C 探针：`Y==n_out`、`Y==-n_out` 为假、`det=1`、WPR≈`(180,0,90)`。
+
+**因此：B 的姿态约定通过；不因 A 曾写 +Y=-n_out 而开 P1。**
+
+## 3. 独立实跑
+
+```text
+cd /workspace/Si_FastSuite/build-headless
+cmake .. -DOLP_HEADLESS=ON -DOLP_BUILD_TESTS=ON -DOLP_ENABLE_FCL=OFF
+cmake --build . --target olp_runtime olp_runtime_tests -j$(nproc)
+./olp_runtime_tests
+# Summary: 156 passed, 0 failed. exit 0
+```
+
+探针要点：S=`(967.5,650,791)`；approach0=`(1007.5,650,791)`；接触 166 点恒速 20；path x∈`[752.5,1007.5]`（基座绝对，非质心局部）；Target 位姿/mm/s/L 匹配；`R<=δ` → InvalidArgument 不抛。
+
+## 4. 核对通过
+
+| 项 | 证据 |
+| :--- | :--- |
+| 无 localTransform 再乘 | 头注释 `:14`；路径只用 `outline.segments` 基座坐标（`:181-184`）；x 落在板缘外侧而非质心邻域 |
+| `d=R−δ` | `:221`；金样 7.5；到边 x=960 距离 7.5 |
+| `n_out` | CCW `:33-35` `n=(ty,-tx)`；入口 `(1,0)` |
+| 接触 z | `:222` `pose.z - thickness/2` → 791 |
+| 最长边中点切入 | `:220-229`；A 四边等长取 index 0；S=mid+n_out*d |
+| 闭环进退 | Approach→Contact 整圈回 S→Retract；末 Contact 闭于 S |
+| 恒速 | Contact 全部 `contactSpeedMmPerSec`（探针 166/166） |
+| Target 转换 | `fillTargetsFromEdgeRollPath:322-357`：`poseInUFrame=fromWPR`（mm+WPR）、`speedValue`=mm/s、`MotionType::L` |
+| 坏参数 | `validateParams` R>δ 等；空 outline 不抛 |
+| 无 D6+ | 无 IK/FCL/`.ls`/真空/羽化/状态机；不声称空网格 FCL |
+| 行数/ASCII | `.h` 72 / `.cpp` 360 / 测试 236；非 ASCII 0 |
+
+## 5. 问题清单
+
+**无 P0。无 P1。**
+
+### VE-D5-001 [P2][DEFERRED] 套件未显式断言 +Y==n_out
+
+- 单测已锁 +X/+Z/det；C 探针已证 +Y==n_out。建议后续补一行 `colY≈(1,0,0)`。
+- **状态**：`DEFERRED`
+
+## 6. 给 Agent A
+
+阶段门禁 156/156；姿态以 **右手 Z×X=n_out** 为准写入放行口径。可决定 `APPROVED` 并放行 VE-D6（IK/FCL/`.ls`/Mock 执行）。完整 GUI 仍非本阶段门禁。
+
+---
+
+# Agent A Gate — VE-D4-FIT-TRANSIENT-001 Round 1
+
+> **Gate owner**：Agent A  
+> **Gated at**：2026-11-06 00:03 Asia/Singapore (UTC+8)  
+> **Decision**：**APPROVED**（放行 VE-D5）  
+> **Production code / git commit**：未改、未提交
+
+## 独立核对
+
+- 读 C Round 1 / `IMPLEMENTATION.md` / `BoardOutlineFit.h|.cpp` / `test_vision_fit.cpp`。
+- 自跑：`olp_runtime_tests` → **130 passed, 0 failed**；runtime 无 OCCT。
+- 确认空默认 `TriMesh` 在 `FclCollisionQueries::getSceneBvh` 下 `valid=false` 被跳过（非碰撞实体）。
+- 采纳 C 说明：未来 mesh 须为**节点局部系**几何。
+
+## 口径限制
+
+1. APPROVED = 直线段拟合 + 无 OCCT 瞬态 SceneNode 描述符。  
+2. **不是**真 CAD 导入 / FCL 已校验实体；**不是**真机验收。  
+3. VE-D5 边界见 `.claude/Plan.md`（页首演示：常数偏置沿边；**无**蘸漆/羽化/真空/拐角配方红线）。
+
+---
+
+# 审核结论 — VE-D4-FIT-TRANSIENT-001 Round 1
+
+> **Task ID**：`VE-D4-FIT-TRANSIENT-001`  
+> **Round**：1  
+> **Reviewer**：Agent C（只审不改生产代码；未 git commit；未写 APPROVED）  
+> **Reviewed at**：2026-11-06 00:02 Asia/Singapore (UTC+8)  
+> **Verdict**：**READY_FOR_A_APPROVAL**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：无新增（既有 `VE-D1-002`/`003`/`004`、`VE-D3-001` 仍 DEFERRED）
+
+## 1. 结论
+
+**READY_FOR_A_APPROVAL**。本轮 **无 P0 / 无 P1**。最终是否 `APPROVED` / 放行 VE-D5 由 **Agent A** 决定。C 不写 APPROVED。
+
+VE-D4 将 VE-D3 感知轮廓拟合为直线段闭环，并包装为既有 `core::SceneNode` 瞬态工件描述符；**不**强制 OCCT 棱柱，**不**扩展 `ProjectModel`。
+
+## 2. 独立实跑
+
+```text
+cd /workspace/Si_FastSuite/build-headless
+cmake .. -DOLP_HEADLESS=ON -DOLP_BUILD_TESTS=ON -DOLP_ENABLE_FCL=OFF
+cmake --build . --target olp_runtime olp_runtime_tests -j$(nproc)
+./olp_runtime_tests
+# Summary: 130 passed, 0 failed. exit 0
+```
+
+链路：`olp_runtime_tests` → 仅 `libolp_runtime.a` + `libolp_core.a`（无 OCCT）。
+
+独立几何：A/B 基座边长均为 **200 mm**；闭环 `last.p1 → first.p0`；A `localTransform.pos=(860,650,800)` 且 `rot=rotZ(π/2)`。N=3 时 `sideLengthsMm` 为空（仅 N==4 填摘要）。NaN pose → 不抛、`InvalidArgument`。
+
+## 3. 核对通过
+
+| 项 | 证据 |
+| :--- | :--- |
+| API | `BoardOutlineFit.h` 44 行；`BoardOutlineFit.cpp` 124 行；`CMakeLists.txt:110` |
+| N 段闭环 | `fitBoardOutline:67-80`：`p1 = verts[(i+1)%n]`；单测 closed 断言 |
+| N==4 摘要 | `:82-87` 填 `sideLengthsMm`；A/B ≈200 mm |
+| 位姿→变换 | `transformFromBoardPose:20-24`：`pos=(x,y,z)` + `Mat3::rotZ(yaw)` |
+| SceneNode 字段 | 对照 `ProjectModel.h:71-85`：`Part`/`Workpiece`、`cadHandleId=-1`、`sourceCadFile=vision_edge_transient`、空 `renderMesh`/`collisionMesh`；**未改** `ProjectModel` |
+| 空网格碰撞语义 | 默认 `TriMesh` bboxMin==bboxMax=(0,0,0)；`FclCollisionQueries.cpp:185-197` 不建 BVH（`valid` 保持 false）；`:334-335` `if (!obs.valid) continue` → **不参与**下游三角碰撞。`cadHandleId=-1` 符合无 CAD 句柄 |
+| 坏输入 | N<3、零长边、NaN pose → `DeviceResult`/`InvalidArgument`；`makeTransient*` 不抛 |
+| A/B | 位姿/节点 id/`localTransform` 可区分 |
+| 无 OCCT / 无 D5+ | runtime 无 OCCT 符号与链接；无 MakePrism/轨迹/HMI/RANSAC |
+| 文档 | README Outline fit 节：合成直线段 ≠ 工业拟合/真 CAD |
+| D1–D3 回归 | 含于 130 全绿 |
+
+## 4. 问题清单
+
+**无 P0。无 P1。**
+
+说明（非缺陷）：`FittedBoardOutline.segments` 顶点在**基座系绝对坐标**（头注释已写）；`node.localTransform` 表达板位姿。当前空网格下二者不冲突；将来若填充 mesh，须用**节点局部系**几何，避免对基座绝对折线再乘一次 `localTransform`。
+
+## 5. 给 Agent A
+
+阶段门禁 130/130；可决定 `APPROVED` 并放行 VE-D5（沿边偏置轨迹）。勿把瞬态空网格节点当成已参与 FCL 碰撞的实体 CAD；完整 GUI/`olp_tests` 仍非本阶段门禁。
+
+---
+
+# Agent A Gate — VE-D3-PERCEIVE-001 Round 1
+
+> **Gate owner**：Agent A  
+> **Gated at**：2026-11-05 23:58 Asia/Singapore (UTC+8)  
+> **Decision**：**APPROVED**（放行 VE-D4）  
+> **Production code / git commit**：未改、未提交
+
+## 独立核对
+
+- 读 C Round 1 / `IMPLEMENTATION.md` / `BoardPerception.h|.cpp` / `test_vision_perceive.cpp`。
+- 金样：A base 四点与质心 `(860,650,800)`、yaw `π/2`；B 质心 `(840,685)`；与代码约定 `first_edge_atan2_after_ccw` 一致。
+- 自跑：`olp_runtime_tests` → **100 passed, 0 failed**。
+- P2 `VE-D3-001` 不升格阻断。
+
+## 口径限制
+
+1. APPROVED = 合成轮廓 Mode 2 感知门禁通过。  
+2. **不是**真点云 / 现场视觉验收；**不是**完整 GUI 全绿。  
+3. VE-D4：**拟合直线段链 + 无 OCCT 的瞬态工件描述**为门禁；OCCT 棱柱可选且不得绑死 HEADLESS 门禁。见 `.claude/Plan.md`。
+
+---
+
+# 审核结论 — VE-D3-PERCEIVE-001 Round 1
+
+> **Task ID**：`VE-D3-PERCEIVE-001`  
+> **Round**：1  
+> **Reviewer**：Agent C（只审不改生产代码；未 git commit；未写 APPROVED）  
+> **Reviewed at**：2026-11-05 23:57 Asia/Singapore (UTC+8)  
+> **Verdict**：**READY_FOR_A_APPROVAL**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：`VE-D3-001` DEFERRED（可选；CW→CCW 套件覆盖）。既有 `VE-D1-002`/`003`/`004` 仍 DEFERRED
+
+## 1. 结论
+
+**READY_FOR_A_APPROVAL**。本轮 **无 P0 / 无 P1**。最终是否 `APPROVED` / 放行 VE-D4 由 **Agent A** 决定。C 不写 APPROVED。
+
+VE-D3 为合成轮廓 Mode 2 感知：`capture/transform → 有限/N/面积 → 逻辑闭合 shoelace → 统一 CCW → 顶点质心 + 首边 yaw`。**不是**真 3D 视觉验收。
+
+## 2. 独立实跑
+
+```text
+cd /workspace/Si_FastSuite/build-headless
+cmake .. -DOLP_HEADLESS=ON -DOLP_BUILD_TESTS=ON -DOLP_ENABLE_FCL=OFF
+cmake --build . --target olp_runtime olp_runtime_tests -j$(nproc)
+./olp_runtime_tests
+# Summary: 100 passed, 0 failed. exit 0
+```
+
+独立金样（`calib_demo` Rz(90°)+t）：
+
+| 项 | 期望 | 实测 |
+| :--- | :--- | :--- |
+| A 基座四点 | `(960,550),(960,750),(760,750),(760,550)` @z=800 | 一致 |
+| A 质心 | `(860,650,800)` | 一致 |
+| A yaw | `π/2`（首边 `(960,550)→(960,750)`） | 一致 |
+| B 质心 | `(840,685)` | 一致（tol 1e-4） |
+| A/B | 质心/ yaw 可区分 | `dYaw≈0.436` rad |
+
+探针：CW 输入 → 不抛、面积 +40000、质心仍 A 金样；NaN → 不抛、`InvalidArgument`（经 `transformContourToBase`）。
+
+## 3. 核对通过
+
+| 项 | 证据 |
+| :--- | :--- |
+| API | `BoardPerception.h` 49 行；`BoardPerception.cpp` 131 行；`CMakeLists.txt:109` 编入 `olp_runtime` |
+| 变换链 | `perceiveFromContour:48` → `transformContourToBase`；`frameId="base"` |
+| CCW / 闭合 | shoelace `:17-28`；`areaSigned<0` 则 reverse `:78-81`；逻辑闭合 last→first 不复制顶点 `:68-69`；`closed=true` `:115` |
+| 质心 / yaw | 顶点均值 `:83-96`；`atan2(dy,dx)` 首边 `:98-107`；`yawConvention="first_edge_atan2_after_ccw"` 与 README / 头注释一致（非 PCA） |
+| 失败不抛 | N<3、面积阈值、disconnect、NaN → `DeviceResult`/`InvalidArgument`/`NotConnected` |
+| 点数 | A/B `edgeBaseMm.size()==polygonMm.size()`；A 已 CCW 时 `edge[0]=(960,550,800)` 保序 |
+| 文档口径 | README Perception 节：合成轮廓 ≠ Open3D/PCL/真深度验收；头文件同口径 |
+| 无 D4+ | 无拟合/OCCT 棱柱/偏置轨迹/状态机/SDK/OpenCV |
+| 行数 / ASCII | 均 <1000；非 ASCII 0 |
+| D1/D2 回归 | 含于 100 全绿 |
+
+## 4. 问题清单
+
+**无 P0。无 P1。**
+
+### VE-D3-001 [P2][DEFERRED] 套件缺 CW→CCW 显式回归
+
+- **位置**：`tests/test_vision_perceive.cpp`（实现 `BoardPerception.cpp:78-81`）
+- **现状**：A/B fixture 变换后已 CCW；CW 输入路径仅 C 探针覆盖。
+- **验收**：补 CW 输入单测；`olp_runtime_tests` 绿。
+- **状态**：`DEFERRED`
+
+## 5. 给 Agent A
+
+阶段门禁 100/100；可决定 `APPROVED` 并放行 VE-D4（轮廓拟合/可选瞬态棱柱）。勿把合成感知写成真点云/现场视觉验收；完整 GUI 测试仍非本阶段门禁。
+
+---
+
+# Agent A Gate — VE-D2-CALIB-MODEL-001 Round 1
+
+> **Gate owner**：Agent A  
+> **Gated at**：2026-11-05 23:53 Asia/Singapore (UTC+8)  
+> **Decision**：**APPROVED**（放行 VE-D3）  
+> **Production code / git commit**：未改、未提交
+
+## 独立核对
+
+- 读 C Round 1 / `IMPLEMENTATION.md` / `HandEyeCalibration.h|.cpp` / `test_vision_calib.cpp` / `calib_demo.json`。
+- 金样：`Rz(90°)` 行主序 + t`(1000,500,800)` → `(50,40,0)→(960,550,800)`，`(50,240,0)→(760,550,800)`。
+- `ContourDataset` 仅加载 `placement_*`，与 `calib_demo.json` 共存。
+- 自跑：`olp_runtime_tests` → **68 passed, 0 failed**（含 VE-D1 回归）。
+- 无 vendor SDK / 9 点求解 / 感知扩范围。
+
+## 口径限制
+
+1. APPROVED = VE-D2 演示外参数据模型门禁通过。  
+2. **不是**现场标定或真机验收；**不是**完整 GUI 全绿。  
+3. VE-D3 边界见 `.claude/Plan.md` / `SessionBrief.md`（简化感知：合成轮廓→板位姿+闭合上棱；禁止 v1.1 全量视觉）。
+
+---
+
+# 审核结论 — VE-D2-CALIB-MODEL-001 Round 1
+
+> **Task ID**：`VE-D2-CALIB-MODEL-001`  
+> **Round**：1  
+> **Reviewer**：Agent C（只审不改生产代码；未 git commit；未写 APPROVED）  
+> **Reviewed at**：2026-11-05 23:52 Asia/Singapore (UTC+8)  
+> **Verdict**：**READY_FOR_A_APPROVAL**  
+> **P0**：无  
+> **P1**：无  
+> **P2**：无新增（既有 `VE-D1-002`/`003`/`004` 仍 DEFERRED）
+
+## 1. 结论
+
+**READY_FOR_A_APPROVAL**。本轮 **无 P0 / 无 P1**。最终是否 `APPROVED` / 放行 VE-D3 由 **Agent A** 决定。C 不写 APPROVED。
+
+VE-D2 交付为演示级手眼外参数据模型 + UTF-8 JSON I/O + 正交/`det≈+1` 校验 + `transformContourToBase`；不是现场 9 点/AX=XB/ChArUco 标定器。文档与 fixture notes 均声明 demo ≠ 现场验收。
+
+## 2. 独立实跑
+
+```text
+cd /workspace/Si_FastSuite/build-headless
+cmake .. -DOLP_HEADLESS=ON -DOLP_BUILD_TESTS=ON -DOLP_ENABLE_FCL=OFF
+cmake --build . --target olp_runtime olp_runtime_tests -j$(nproc)
+./olp_runtime_tests
+# Summary: 68 passed, 0 failed. exit 0
+# VE-D1 回归（含 placement_* + calib 共存）+ VE-D2 往返/坏矩阵/金样均绿
+```
+
+独立探针（测试二进制外）：
+
+| 用例 | 结果 |
+| :--- | :--- |
+| rotation 含字符串 `"x"` | 不抛；`InvalidArgument`（type_error 映射） |
+| 缺 `rotation` | 不抛；`InvalidArgument` |
+| `T_flange_tcp: null` | ok；`has_tcp=false` |
+| ContourDataset 同目录 | `n=2`，仅 `placement_a/b`；`hasPlacement("calib_demo")==0` |
+| 金样 API | p0=`(960,550,800)`，p3=`(760,550,800)`；fixture `det=1` |
+
+## 3. 核对通过
+
+| 项 | 证据 |
+| :--- | :--- |
+| API 归属 | `include/olp/runtime/HandEyeCalibration.h`（53 行）；`src/runtime/HandEyeCalibration.cpp`（319 行）；编入 `olp_runtime`（`CMakeLists.txt:108`） |
+| 正交 + det | `validateTransform` `:90-134`：列单位长、两两正交、`det≈+1`、平移/旋转有限 |
+| 失败不抛 | `transformFromJson` `:58-84`、`loadHandEyeCalibrationJson` `:188-234` catch → `DeviceResult`；单测缺字段/det≈−1；探针类型错误 |
+| JSON 往返 | `test_vision_calib.cpp:75-99`；`T_cam_base`/`T_flange_tcp` 数值相等 |
+| 金样数学 | fixture `Rz(90°)` 行主序 + t`(1000,500,800)`；`p_base=T.transformPoint(p_cam)`（`MathTypes.h` `transformPoint`）；`(50,40,0)→(960,550,800)`，`(50,240,0)→(760,550,800)`，tol 1e-6 |
+| placement_* 过滤 | `ContourDataset.cpp:201-214` 仅 `placement_*.{json,csv}`；D1 46 断言仍在 68 内全绿 |
+| demo 口径 | `calib_demo.json` notes + `README.md` Calibration 节：非现场标定/验收 |
+| 无 D3+ | 无感知/拟合/轨迹/真空互锁/HMI/9 点求解器；无 vendor SDK/网络/Qt |
+| 行数 / ASCII | 新文件均 <1000；非 ASCII 行数 0 |
+| 全量 GUI | 既有 `VE-D1-003` Qt/`QColor` 债仍在——阶段门禁仅 `olp_runtime_tests` |
+
+## 4. 问题清单
+
+**无 P0。无 P1。**
+
+本轮无新增 P2。既有延期：`VE-D1-002`（无 nlohmann 时 JSON 拖垮 CSV）、`VE-D1-003`（HEADLESS `olp_ui`）、`VE-D1-004`（CSV-only / disconnect `queryState`）仍见 `DEFERRED.md`。
+
+## 5. 给 Agent A
+
+阶段门禁 68/68；可决定 `APPROVED` 并放行 VE-D3（简化感知）。勿把 demo 外参或 Mock 写成真机/现场标定验收；完整 GUI 测试仍非本阶段门禁。
+
+---
+
+# Agent A Gate — VE-D1-RUNTIME-MOCK-001 Round 2
+
+> **Gate owner**：Agent A  
+> **Gated at**：2026-11-05 23:47 Asia/Singapore (UTC+8)  
+> **Decision**：**APPROVED**（放行 VE-D2）  
+> **Production code / git commit**：未改、未提交
+
+## 独立核对
+
+- 读 `STATUS.md` / `IMPLEMENTATION.md` / C Round 2 结论。
+- 读 `src/runtime/ContourDataset.cpp:132-175`：`nlohmann::json::exception` → `InvalidArgument`。
+- 读 `tests/test_vision_runtime.cpp:241-280`：坏 `polygonMm` 不抛、映射失败码。
+- 自跑：`build-headless` 下 `olp_runtime_tests` → **46 passed, 0 failed**。
+- 接口与 Mock 仍无厂商 SDK/网络；fixture 纯 ASCII；行数均 <1000。
+- P2 `VE-D1-002`/`003`/`004` 不升格阻断。
+
+## 口径限制（写入批准条件）
+
+1. APPROVED = VE-D1 设备抽象 + Mock + 合成数据集门禁通过。
+2. **不是**真机/相机验收；**不是**完整 GUI `olp_tests` 通过。
+3. 下一阶段 VE-D2 边界见 `.claude/Plan.md` / `SessionBrief.md`（标定数据模型，禁止现场 9 点实测与过度设计）。
+
+---
+
+# 审核结论 — VE-D1-RUNTIME-MOCK-001 Round 2
+
+> **Task ID**：`VE-D1-RUNTIME-MOCK-001`  
+> **Round**：2  
+> **Reviewer**：Agent C（只审不改生产代码；未 git commit；未写 APPROVED）  
+> **Reviewed at**：2026-11-05 23:46 Asia/Singapore (UTC+8)  
+> **Verdict**：**READY_FOR_A_APPROVAL**  
+> **P0**：无  
+> **P1**：无（`VE-D1-001` **RESOLVED**）  
+> **P2**：`VE-D1-002`、`VE-D1-003`、`VE-D1-004` 仍 DEFERRED（无新增）
+
+## 1. 结论
+
+**READY_FOR_A_APPROVAL**。Round 1 唯一阻断项 `VE-D1-001` 已关闭；本轮复审 **无 P0 / 无 P1**。最终是否 `APPROVED` / 放行 VE-D2 由 **Agent A** 决定。C 不写 APPROVED。
+
+## 2. VE-D1-001 关闭依据
+
+| 核对项 | 结果 |
+| :--- | :--- |
+| 源码 | `src/runtime/ContourDataset.cpp:132-175`：`loadJsonFrame` 字段提取（含 `get<double>()`）外包 `catch (nlohmann::json::exception)` / `catch (std::exception)` → `DeviceResult::failure(InvalidArgument, "JSON field type/error ...")` |
+| 回归测试 | `tests/test_vision_runtime.cpp:241-280`：临时坏 JSON、assert 不抛、`InvalidArgument`、诊断信息含 `type`/`JSON` |
+| 行数 | `ContourDataset.cpp` 277、`test_vision_runtime.cpp` 282（均 <1000） |
+| 范围 | 仅该修复 + 测试 + CRDocs 交接；未扩 VE-D2+；P2 未假装关闭 |
+
+### 独立实跑
+
+```text
+cd /workspace/Si_FastSuite/build-headless
+cmake .. -DOLP_HEADLESS=ON -DOLP_BUILD_TESTS=ON -DOLP_ENABLE_FCL=OFF
+cmake --build . --target olp_runtime olp_runtime_tests -j$(nproc)
+./olp_runtime_tests
+# Summary: 46 passed, 0 failed. exit 0
+# 含：VE-D1-001 bad JSON polygonMm types do not throw
+#     VE-D1-001 bad JSON polygonMm maps to InvalidArgument
+#     VE-D1-001 failure message is diagnostic
+```
+
+独立探针（测试二进制外）：
+
+```text
+loadFromDirectory(/tmp/ve_d1_bad_json_r2) with polygonMm:[["x","y"],...]
+→ returned ok=0 code=3 name=InvalidArgument
+  msg=JSON field type error in ...: [json.exception.type_error.302] type must be number, but is string
+→ PROBE_EXIT=0（未抛异常）
+合法 tests/data/vision_edge 仍 ok=1 n=2
+```
+
+## 3. 无新问题
+
+- 合法 A/B fixture 仍绿；原 43 条路径断言仍在且通过。  
+- 未引入新 SDK/网络/范围扩张。  
+- 既有 HEADLESS `olp_ui` Qt 阻塞仍属 `VE-D1-003` DEFERRED，非本轮回归。
+
+## 4. 给 Agent A
+
+阶段门禁 `olp_runtime_tests` 46/46；P1 清零。可按三智能体流程决定 `APPROVED` 并放行 VE-D2。完整 GUI `olp_tests` 仍受环境阻塞，勿写成全仓全绿。
+
+---
+
+# 审核结论 — VE-D1-RUNTIME-MOCK-001 Round 1
+
+> **Task ID**：`VE-D1-RUNTIME-MOCK-001`  
+> **Round**：1  
+> **Reviewer**：Agent C（独立代码审核；只读生产代码；未改 `src/` / `include/` / `tests/` 产品实现；未 git commit；未写 APPROVED）  
+> **Reviewed at**：2026-11-05 23:43 Asia/Singapore (UTC+8)  
+> **Verdict**：**CHANGES_REQUESTED**  
+> **P0**：无  
+> **P1**：`VE-D1-001` **OPEN**（1）  
+> **P2**：`VE-D1-002`、`VE-D1-003`、`VE-D1-004` 记入本轮 / `DEFERRED.md`（不阻断本阶段若 P1 关闭后由 A 放行）
+
+## 1. 结论
+
+**CHANGES_REQUESTED**（非 APPROVED；最终放行由 Agent A 决定）。
+
+本轮 VE-D1 范围（`ICamera`/`IRobot`/`IIO` + Mock + 合成 A/B 数据集 + `olp_runtime`/`olp_runtime_tests`）主体落地正确：无厂商 SDK / 无网络 I/O、接口与 `olp::device::RobotModel` 运动学层分离、文档未把 Mock 写成真机验收、行数远低于 1000、无范围扩张到标定/感知/轨迹/HMI。C **独立**复跑阶段门禁：
+
+```text
+cd /workspace/Si_FastSuite/build-headless
+cmake .. -DOLP_HEADLESS=ON -DOLP_BUILD_TESTS=ON -DOLP_ENABLE_FCL=OFF
+cmake --build . --target olp_runtime olp_runtime_tests -j$(nproc)
+./olp_runtime_tests
+# Summary: 43 passed, 0 failed. exit 0
+```
+
+但公开 API `ContourDataset::loadFromDirectory` 在 JSON 字段类型错误时 **抛异常** 而非返回 `DeviceResult` 失败，违反本层统一错误通道，且属明确失败路径/异常安全缺口，记 **P1**，须 B 返修后再交 C 复审。
+
+完整 `olp_ui` / `olp_tests` 在本 Linux box 因既有 `WorkcellPdfReportExporter.h` 无条件 `#include <QColor>` 无法编译——**既有环境阻塞，非 VE-D1 引入**；**不可**声称全绿。本阶段门禁仅 `olp_runtime_tests`。
+
+## 2. 核对通过的部分
+
+| 项 | 证据 |
+| :--- | :--- |
+| 分支与基线 | `vision-edge` @ `94d860d`；工作区未 commit；对照 `PlanDocs/DECISIONS.md` VE-DEMO-001 / VE-D1 |
+| 架构归属 | 新库 `olp_runtime`（`CMakeLists.txt:103-112`），命名空间 `olp::runtime`；与 `olp::device::RobotModel` 分立 |
+| 接口无 SDK | `include/olp/runtime/*` 仅依赖 `DeviceTypes` / STL / `olp/core`；无 vendor 头 |
+| Mock 无网络 | `MockCamera`/`MockRobot`/`MockIO` 进程内；`nm libolp_runtime.a` 无 socket/HTTP 符号（命中的 `connect` 为成员函数名） |
+| A/B 合成几何 | `placement_a` 轴对齐 200×200；`placement_b` 相对板心 +25° 且平移 (+35,+20)，误差 <1e-6 |
+| 失败路径（已测） | NotConnected / NotFound / InvalidArgument：相机断开采集、未知 placement、机器人空名/未上传/空轨迹、IO 负通道、缺失目录 |
+| 测试真实性 | 43 条 `check()` 读真实磁盘 fixture、断言顶点与 A/B 位姿差、记录 upload/run/trajectory；非空转 |
+| 行数 | 最大 `ContourDataset.cpp` 265、`test_vision_runtime.cpp` 238；全部 <1000 |
+| 英文 fixture | `tests/data/vision_edge/*` 非 ASCII 行数 = 0 |
+| 文档口径 | `tests/data/vision_edge/README.md`、`CRDocs/IMPLEMENTATION.md` 明确 Mock ≠ 真机验收 |
+| 未扩范围 | 无标定/感知/路径规划/真空互锁/HMI/一键编排实现 |
+| 全量 GUI | `cmake --build . --target olp_ui` → `WorkcellPdfReportExporter.h:5` `QColor` fatal；与 VE-D1 diff 无关 |
+
+## 3. 本机实跑（Agent C）
+
+1. `olp_runtime_tests`：**43 passed, 0 failed**, exit 0（2026-11-05 23:43 +08）。  
+2. 异常探针：临时目录写入 `polygonMm: [["x","y"], ...]` 后调用 `ContourDataset::loadFromDirectory` → **抛出** `json.exception.type_error.302`（exit 2），未返回 `DeviceResult`。  
+3. CSV-only 临时目录（仅 a/b `.csv`）：加载成功（ok=1, n=2）。  
+4. `olp_ui`：如上，既有 Qt 头依赖失败。
+
+## 4. 问题清单
+
+### VE-D1-001 [P1][RESOLVED in Round 2] JSON 轮廓类型错误时异常逃逸出 DeviceResult API
+
+- **位置**：`src/runtime/ContourDataset.cpp:145-155`（`item.at(...).get<double>()`）；外层仅 `in >> root` 有 try/catch（`:124-130`）。
+- **问题**：`ContourDataset::loadFromDirectory` / `loadJsonFrame` 的公开契约是 `DeviceResult`，但 `polygonMm` 元素类型非 number 时 `nlohmann::json` 抛 `type_error`，调用方若未包 try/catch 会直接崩溃。同文件 CSV 路径对 `stod` 已 catch（`:91-101`），JSON 路径不一致。
+- **复现**：
+
+```bash
+mkdir -p /tmp/ve_d1_bad_json
+printf '%s\n' '{"placementId":"placement_bad","polygonMm":[["x","y"],[1,2,3],[4,5,6]]}' > /tmp/ve_d1_bad_json/placement_bad.json
+# 链 libolp_runtime 调用 ContourDataset::loadFromDirectory("/tmp/ve_d1_bad_json")
+# 观察：THREW std::exception: [json.exception.type_error.302] type must be number, but is string
+```
+
+- **要求**：在 `loadJsonFrame` 内捕获 `nlohmann`/`std::exception`，映射为 `DeviceResult::failure(InvalidArgument, ...)`；补一条单测（坏类型 JSON → 失败码、进程不终止）。
+- **状态**：`RESOLVED`（Round 2：字段提取 try/catch → InvalidArgument；46/46 + 独立探针确认）
+
+### VE-D1-002 [P2][DEFERRED] 无 nlohmann 时目录内 JSON 会拖垮整个 load（CSV 镜像无法兜底）
+
+- **位置**：`src/runtime/ContourDataset.cpp:209-220`；`CMakeLists.txt:39-42`（`find_package(... QUIET)`）。
+- **问题**：`OLP_HAS_NLOHMANN_JSON` 未定义时，遇到 `.json` 返回 `NotSupported` 并 **立即失败整个目录**。`tests/data/vision_edge` 同时含 JSON+CSV，故无 JSON 库时无法仅靠 CSV 加载；与 IMPLEMENTATION「CSV always」不完全一致。本机/常规依赖有 nlohmann，不挡本轮门禁。
+- **触发**：无 `nlohmann_json` 的纯 headless 配置；或需明确 CMake 对 `olp_runtime` 强制依赖 JSON。
+- **验收**：跳过 NotSupported 的 JSON 并继续 CSV；或 `olp_runtime`/`olp_runtime_tests` REQUIRED nlohmann；并有 CSV-only 回归。
+- **状态**：`DEFERRED`
+
+### VE-D1-003 [P2][DEFERRED] OLP_HEADLESS 下 `olp_ui`/`olp_tests` 因既有 QColor 头依赖不可编（环境债）
+
+- **位置**：`include/olp/ui/WorkcellPdfReportExporter.h:5`；经 `MainWindow.h:8` 拖入 `OcctViewport*.cpp` / `SampleSession.cpp`。
+- **问题**：非 VE-D1 引入。B 已声明阶段门禁为 `olp_runtime_tests`。C 复核确认失败模式。
+- **触发**：Linux/无 Qt 全量回归，或收紧 `OLP_HEADLESS` 跳过 `olp_ui`。
+- **验收**：HEADLESS 不编译依赖 Qt 的 UI 源，或 PDF exporter 头条件编译；完整 `olp_tests` 在 Windows/Qt 机另跑。
+- **状态**：`DEFERRED`
+
+### VE-D1-004 [P2][DEFERRED] 正式套件未覆盖 CSV-only 加载与 `queryState` 断开失败
+
+- **位置**：`tests/test_vision_runtime.cpp`（有 JSON 元数据与断开 capture；无 CSV-only 目录断言；断开后未再调 `queryState`）。
+- **触发**：加强 VE-D1 回归或 VE-D3 数据集路径。
+- **验收**：临时 CSV-only 目录 load ok；`queryState` 在 disconnect 后为 `NotConnected`。
+- **状态**：`DEFERRED`
+
+## 5. 给 Agent A / B
+
+- **B**：只修 `VE-D1-001`（及对应测试）；勿扩 VE-D2+；勿 commit；修完更新 `IMPLEMENTATION.md` 并将 `STATUS` → `READY_FOR_REVIEW`。  
+- **A**：在 P1 关闭且 C 复审无新 P0/P1 前，**不要**把本 Task 标为 APPROVED / 放行 VE-D2。  
+- **C 本轮不写 APPROVED**；正式状态为 **CHANGES_REQUESTED**。
+
+---
+
 # 审核结论 — DIR-003-STEP3-INSTALLER-001 Round 1
 
 > **Task ID**：`DIR-003-STEP3-INSTALLER-001`  
