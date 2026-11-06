@@ -5,11 +5,27 @@
 ---
 
 
+## VE-D7-001 [OPEN] runProgram 失败后仍笛卡尔执行，编排层把 executedMock 写成 false（P2）
+
+- **来源轮次**：`VE-DEMO-001-REAUDIT` Round 1（独立审核，2026-11-06）。
+- **位置**：
+  - `src/runtime/EdgeRollValidate.cpp:264-294`（`gateBlocks==false` 时，`runProgram` 失败只把 `mockUpload` 标成 Failed，随后只要 `isConnected()` 就 `executeTrajectory`）。
+  - `src/runtime/VisionEdgeDemo.cpp:11-17` 与 `:149-155`（`mockUpload!=Passed` 时 `faultAt` 把 `executedMock` 清成 false，不能撤销已经发生的笛卡尔调用）。
+  - 附带：`EdgeRollValidate.cpp:255-284`。`connect()` 失败先把 upload/execute 写成 Failed，接着 `else if (options.runMock)` 又把 `mockUpload` 改成 Skipped，备注仍写 “LS export failed”。
+- **现状**：一键路径在 **ik 或 ls 失败**时不会执行（见 `VE-D6-001`，本轮复测仍成立）。本条是另一条缝：ik 与 ls 都已 Passed、`uploadProgram` 成功、`runProgram` 失败时，笛卡尔通道仍会动，报告却是 Fault 且 `executedMock=false`。随附的 `MockRobot` 在程序已上传时 `runProgram` 不会失败，所以 `olp_runtime_tests` 211/211 盖不住。
+- **复现**：测试双实现 `IRobot`：`uploadProgram` 成功，`runProgram` 返回 `InternalError`，`executeTrajectory` 计数。对 `placement_a` 调用 `runVisionEdgeDemoOnce`（其内部 `gateMockOnIkAndLsPass=true`）。观测：`execCalls==1`，`uploads>=1`，`stateReached==Fault`，`executedMock==false`，`faultReason` 含 “did not Pass”。
+- **不升 P1 的理由**：页首门禁的一键硬条件是 ik/ls 失败不得执行；该条件本轮用完整 `once` 与「IK 过、LS 挂」两条探针复核通过。`MockRobot` 演示闭环打不中本条。真机适配器不在 VE-DEMO-001 内。
+- **触发阶段**：接入 `runProgram` 可能失败的控制器适配器，或把 `executedMock` 用作「是否发出过笛卡尔运动」的审计字段时。
+- **验收条件**：`gateMockOnIkAndLsPass==true` 且 `runProgram` 失败时不得调用 `executeTrajectory`，`mockExecute==Skipped`，`executedMock==false`，轨迹条数不变。`connect()` 失败不得把已写入的 Failed 改写成 Skipped，也不得谎称 LS 失败。既有 `olp_runtime_tests` 保持全绿。ik 失败与 ls 失败仍两条都 Skipped。
+
+---
+
 ## VE-D6-001 [CLOSED on one-click] IK 失败后笛卡尔 Mock（P2；一键路径已关）
 
 - **Agent A（2026-11-06）**：不升 P1；**触发阶段=VE-D7 一键编排**。验收：一键路径在 ik≠Passed 或 ls≠Passed 时不得调用 upload/run/executeTrajectory。
 - **Executor B（2026-11-06，非 C 结案）**：VE-D7 一键路径已设 `gateMockOnIkAndLsPass=true`；ik≠Passed 或 ls≠Passed 时 Mock upload/run/executeTrajectory 均为 Skipped，单测覆盖。**一键路径验收条件已满足**；是否将本条改为 CLOSED 由 C/A 决定。未门控的 D6 调试调用仍可笛卡尔 Mock。RISK-001 仍 OPEN。
 - **Agent C（2026-11-06）**：**一键路径 CLOSED**。证据：`EdgeRollValidate.cpp:244-253`（`gateBlocks` → upload+execute Skipped）；`VisionEdgeDemo.cpp:112` 强制 `gateMockOnIkAndLsPass=true` + `:130-145` Fault；`test_vision_demo.cpp:115-158` 断言 traj 不增。独立探针：未门控 `gate=false` 时 IK 失败仍 `executeTrajectory` Passed（trajDelta=1）——残差仅限 D6 调试路径，符合 A「触发阶段=VE-D7」口径。RISK-001 仍 OPEN。
+- **独立复审（2026-11-06）**：一键路径维持 CLOSED，并补了套件没打到的两条。`runVisionEdgeDemoOnce("placement_far")`（相机坐标约 50000 mm 的方板）→ Fault，upload/run/execute 均为 0，ik/ls Failed，mock 两步 Skipped。`gateMockOnIkAndLsPass=true` 且程序名 `"edge roll"` → ik Passed、ls Failed、mock 两步 Skipped、轨迹不增。未门控 `gate=false` 的不可达路径仍 `mockExecute=Passed` 且轨迹 +1，残差仍只在 D6 调试 API。`runProgram` 失败后的笛卡尔缝另见 `VE-D7-001`，不重开本条。
 
 - **来源轮次**：`VE-D6-VALIDATE-EXPORT-MOCK-001` Round 1（Agent C，2026-11-06）。
 - **位置**：`src/runtime/EdgeRollValidate.cpp:275-282`（对比 LS/upload 门禁 `:253-273`）。

@@ -66,3 +66,14 @@ One-click Mock orchestration for placements A then B; close VE-D6-001 on the one
 3. Confirm never claimsSiteSafe; mockDemoPassed is Mock-only.
 4. D1–D6 still green inside 211.
 5. Not APPROVED until C/A say so.
+
+---
+
+## Reviewer addendum — VE-DEMO-001-REAUDIT（2026-11-06）
+
+独立审核只追加本段，不改写上文执行者交接，也未改 `src/`、`include/`、`tests/`。
+
+- 状态：`CRDocs/STATUS.md` = **APPROVED**（无 OPEN P0/P1）。这是 Mock/headless 软件模拟，不是现场验收。
+- 门禁复跑：`olp_runtime_tests` 211 passed / 0 failed，exit 0（`OLP_HEADLESS=ON`，`OLP_ENABLE_FCL=OFF`；本机无 Qt6、无 OpenCASCADE、无 FCL）。
+- 一键 ik/ls 硬门在 `once` 全路径与「IK 过、LS 挂」上再次成立。细节与新 P2 `VE-D7-001` 见 `CRDocs/REVIEW.md` 文首与 `CRDocs/DEFERRED.md`。
+- 执行者 B 本门禁无必须返修项。`VE-D7-001` 留到非 Mock 的 `runProgram` 失败路径或 `executedMock` 审计语义时再改。
